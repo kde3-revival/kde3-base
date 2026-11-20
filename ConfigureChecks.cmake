@@ -423,8 +423,8 @@ if(KDE3_WITH_DPMS AND X11_dpms_FOUND)
 endif()
 
 # fonts, kfontinst: fontconfig, FreeType 2, Xft
-pkg_check_modules(FONTCONFIG IMPORTED_TARGET fontconfig>=1.0)
-pkg_check_modules(FREETYPE2 IMPORTED_TARGET freetype2)
+pkg_check_modules(FONTCONFIG QUIET IMPORTED_TARGET fontconfig>=1.0)
+pkg_check_modules(FREETYPE2 QUIET IMPORTED_TARGET freetype2)
 set(LIBFONTCONFIG_LIBS "")
 set(LIBFREETYPE_LIBS "")
 if(FONTCONFIG_FOUND)
@@ -470,7 +470,7 @@ set(HAVE_LONG_LONG 1)
 set(KDE3_WITH_LIBUSB "check" CACHE STRING "libusb 0.1 support in the mouse module: check, ON or OFF")
 set(USB_LIBS "")
 if(KDE3_WITH_LIBUSB)
-  pkg_check_modules(LIBUSB IMPORTED_TARGET libusb)
+  pkg_check_modules(LIBUSB QUIET IMPORTED_TARGET libusb)
   if(LIBUSB_FOUND)
     set(HAVE_LIBUSB 1)
     set(USB_LIBS PkgConfig::LIBUSB)
@@ -638,7 +638,7 @@ check_function_exists(statvfs HAVE_STATVFS)
 set(KDE3_WITH_SAMBA "check" CACHE STRING "The smb ioslave: check, ON or OFF")
 set(KDE3_BUILD_KIO_SMB FALSE)
 if(KDE3_WITH_SAMBA)
-  pkg_check_modules(SMBCLIENT IMPORTED_TARGET smbclient)
+  pkg_check_modules(SMBCLIENT QUIET IMPORTED_TARGET smbclient)
   if(SMBCLIENT_FOUND)
     set(KDE3_BUILD_KIO_SMB TRUE)
   elseif(NOT KDE3_WITH_SAMBA STREQUAL "check")
@@ -650,7 +650,7 @@ endif()
 set(KDE3_WITH_OPENEXR "check" CACHE STRING "OpenEXR thumbnails: check, ON or OFF")
 set(LIB_EXR "")
 if(KDE3_WITH_OPENEXR)
-  pkg_check_modules(OPENEXR IMPORTED_TARGET OpenEXR)
+  pkg_check_modules(OPENEXR QUIET IMPORTED_TARGET OpenEXR)
   if(OPENEXR_FOUND)
     set(LIB_EXR PkgConfig::OPENEXR)
   elseif(NOT KDE3_WITH_OPENEXR STREQUAL "check")
@@ -757,3 +757,25 @@ endif()
 if(CMAKE_SIZEOF_VOID_P EQUAL 4)
   set(_FILE_OFFSET_BITS 64)
 endif()
+
+# configure.in.bot of kioslave/smb, kcontrol/* etc.: the summary of what
+# is left out
+foreach(_what
+    "HAVE_PAM:PAM"
+    "HAVE_LIBSASL2:cyrus-sasl 2 (pop3, smtp)"
+    "HAVE_LIBLDAP:OpenLDAP (ldap ioslave)"
+    "KDE3_BUILD_KIO_SMB:libsmbclient (smb ioslave)"
+    "LIB_EXR:OpenEXR (EXR thumbnails)"
+    "HAVE_LIBUSB:libusb 0.1 (Logitech mouse support)"
+    "HAVE_SENSORS_SENSORS_H:lm_sensors (ksysguardd)"
+    "HAVE_DNSSD:libdns_sd (ksysguardd)"
+    "HAVE_GL:OpenGL"
+    "HAVE_XSCREENSAVER:XScreenSaver extension"
+    "KDE3_BUILD_KFONTINST:FreeType 2 and fontconfig (kfontinst)"
+    "KDE3_BUILD_KDM:libXau and libXdmcp (kdm)")
+  string(REGEX MATCH "^[^:]*" _var "${_what}")
+  string(REGEX REPLACE "^[^:]*:" "" _desc "${_what}")
+  if(NOT ${_var})
+    message(STATUS "Not found, built without: ${_desc}")
+  endif()
+endforeach()
