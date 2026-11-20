@@ -69,14 +69,24 @@ foreach(_t kdm_config kdm_greet genkdmconf)
 endforeach()
 
 # install-data-local: genkdmconf writes the configuration (kdmrc and the
-# scripts) into $(DESTDIR)$(kde_confdir)/kdm
-set(GENKDMCONF_FLAGS "" CACHE STRING "Extra arguments for genkdmconf at installation")
+# scripts) into $(DESTDIR)$(kde_confdir)/kdm.  It also merges the kdm/xdm
+# configuration it finds on the machine (/etc/X11/xdm, an older kdmrc)
+# into it; that is wanted when installing on the target system, but in a
+# DESTDIR installation (packaging) it would take over the configuration
+# of the build host.  So when GENKDMCONF_FLAGS is empty, a DESTDIR
+# installation passes --no-old.
+set(GENKDMCONF_FLAGS "" CACHE STRING
+  "Extra arguments for genkdmconf at installation (default: --no-old with DESTDIR, none without)")
 separate_arguments(_genkdmconf_flags UNIX_COMMAND "${GENKDMCONF_FLAGS}")
 kdebase_install_time_path(_kdmconfdir "${KDE3_CONFIG_INSTALL_DIR}/kdm")
 install(CODE "
+  set(_flags ${_genkdmconf_flags})
+  if(NOT _flags AND NOT \"\$ENV{DESTDIR}\" STREQUAL \"\")
+    set(_flags --no-old)
+  endif()
   execute_process(COMMAND \"$<TARGET_FILE:genkdmconf>\"
     --in \"\$ENV{DESTDIR}${_kdmconfdir}\" --no-in-notice
-    --face-src \"${CMAKE_CURRENT_SOURCE_DIR}/pics\" ${_genkdmconf_flags}
+    --face-src \"${CMAKE_CURRENT_SOURCE_DIR}/pics\" \${_flags}
     RESULT_VARIABLE _r)
   if(NOT _r EQUAL 0)
     message(FATAL_ERROR \"genkdmconf failed\")
