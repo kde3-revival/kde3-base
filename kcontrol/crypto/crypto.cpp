@@ -1116,9 +1116,10 @@ void KCryptoConfig::save()
   // SSL Policies code
   // keyed by the certificate itself: by CN, kssld changed the first
   // cached certificate with that CN, which need not be this one
-  for (OtherCertItem *x = otherCertDelList.first(); x != 0; x = otherCertDelList.next()) {
+  // (the lists auto-delete: x is deleted by removeFirst(), after use)
+  while (OtherCertItem *x = otherCertDelList.first()) {
      _cc.removeByCertificate(*x->getCert());
-     otherCertDelList.remove(x);
+     otherCertDelList.removeFirst();
   }
   // Go through the non-deleted ones and save them
   for (OtherCertItem *x =
@@ -1130,9 +1131,9 @@ void KCryptoConfig::save()
   }
 
   // SSL Personal certificates code
-  for (YourCertItem *x = yourCertDelList.first(); x != 0; x = yourCertDelList.next()) {
+  while (YourCertItem *x = yourCertDelList.first()) {
      pcerts->deleteGroup(x->configName());
-     yourCertDelList.remove(x);
+     yourCertDelList.removeFirst();
   }
   // Go through the non-deleted ones and save them
   for (YourCertItem *x =
@@ -1147,9 +1148,9 @@ void KCryptoConfig::save()
   bool doGen = false;
 
   // CA certificates code
-  for (CAItem *x = caDelList.first(); x != 0; x = caDelList.next()) {
+  while (CAItem *x = caDelList.first()) {
      _signers->remove(x->configName());
-     caDelList.remove(x);
+     caDelList.removeFirst();
      doGen = true;
   }
 
@@ -1189,9 +1190,9 @@ void KCryptoConfig::save()
      config->writeEntry("DefaultCert", QString::null);
   else config->writeEntry("DefaultCert", defCertBox->currentText());
 
-  for (HostAuthItem *x = authDelList.first(); x != 0; x = authDelList.next()) {
+  while (HostAuthItem *x = authDelList.first()) {
      authcfg->deleteGroup(x->configName());
-     authDelList.remove(x);
+     authDelList.removeFirst();
   }
 
   for (HostAuthItem *x =
