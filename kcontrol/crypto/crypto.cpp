@@ -1836,9 +1836,9 @@ void KCryptoConfig::slotCAImport() {
         return;
 
 #ifdef HAVE_SSL
-#define sk_free KOSSL::self()->sk_free
-#define sk_num KOSSL::self()->sk_num
-#define sk_value KOSSL::self()->sk_value
+#define OPENSSL_sk_free KOSSL::self()->OPENSSL_sk_free
+#define OPENSSL_sk_num KOSSL::self()->OPENSSL_sk_num
+#define OPENSSL_sk_value KOSSL::self()->OPENSSL_sk_value
 
 	// First try to load using the OpenSSL method
 	X509_STORE *certStore = KOSSL::self()->X509_STORE_new();
@@ -1848,13 +1848,15 @@ void KCryptoConfig::slotCAImport() {
 	    KOSSL::self()->X509_LOOKUP_load_file(certLookup,
 		                                 certFile.local8Bit(),
 						 X509_FILETYPE_PEM)) {
-		for (int i = 0; i < sk_X509_OBJECT_num(certStore->objs); i++) {
-			X509_OBJECT* x5o = sk_X509_OBJECT_value(certStore->objs, i);
+		// X509_STORE and X509_OBJECT are opaque since OpenSSL 1.1.0
+		STACK_OF(X509_OBJECT) *certObjects = X509_STORE_get0_objects(certStore);
+		for (int i = 0; i < sk_X509_OBJECT_num(certObjects); i++) {
+			X509_OBJECT* x5o = sk_X509_OBJECT_value(certObjects, i);
 			if (!x5o) continue;
 
-			if (x5o->type != X509_LU_X509) continue;
+			if (X509_OBJECT_get_type(x5o) != X509_LU_X509) continue;
 
-			X509 *x5 = x5o->data.x509;
+			X509 *x5 = X509_OBJECT_get0_X509(x5o);
 			if (!x5) continue;
 
 			// Easier to use in this form
@@ -1993,9 +1995,9 @@ void KCryptoConfig::slotCAImport() {
 	if (certStore) KOSSL::self()->X509_STORE_free(certStore);
 
 	configChanged();
-#undef sk_free
-#undef sk_num
-#undef sk_value
+#undef OPENSSL_sk_free
+#undef OPENSSL_sk_num
+#undef OPENSSL_sk_value
 #endif
 
         offerImportToKMail( certFile );
@@ -2318,44 +2320,37 @@ void KCryptoConfig::slotGeneratePersonal() {
 #ifdef HAVE_SSL
 // This gets all the available ciphers from OpenSSL
 bool KCryptoConfig::loadCiphers() {
-unsigned int i;
-SSL_CTX *ctx;
-SSL *ssl;
-SSL_METHOD *meth;
+const SSL_METHOD *meth;
 
   SSLv2Box->clear();
   SSLv3Box->clear();
 
+  // OpenSSL 1.1.0 made SSL_METHOD and SSL_CIPHER opaque: the ciphers are
+  // taken from SSL_get_ciphers() of an SSL object.  SSLv2 is gone from
+  // it, and SSLv3_client_method() too when OpenSSL is built without
+  // SSLv3: the SSLv3 list (the cipher group kssl uses for everything
+  // that is not SSLv2) then shows the ciphers of the version-flexible
+  // TLS method.
+#if OPENSSL_VERSION_NUMBER < 0x10100000L && !defined(OPENSSL_NO_SSL2)
   meth = SSLv2_client_method();
-  SSLeay_add_ssl_algorithms();
-  ctx = SSL_CTX_new(meth);
-  if (ctx == NULL) return false;
+#else
+  meth = 0L;
+#endif
+  if (meth && !loadCipherList(meth, SSLv2Box))
+    return false;
 
-  ssl = SSL_new(ctx);
-  if (!ssl) return false;
-
-  CipherItem *item;
-  for (i=0; ; i++) {
-    int j, k;
-    SSL_CIPHER *sc;
-    sc = (meth->get_cipher)(i);
-    if (!sc)
-      break;
-    // Leak of sc*?
-    QString scn(sc->name);
-    if (scn.contains("ADH-") || scn.contains("NULL-") || scn.contains("DES-CBC3-SHA") || scn.contains("FZA-")) {
-      continue;
-    }
-    k = SSL_CIPHER_get_bits(sc, &j);
-
-    item = new CipherItem( SSLv2Box, sc->name, k, j, this );
-  }
-
-  if (ctx) SSL_CTX_free(ctx);
-  if (ssl) SSL_free(ssl);
-
-  // We repeat for SSLv3
+#if OPENSSL_VERSION_NUMBER < 0x40000000L && !defined(OPENSSL_NO_SSL3_METHOD)
   meth = SSLv3_client_method();
+#else
+  meth = TLS_client_method();
+#endif
+  return loadCipherList(meth, SSLv3Box);
+}
+
+bool KCryptoConfig::loadCipherList(const SSL_METHOD *meth, QListView *box) {
+SSL_CTX *ctx;
+SSL *ssl;
+
   SSLeay_add_ssl_algorithms();
   ctx = SSL_CTX_new(meth);
   if (ctx == NULL) return false;
@@ -2363,20 +2358,19 @@ SSL_METHOD *meth;
   ssl = SSL_new(ctx);
   if (!ssl) return false;
 
-  for (i=0; ; i++) {
+  STACK_OF(SSL_CIPHER) *sk = SSL_get_ciphers(ssl);
+  for (int i = 0; i < sk_SSL_CIPHER_num(sk); i++) {
     int j, k;
-    SSL_CIPHER *sc;
-    sc = (meth->get_cipher)(i);
+    const SSL_CIPHER *sc = sk_SSL_CIPHER_value(sk, i);
     if (!sc)
       break;
-    // Leak of sc*?
-    QString scn(sc->name);
+    QString scn(SSL_CIPHER_get_name(sc));
     if (scn.contains("ADH-") || scn.contains("NULL-") || scn.contains("DES-CBC3-SHA") || scn.contains("FZA-")) {
       continue;
     }
     k = SSL_CIPHER_get_bits(sc, &j);
 
-    item = new CipherItem( SSLv3Box, sc->name, k, j, this );
+    new CipherItem( box, SSL_CIPHER_get_name(sc), k, j, this );
   }
 
   if (ctx) SSL_CTX_free(ctx);

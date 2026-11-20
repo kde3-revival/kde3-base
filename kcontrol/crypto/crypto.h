@@ -229,6 +229,7 @@ public:
 
 #ifdef HAVE_SSL
   bool loadCiphers();
+  bool loadCipherList(const struct ssl_method_st *meth, QListView *box);
 #endif
 
 public slots:
