@@ -1,0 +1,9 @@
+kde3_add_module(kwin_plastik_config
+  SOURCES
+    config.cpp
+    configdialog.ui
+  MOC
+    config.h
+  LINK
+    KDE3::kdeui
+)

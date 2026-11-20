@@ -262,3 +262,12 @@ option(KDE3_WITH_XINERAMA "Xinerama support in ksplashsimple" ON)
 if(KDE3_WITH_XINERAMA AND X11_Xinerama_FOUND)
   set(HAVE_XINERAMA 1)
 endif()
+
+# ---- kwin (kwin/kompmgr/configure.in.in) ---------------------------------
+# --without-composite (configure.in.in) also disables kompmgr
+option(KDE3_WITH_COMPOSITE "Xcomposite support (kompmgr, taskmanager)" ON)
+set(KDE3_BUILD_KOMPMGR FALSE)
+if(KDE3_WITH_COMPOSITE AND X11_Xdamage_FOUND AND X11_Xcomposite_FOUND
+   AND X11_Xrender_FOUND AND X11_Xfixes_FOUND)
+  set(KDE3_BUILD_KOMPMGR TRUE)
+endif()

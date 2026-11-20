@@ -1,0 +1,9 @@
+kde3_add_module(kwin_keramik_config
+  SOURCES
+    config.cpp
+    keramikconfig.ui
+  MOC
+    config.h
+  LINK
+    KDE3::kdeui
+)

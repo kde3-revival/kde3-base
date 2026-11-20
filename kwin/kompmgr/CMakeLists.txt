@@ -1,0 +1,12 @@
+kde3_add_executable(kompmgr
+  SOURCES
+    kompmgr.c
+  LINK
+    X11::Xcomposite
+    X11::Xdamage
+    X11::Xfixes
+    X11::Xrender
+    X11::X11
+    X11::Xext
+    m
+)
