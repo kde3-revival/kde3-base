@@ -141,3 +141,8 @@
 #cmakedefine HAVE_SENSORS_SENSORS_H 1
 /* Define if dns-sd is available */
 #cmakedefine HAVE_DNSSD 1
+
+/* ---- kicker ------------------------------------------------------- */
+
+/* Define if you have the XComposite extension */
+#cmakedefine HAVE_XCOMPOSITE 1

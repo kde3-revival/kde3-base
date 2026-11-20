@@ -338,3 +338,15 @@ int main(void) { DNSServiceRefDeallocate((DNSServiceRef) 0);
   endif()
 endif()
 
+# ---- kicker (kicker/taskmanager, applets/naughty, extensions/kasbar) -----
+set(LIB_XCOMPOSITE "")
+if(KDE3_WITH_COMPOSITE AND X11_Xcomposite_FOUND)
+  set(HAVE_XCOMPOSITE 1)
+  set(LIB_XCOMPOSITE X11::Xcomposite)
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+  set(LIB_KVM kvm)
+else()
+  set(LIB_KVM "")
+endif()
+check_include_file(sys/loadavg.h HAVE_SYS_LOADAVG_H)
