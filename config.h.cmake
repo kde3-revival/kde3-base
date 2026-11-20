@@ -120,3 +120,8 @@
 /* Define if covariant return in virtual methods does not work */
 #cmakedefine COVARIANT_RETURN_BROKEN 1
 
+/* ---- konsole ------------------------------------------------------ */
+
+/* Defines whether /proc/`pid`/cwd exists */
+#cmakedefine HAVE_PROC_CWD 1
+

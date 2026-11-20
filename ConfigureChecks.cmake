@@ -247,3 +247,9 @@ if(NOT _covariant_return_works)
   set(COVARIANT_RETURN_BROKEN 1)
 endif()
 
+# ---- konsole (konsole/configure.in.in) -----------------------------------
+# HAVE_OPENPTY is checked above; how to get the cwd of another process
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(HAVE_PROC_CWD 1)
+endif()
+

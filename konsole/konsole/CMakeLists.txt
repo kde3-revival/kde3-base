@@ -1,0 +1,96 @@
+kde3_add_module(libkonsolepart
+  SOURCES
+    TEPty.cpp
+    BlockArray.cpp
+    konsole_part.cpp
+    schema.cpp
+    session.cpp
+    zmodem_dialog.cpp
+    TEWidget.cpp
+    TEmuVt102.cpp
+    TEScreen.cpp
+    konsole_wcwidth.cpp
+    TEmulation.cpp
+    TEHistory.cpp
+    keytrans.cpp
+    konsoleiface.skel
+    sessioniface.skel
+  MOC
+    TEPty.h
+    TEWidget.h
+    TEmuVt102.h
+    TEmulation.h
+    konsole_part.h
+    session.h
+    zmodem_dialog.h
+  LINK
+    X11::Xtst
+    KDE3::kparts
+)
+
+kde3_add_module(kded_kwrited
+  SOURCES
+    kwrited.cpp
+    TEPty.cpp
+    kwrited.skel
+  MOC
+    TEPty.h
+    kwrited.h
+  LINK
+    KDE3::kdecore
+)
+
+kde3_add_kdeinit_executable(konsole
+  SOURCES
+    TEPty.cpp
+    BlockArray.cpp
+    main.cpp
+    konsole.cpp
+    schema.cpp
+    session.cpp
+    TEWidget.cpp
+    TEmuVt102.cpp
+    TEScreen.cpp
+    TEmulation.cpp
+    TEHistory.cpp
+    keytrans.cpp
+    konsoleiface.skel
+    sessioniface.skel
+    konsole_wcwidth.cpp
+    konsolebookmarkhandler.cpp
+    konsolebookmarkmenu.cpp
+    zmodem_dialog.cpp
+    printsettings.cpp
+  MOC
+    TEPty.h
+    TEWidget.h
+    TEmuVt102.h
+    TEmulation.h
+    konsole.h
+    konsolebookmarkhandler.h
+    konsolebookmarkmenu.h
+    printsettings.h
+    session.h
+    zmodem_dialog.h
+  LINK
+    KDE3::kdeui
+    KDE3::kio
+    KDE3::kdeprint
+    ${KDE3_LIBUTIL}
+    X11::Xtst
+    X11::Xrender
+)
+
+# "make fonts": ./fontembedder $(srcdir)/linefont.src > linefont.h
+# (maintainer rule, linefont.h is in the sources)
+kde3_add_executable(fontembedder
+  NO_INSTALL
+  SOURCES
+    fontembedder.cpp
+  LINK
+    KDE3Qt::Qt
+)
+
+install(FILES
+  x-konsole.desktop
+  DESTINATION ${KDE3_MIME_INSTALL_DIR}/application)
