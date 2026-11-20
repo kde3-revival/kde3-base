@@ -1,7 +1,6 @@
 # The PCF fonts are made from the BDF sources with bdftopcf, which the
 # build needs, like the autotools build did; KDEBASE_KONSOLE_FONTS=OFF
-# leaves the fonts out instead.
-option(KDEBASE_KONSOLE_FONTS "Install Konsole's console fonts (needs bdftopcf)" ON)
+# leaves the fonts out instead (the option is in ConfigureChecks.cmake).
 if(NOT KDEBASE_KONSOLE_FONTS)
   return()
 endif()

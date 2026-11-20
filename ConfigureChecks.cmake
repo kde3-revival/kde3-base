@@ -769,6 +769,9 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
   set(_FILE_OFFSET_BITS 64)
 endif()
 
+# konsole/fonts: the console fonts need bdftopcf (checked there)
+option(KDEBASE_KONSOLE_FONTS "Install Konsole's console fonts (needs bdftopcf)" ON)
+
 # configure.in.bot of kioslave/smb, kcontrol/* etc.: the summary of what
 # is left out.  <result variable>:<option switching it off, or ->:<what>
 foreach(_what
@@ -789,7 +792,8 @@ foreach(_what
     "HAVE_GL:KDE3_WITH_GL:OpenGL"
     "HAVE_XSCREENSAVER:KDE3_WITH_XSCREENSAVER:XScreenSaver extension"
     "KDE3_BUILD_KFONTINST:-:FreeType 2 and fontconfig (kfontinst)"
-    "KDE3_BUILD_KDM:-:libXau and libXdmcp (kdm)")
+    "KDE3_BUILD_KDM:-:libXau and libXdmcp (kdm)"
+    "KDEBASE_KONSOLE_FONTS:KDEBASE_KONSOLE_FONTS:Konsole's console fonts")
   string(REPLACE ":" ";" _what "${_what}")
   list(GET _what 0 _var)
   list(GET _what 1 _opt)
