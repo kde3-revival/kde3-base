@@ -1,0 +1,7 @@
+install(FILES
+  Theme.rc
+  splash_active_bar.png
+  splash_bottom.png
+  splash_inactive_bar.png
+  splash_top.png
+  DESTINATION ${KDE3_DATA_INSTALL_DIR}/ksplash/Themes/Default/locolor)

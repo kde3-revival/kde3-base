@@ -257,3 +257,8 @@ endif()
 check_function_exists(sigset HAVE_SIGSET)
 check_function_exists(sigaction HAVE_SIGACTION)
 
+# ---- ksplashml (ksplashml/themeengine/simple/configure.in.in) ------------
+option(KDE3_WITH_XINERAMA "Xinerama support in ksplashsimple" ON)
+if(KDE3_WITH_XINERAMA AND X11_Xinerama_FOUND)
+  set(HAVE_XINERAMA 1)
+endif()

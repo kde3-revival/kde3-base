@@ -130,3 +130,7 @@
 #cmakedefine HAVE_SIGSET 1
 #cmakedefine HAVE_SIGACTION 1
 
+/* ---- ksplashml ---------------------------------------------------- */
+
+/* Define if you have the Xinerama extension */
+#cmakedefine HAVE_XINERAMA 1
