@@ -67,8 +67,12 @@ void RemoteMenu::initialize()
         insertTitle(i18n("Network Folders"));
     }
 
-    id = insertItem(SmallIcon("wizard"), i18n("Add Network Folder"));
-    connectItem(id, this, SLOT(startWizard()));
+    KService::Ptr wizard = KService::serviceByDesktopName(WIZARD_SERVICE);
+    if (wizard && wizard->isValid())
+    {
+        id = insertItem(SmallIcon("wizard"), i18n("Add Network Folder"));
+        connectItem(id, this, SLOT(startWizard()));
+    }
     id = insertItem(SmallIcon("kfm"), i18n("Manage Network Folders"));
     connectItem(id, this, SLOT(openRemoteDir()));
 

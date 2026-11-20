@@ -30,10 +30,6 @@ libraries. Here is an overview of the directories:
     and make a stack trace. This is a great help for the developers to fix
     the bug.
 
-* kappfinder
-    Searches for non-KDE applications, e.g. Acrobat Reader (tm) and installs
-    those apps under the K start button.
-
 * kate
     A fast and advanced text editor, extensible with nice plugins.
 
@@ -43,12 +39,6 @@ libraries. Here is an overview of the directories:
 
 * kcontrol
     The KDE Control Center allows you to tweak the KDE settings.
-
-* kdcop
-    GUI app to browse for DCOP interfaces, can also execute them.
-
-* kdebugdialog
-    Allows you to specify which debug messages you want to see.
 
 * kdeprint
     The KDE printing system.
@@ -94,12 +84,6 @@ libraries. Here is an overview of the directories:
 * konsole
     A shell program similar to xterm.
 
-* kpager
-    Applet to show the contents of the virtual desktops.
-
-* kpersonalizer
-    The customization wizard you get when you first start KDE.
-
 * kreadconfig
     A tool for shell scripts to get info from KDE's config files.
 
@@ -129,9 +113,6 @@ libraries. Here is an overview of the directories:
 
 * ksystraycmd
     Allows to run any application in the system tray.
-
-* ktip
-    Gives you tips how to use KDE.
 
 * kwin
     The KDE window manager (moves, resizes and decorates windows).

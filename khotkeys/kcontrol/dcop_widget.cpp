@@ -22,6 +22,7 @@
 #include <krun.h>
 #include <kmessagebox.h>
 #include <klocale.h>
+#include <kstandarddirs.h>
 
 #include <actions.h>
 
@@ -35,6 +36,9 @@ Dcop_widget::Dcop_widget( QWidget* parent_P, const char* name_P )
     {
     clear_data();
     try_button->setText( i18n( "to try", "&Try" )); // Qt designer can't do this
+    // KDCOP is not part of kdebase any more; offer the button only if it is installed
+    if( KStandardDirs::findExe( "kdcop" ).isEmpty())
+        PushButton1->hide();
     // KHotKeys::Module::changed()
     connect( remote_app_lineedit, SIGNAL( textChanged( const QString& )),
         module, SLOT( changed()));

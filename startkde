@@ -61,7 +61,6 @@ mkdir -m 700 -p $kdehome/share/config
 cat >$kdehome/share/config/startupconfigkeys <<EOF
 kcminputrc Mouse cursorTheme ''
 kcminputrc Mouse cursorSize ''
-kpersonalizerrc General FirstLogin true
 ksplashrc KSplash Theme Default
 kcmrandrrc Display ApplyOnStartup false
 kcmrandrrc [Screen0]
@@ -139,8 +138,7 @@ unset DESKTOP_LOCKED # Don't want it in the environment
 # Launch splash that doesn't need any KDE libraries here, before
 # KDE libraries are loaded into memory (which may take some time
 # with cold caches). Makes the splash appear sooner.
-# If kpersonalizer needs to be run splash will be started only later.
-if test -z "$dl" && test "$kpersonalizerrc_general_firstlogin" != "true"; then
+if test -z "$dl"; then
     case "$ksplashrc_ksplash_theme" in 
       Simple)
          ksplashsimple 
@@ -285,31 +283,13 @@ dcopserver_shutdown
 
 echo 'startkde: Starting up...'  1>&2
 
-# run KPersonalizer before the session, if this is the first login
-if test "$kpersonalizerrc_general_firstlogin" = "true"; then
-    # start only dcopserver, don't start whole kdeinit (takes too long)
-    echo 'startkde: Running kpersonalizer...'  1>&2
-    dcopserver
-    kwin --lock &
-    kpersonalizer --before-session
-    # handle kpersonalizer restarts (language change)
-    while test $? -eq 1; do
-        kpersonalizer --r --before-session
-    done
-    dcopquit kwin
-    dcopserver_shutdown --wait
-fi
-
 if test -z "$dl"; then
   # the splashscreen and progress indicator
   case "$ksplashrc_ksplash_theme" in 
     None)
        ;; # nothing
     Simple)
-       if test "$kpersonalizerrc_general_firstlogin" = "true"; then
-           ksplashsimple 
-       fi # otherwise started earlier
-       ;;
+       ;; # started earlier
     *)
        ksplash --nodcop
        ;;
@@ -386,7 +366,6 @@ echo 'startkde: Shutting down...'  1>&2
 # Clean up
 kdeinit_shutdown
 dcopserver_shutdown --wait
-artsshell -q terminate
 # KDE4 support
 kde4 kdeinit4_shutdown 2>/dev/null
 

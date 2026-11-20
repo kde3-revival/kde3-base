@@ -1,6 +1,5 @@
 ./admin/configure.in.min
 configure.in.in
-./kappfinder/configure.in.in
 ./kcontrol/access/configure.in.in
 ./kcontrol/crypto/configure.in.in
 ./kcontrol/energy/configure.in.in

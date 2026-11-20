@@ -1,1 +1,1 @@
-SUBDIRS = printmgr kjobviewer kprinter kdeprintfax slave kdeprint_part
+SUBDIRS = printmgr kjobviewer kprinter slave kdeprint_part
