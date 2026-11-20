@@ -33,7 +33,7 @@ install(FILES
 
 # install-data-hook: -mkfontdir $(DESTDIR)$(fontdir)
 if(MKFONTDIR_EXECUTABLE)
-  kdebase_install_time_path(_fontdir "${KDE3_DATA_INSTALL_DIR}/konsole/fonts")
+  kde3_install_time_path(_fontdir "${KDE3_DATA_INSTALL_DIR}/konsole/fonts")
   install(CODE "execute_process(COMMAND \"${MKFONTDIR_EXECUTABLE}\"
     \"\$ENV{DESTDIR}${_fontdir}\")")
 endif()

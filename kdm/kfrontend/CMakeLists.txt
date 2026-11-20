@@ -78,7 +78,7 @@ endforeach()
 set(GENKDMCONF_FLAGS "" CACHE STRING
   "Extra arguments for genkdmconf at installation (default: --no-old with DESTDIR, none without)")
 separate_arguments(_genkdmconf_flags UNIX_COMMAND "${GENKDMCONF_FLAGS}")
-kdebase_install_time_path(_kdmconfdir "${KDE3_CONFIG_INSTALL_DIR}/kdm")
+kde3_install_time_path(_kdmconfdir "${KDE3_CONFIG_INSTALL_DIR}/kdm")
 install(CODE "
   set(_flags ${_genkdmconf_flags})
   if(NOT _flags AND NOT \"\$ENV{DESTDIR}\" STREQUAL \"\")

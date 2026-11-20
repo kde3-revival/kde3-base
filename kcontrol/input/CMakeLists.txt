@@ -52,7 +52,7 @@ install(FILES
 # themes, with a fonts.dir ("-mkfontdir": failures are ignored)
 find_program(MKFONTDIR_EXECUTABLE mkfontdir)
 mark_as_advanced(MKFONTDIR_EXECUTABLE)
-kdebase_install_time_path(_overridedir "${KDE3_DATA_ROOT_INSTALL_DIR}/fonts/override")
+kde3_install_time_path(_overridedir "${KDE3_DATA_ROOT_INSTALL_DIR}/fonts/override")
 install(DIRECTORY DESTINATION ${KDE3_DATA_ROOT_INSTALL_DIR}/fonts/override)
 if(MKFONTDIR_EXECUTABLE)
   install(CODE "execute_process(COMMAND \"${MKFONTDIR_EXECUTABLE}\"

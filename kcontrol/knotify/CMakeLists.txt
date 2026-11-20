@@ -19,7 +19,7 @@ install(FILES
 add_subdirectory(sounds)
 
 # install-data-local: remove the modules of older KDE versions
-kdebase_install_time_path(_appsdir "${KDE3_APPS_INSTALL_DIR}")
+kde3_install_time_path(_appsdir "${KDE3_APPS_INSTALL_DIR}")
 install(CODE "file(REMOVE
   \"\$ENV{DESTDIR}${_appsdir}/Settings/LookNFeel/knotify.desktop\"
   \"\$ENV{DESTDIR}${_appsdir}/Settings/LookNFeel/kcmnotify.desktop\")")
