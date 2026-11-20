@@ -89,6 +89,10 @@ if(X11_Xrender_FOUND)
 endif()
 
 # ---- paths ---------------------------------------------------------------
+# kdm/configure.in.in asked imake (xmkmf) for BINDIR and LIBDIR of X; imake
+# is gone from current X.Org, these are its values there.
+set(XBINDIR "/usr/bin" CACHE PATH "X binaries directory (imake BINDIR)")
+set(XLIBDIR "/usr/lib/X11" CACHE PATH "X libraries directory (imake LIBDIR)")
 # KDE_EXPAND_MAKEVAR(KDE_CONFDIR, kde_confdir) etc.
 set(KDE_CONFDIR "${KDE3_FULL_CONFIG_INSTALL_DIR}")
 set(KDE_DATADIR "${KDE3_FULL_DATA_INSTALL_DIR}")
@@ -203,3 +207,18 @@ if(KDE3_KDESU_SUDO_BACKEND)
 else()
   set(DEFAULT_SUPER_USER_COMMAND su)
 endif()
+
+# ---- kxkb (kxkb/configure.in.in) -----------------------------------------
+# kxkb is not built without XKBstr.h and XKBrules.h (DO_NOT_COMPILE)
+cmake_push_check_state(RESET)
+set(CMAKE_REQUIRED_INCLUDES ${X11_INCLUDE_DIR})
+check_include_files("X11/Xlib.h;X11/extensions/XKBstr.h" _have_xkbstr_h)
+check_include_files("stdio.h;X11/Xlib.h;X11/XKBlib.h;X11/extensions/XKBrules.h" _have_xkbrules_h)
+cmake_pop_check_state()
+if(_have_xkbstr_h AND _have_xkbrules_h AND X11_xkbfile_FOUND)
+  set(KDE3_BUILD_KXKB TRUE)
+else()
+  set(KDE3_BUILD_KXKB FALSE)
+  message(STATUS "kxkb is not built: XKB headers or libxkbfile missing")
+endif()
+

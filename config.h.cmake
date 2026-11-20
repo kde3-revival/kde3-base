@@ -19,6 +19,11 @@
 /* KDE's binaries directory */
 #define KDE_BINDIR "@KDE_BINDIR@"
 
+/* X binaries directory */
+#define XBINDIR "@XBINDIR@"
+/* X libraries directory */
+#define XLIBDIR "@XLIBDIR@"
+
 /* ---- system ------------------------------------------------------- */
 
 /* type to use in place of socklen_t if not defined */
@@ -102,3 +107,4 @@
 
 /* Use su or sudo */
 #define DEFAULT_SUPER_USER_COMMAND "@DEFAULT_SUPER_USER_COMMAND@"
+
