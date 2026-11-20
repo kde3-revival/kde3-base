@@ -62,9 +62,10 @@ add_subdirectory(compat)
 
 # install-data-local: remove the .desktop files of older KDE versions
 file(STRINGS old_desktop_files _old_desktop_files)
+kdebase_install_time_path(_xdgappsdir "${KDE3_XDG_APPS_INSTALL_DIR}")
 install(CODE "
   foreach(_f ${_old_desktop_files})
-    set(_p \"\$ENV{DESTDIR}${KDE3_FULL_XDG_APPS_INSTALL_DIR}/\${_f}\")
+    set(_p \"\$ENV{DESTDIR}${_xdgappsdir}/\${_f}\")
     if(EXISTS \"\${_p}\")
       file(REMOVE \"\${_p}\")
       message(STATUS \"Deleting \${_p}\")

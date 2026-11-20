@@ -72,9 +72,10 @@ endforeach()
 # scripts) into $(DESTDIR)$(kde_confdir)/kdm
 set(GENKDMCONF_FLAGS "" CACHE STRING "Extra arguments for genkdmconf at installation")
 separate_arguments(_genkdmconf_flags UNIX_COMMAND "${GENKDMCONF_FLAGS}")
+kdebase_install_time_path(_kdmconfdir "${KDE3_CONFIG_INSTALL_DIR}/kdm")
 install(CODE "
   execute_process(COMMAND \"$<TARGET_FILE:genkdmconf>\"
-    --in \"\$ENV{DESTDIR}${KDE3_FULL_CONFIG_INSTALL_DIR}/kdm\" --no-in-notice
+    --in \"\$ENV{DESTDIR}${_kdmconfdir}\" --no-in-notice
     --face-src \"${CMAKE_CURRENT_SOURCE_DIR}/pics\" ${_genkdmconf_flags}
     RESULT_VARIABLE _r)
   if(NOT _r EQUAL 0)

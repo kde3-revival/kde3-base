@@ -35,7 +35,8 @@ install(FILES
   DESTINATION ${KDE3_DATA_INSTALL_DIR}/konsole)
 
 # install-data-local: kwrited is a kded module now
-install(CODE "file(REMOVE \"\$ENV{DESTDIR}${KDE3_FULL_AUTOSTART_INSTALL_DIR}/kwrited.desktop\")")
+kdebase_install_time_path(_autostartdir "${KDE3_AUTOSTART_INSTALL_DIR}")
+install(CODE "file(REMOVE \"\$ENV{DESTDIR}${_autostartdir}/kwrited.desktop\")")
 
 add_subdirectory(konsole)
 add_subdirectory(other)
