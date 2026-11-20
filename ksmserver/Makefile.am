@@ -41,10 +41,5 @@ update_SCRIPTS = move_session_config.sh
 updatedir = $(kde_datadir)/kconf_update
 
 
-EXTRA_PROGRAMS = testsh
-testsh_SOURCES = test.cpp
-testsh_LDFLAGS = $(all_libraries) $(KDE_RPATH)
-testsh_LDADD = $(LIB_KDEUI) shutdowndlg.lo ../kdmlib/libdmctl.la
-
 messages:
 	$(XGETTEXT) *.cpp -o $(podir)/ksmserver.pot

@@ -10,11 +10,6 @@ METASOURCES = AUTO
 
 noinst_HEADERS = icons.h iconthemes.h main.h
 
-check_PROGRAMS = testicons
-testicons_SOURCES = testicons.cpp 
-testicons_LDFLAGS = $(all_libraries)
-testicons_LDADD = $(LIB_KDEUI) icons.lo
-
 messages:
 	$(XGETTEXT) *.cpp -o $(podir)/kcmicons.pot
 

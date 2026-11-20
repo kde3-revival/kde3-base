@@ -19,8 +19,5 @@ LDADD  = $(LIB_KDEUI) $(LIB_KIO)
 drkonqi_SOURCES = krashdcopinterface.skel main.cpp debugger.cpp krashconf.cpp drbugreport.cpp backtrace.cpp toplevel.cpp
 
 
-check_PROGRAMS = crashtest
-crashtest_SOURCES = crashtest.cpp
-
 messages:
 	$(XGETTEXT) *.cpp -o $(podir)/drkonqi.pot

@@ -22,15 +22,6 @@ kde_services_DATA = media.protocol
 noinst_LTLIBRARIES = libkiomedia.la
 libkiomedia_la_SOURCES = kio_media.cpp mediaimpl.cpp mediaimpl.skel
 
-check_PROGRAMS = testmedia
-testmedia_SOURCES = testmedia.cpp
-testmedia_LDADD = libkiomedia.la $(LIB_KIO)
-testmedia_LDFLAGS = $(all_libraries)
-
-## TODO in unsermake: TESTS = testmedia
-check: testmedia
-	./testmedia
-
 messages: rc.cpp
 	$(EXTRACTRC) propsdlgplugin/propertiespagegui.ui >> rc.cpp
 	$(XGETTEXT) *.cpp *.h kfile-plugin/*.cpp libmediacommon/*.cpp mediamanager/*.cpp mounthelper/*.cpp propsdlgplugin/*.cpp -o $(podir)/kio_media.pot

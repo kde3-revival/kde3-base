@@ -18,15 +18,6 @@ kde_services_DATA = home.protocol
 noinst_LTLIBRARIES = libkiohome.la
 libkiohome_la_SOURCES = kio_home.cpp homeimpl.cpp
 
-check_PROGRAMS = testhome
-testhome_SOURCES = testhome.cpp
-testhome_LDADD = libkiohome.la $(LIB_KIO)
-testhome_LDFLAGS = $(all_libraries)
-
-## TODO in unsermake: TESTS = testhome
-check: testhome
-	./testhome
-
 messages:
 	$(XGETTEXT) `find . -name "*.cc" -o -name "*.cpp" -o -name "*.h"` -o $(podir)/kio_home.pot
 

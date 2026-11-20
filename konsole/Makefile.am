@@ -22,4 +22,4 @@ misc_DATA = eventsrc tips
 miscdir = $(kde_datadir)/konsole
 
 EXTRA_DIST = CONTRIBUTORS LICENSE.readme README.bugs \
-	README.linux.console tests $(xdg_apps_DATA)
+	README.linux.console $(xdg_apps_DATA)

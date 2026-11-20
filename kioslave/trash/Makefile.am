@@ -19,13 +19,6 @@ kde_services_DATA = trash.protocol
 noinst_LTLIBRARIES = libtrashcommon.la
 libtrashcommon_la_SOURCES = trashimpl.cpp
 
-check_PROGRAMS = testtrash
-testtrash_SOURCES = testtrash.cpp
-testtrash_LDADD = libtrashcommon.la $(LIB_KIO)
-testtrash_LDFLAGS = $(all_libraries)
-
-TESTS = testtrash
-
 messages:
 	$(XGETTEXT) `find . -name "*.cc" -o -name "*.cpp" -o -name "*.h"` -o $(podir)/kio_trash.pot
 

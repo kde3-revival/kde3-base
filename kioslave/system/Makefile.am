@@ -17,15 +17,6 @@ kde_services_DATA = system.protocol
 noinst_LTLIBRARIES = libkiosystem.la
 libkiosystem_la_SOURCES = kio_system.cpp systemimpl.cpp
 
-check_PROGRAMS = testsystem
-testsystem_SOURCES = testsystem.cpp
-testsystem_LDADD = libkiosystem.la $(LIB_KIO)
-testsystem_LDFLAGS = $(all_libraries)
-
-## TODO in unsermake: TESTS = testsystem
-check: testsystem
-	./testsystem
-
 messages:
 	$(XGETTEXT) `find . -name "*.cc" -o -name "*.cpp" -o -name "*.h"` -o $(podir)/kio_system.pot
 

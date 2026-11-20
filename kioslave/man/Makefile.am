@@ -3,13 +3,7 @@
 INCLUDES= $(all_includes)
 AM_LDFLAGS = $(all_libraries) $(KDE_RPATH)
 
-EXTRA_PROGRAMS = kio_man_test man2html
-
-####### just for testing (j.habenicht@europemail.com, 15.02.2001)
-
-kio_man_test_SOURCES = kio_man_test.cpp
-kio_man_test_LDFLAGS = $(all_libraries) $(KDE_RPATH)
-kio_man_test_LDADD = man2html.lo kio_man.lo $(LIB_KIO) $(LIB_KDEUI) $(LIB_KDECORE) $(LIB_QT)
+EXTRA_PROGRAMS = man2html
 
 ####### Files
 

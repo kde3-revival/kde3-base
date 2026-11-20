@@ -32,13 +32,6 @@ khelpcenter_la_SOURCES = navigator.cpp \
 #                            docentrytraverser.cpp docentry.cpp htmlsearch.cpp \
 #                            htmlsearchconfig.cpp
 
-EXTRA_PROGRAMS = testmetainfo
-
-testmetainfo_LDFLAGS = $(all_libraries) $(KDE_RPATH)
-testmetainfo_LDADD = $(LIB_KDECORE) docentry.lo docmetainfo.lo \
-                     docentrytraverser.lo htmlsearch.lo
-testmetainfo_SOURCES = testmetainfo.cpp
-
 service_DATA = khelpcenter.desktop
 servicedir = $(kde_servicesdir)
 

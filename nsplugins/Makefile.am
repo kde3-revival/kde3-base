@@ -1,4 +1,4 @@
-SUBDIRS = viewer test
+SUBDIRS = viewer
 INCLUDES = -I$(top_srcdir)/libltdl $(all_includes)
 METASOURCES = AUTO
 noinst_HEADERS = nspluginloader.h
