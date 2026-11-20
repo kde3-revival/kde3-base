@@ -71,7 +71,7 @@
                         <cstring>cbExternal</cstring>
                     </property>
                     <property name="text">
-                        <string>&amp;Play sounds</string>
+                        <string>Play &amp;sounds</string>
                     </property>
                 </widget>
                 <spacer row="1" column="0">
