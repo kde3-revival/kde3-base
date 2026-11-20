@@ -1,0 +1,21 @@
+kde3_add_kdeinit_executable(kcminit
+  SOURCES
+    main.cpp
+    main.skel
+  MOC
+    main.h
+  LINK
+    KDE3::kdeui
+    KDE3::kutils
+)
+
+kde3_add_kdeinit_executable(kcminit_startup
+  SOURCES
+    main.cpp
+    main.skel
+  MOC
+    main.h
+  LINK
+    KDE3::kdeui
+    KDE3::kutils
+)
