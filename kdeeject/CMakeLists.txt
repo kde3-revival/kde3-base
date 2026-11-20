@@ -1,0 +1,3 @@
+install(PROGRAMS
+  kdeeject
+  DESTINATION ${KDE3_BIN_INSTALL_DIR})
