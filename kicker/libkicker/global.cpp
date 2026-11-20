@@ -209,6 +209,36 @@ QPopupMenu* reduceMenu(QPopupMenu *menu)
     return menu;
 }
 
+void adjustPopupSize(QPopupMenu *menu)
+{
+    if (!menu)
+    {
+        return;
+    }
+
+    menu->adjustSize();
+
+    // When QPopupMenu::updateSize() resizes the menu at show time, it
+    // does setMaximumSize(calcSize), then calcSize = maximumSize() and
+    // resize(calcSize); calcSize is also what sizeHint() returns. The
+    // maximum size is updated only then, after the menu was positioned,
+    // so adjustSize() above cannot make the menu bigger than it was
+    // when last shown: a menu that got new items since (e.g. a longer
+    // "Most Used Applications" section in the K menu) is positioned
+    // with its old height and then grows downwards over the panel.
+    // If the size is not yet right, do what updateSize() will do, going
+    // through the (virtual) setMaximumSize()/resize() so that the K
+    // menu adds its side image to the width. If it already is right,
+    // leave it: sizeHint() then is the cached calcSize, which already
+    // includes the side image, and setMaximumSize() would add it again.
+    QSize s = menu->sizeHint();
+    if (menu->size() != s)
+    {
+        menu->setMaximumSize(s);
+        menu->resize(menu->maximumSize());
+    }
+}
+
 QPoint popupPosition(KPanelApplet::Direction d,
                      const QWidget* popup,
                      const QWidget* source,

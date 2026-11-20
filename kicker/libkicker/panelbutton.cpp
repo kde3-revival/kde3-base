@@ -953,7 +953,7 @@ void PanelPopupButton::slotExecMenu()
         initPopup();
     }
 
-    m_popup->adjustSize();
+    KickerLib::adjustPopupSize(m_popup);
     m_popup->exec(KickerLib::popupPosition(popupDirection(), m_popup, this));
 }
 

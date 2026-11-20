@@ -82,6 +82,17 @@ KDE_EXPORT QString newDesktopFile(const KURL&url);
  */
 KDE_EXPORT QPopupMenu *reduceMenu(QPopupMenu *);
 
+/**
+ * Resizes a popup menu to the size it will have when it is shown.
+ *
+ * Call this after (re)filling the menu and before using its size, e.g.
+ * for popupPosition(). QWidget::adjustSize() is not enough: when a menu
+ * is resized at show time (as the K menu with its side image is),
+ * QPopupMenu sets its maximumSize() to that size, so adjustSize() cannot
+ * make the menu bigger than it was the last time it was shown.
+ */
+KDE_EXPORT void adjustPopupSize(QPopupMenu *);
+
 
 /**
  * Calculate the appropriate position for a popup menu based on the

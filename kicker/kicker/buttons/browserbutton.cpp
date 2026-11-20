@@ -116,6 +116,7 @@ void BrowserButton::initPopup()
 void BrowserButton::slotDelayedPopup()
 {
     topMenu->initialize();
+    KickerLib::adjustPopupSize(topMenu);
     topMenu->popup(KickerLib::popupPosition(popupDirection(), topMenu, this));
     setDown(false);
 }
