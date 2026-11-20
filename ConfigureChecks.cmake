@@ -415,10 +415,22 @@ set(DPMSLIB "")
 if(KDE3_WITH_DPMS AND X11_dpms_FOUND)
   set(HAVE_DPMS 1)
   set(DPMSLIB X11::X11)
+  # AC_CHECK_DECL: is the prototype in <X11/extensions/dpms.h>?  Compile
+  # only (a static library as try_compile target is not linked).
   cmake_push_check_state(RESET)
   set(CMAKE_REQUIRED_INCLUDES ${X11_INCLUDE_DIR})
-  check_symbol_exists(DPMSCapable "X11/Xlib.h;X11/extensions/dpms.h" HAVE_DPMSCAPABLE_PROTO)
-  check_symbol_exists(DPMSInfo "X11/Xlib.h;X11/extensions/dpms.h" HAVE_DPMSINFO_PROTO)
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+  foreach(_decl DPMSCapable DPMSInfo)
+    string(TOUPPER "HAVE_${_decl}_PROTO" _var)
+    check_c_source_compiles("#include <X11/Xlib.h>
+#include <X11/extensions/dpms.h>
+int main(void) {
+#ifndef ${_decl}
+  (void) ${_decl};
+#endif
+  return 0; }" ${_var})
+  endforeach()
+  unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
   cmake_pop_check_state()
 endif()
 
