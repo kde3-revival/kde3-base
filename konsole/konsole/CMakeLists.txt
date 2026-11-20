@@ -24,7 +24,7 @@ kde3_add_module(libkonsolepart
     session.h
     zmodem_dialog.h
   LINK
-    X11::Xtst
+    ${LIB_XTEST}
     KDE3::kparts
 )
 
@@ -77,8 +77,8 @@ kde3_add_kdeinit_executable(konsole
     KDE3::kio
     KDE3::kdeprint
     ${KDE3_LIBUTIL}
-    X11::Xtst
-    X11::Xrender
+    ${LIB_XTEST}
+    ${LIB_XRENDER}
 )
 
 # "make fonts": ./fontembedder $(srcdir)/linefont.src > linefont.h

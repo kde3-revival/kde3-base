@@ -14,7 +14,7 @@ kde3_add_module(kcm_keyboard
     kcmmisc.h
   LINK
     X11::xkbfile
-    X11::Xtst
+    ${LIB_XTEST}
     KDE3::kio
 )
 

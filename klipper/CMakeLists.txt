@@ -24,7 +24,7 @@ kde3_add_library(klipper_common OBJECT
   LINK
     KDE3::kdeui
     KDE3::kio
-    X11::Xfixes
+    ${LIB_XFIXES}
 )
 
 kde3_add_module(klipper_panelapplet

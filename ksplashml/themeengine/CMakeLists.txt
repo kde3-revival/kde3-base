@@ -11,7 +11,7 @@ kde3_add_library(ksplashthemes SHARED VERSION_INFO 0:0:0
     themeengine.h
   LINK
     KDE3::kdeui
-    X11::Xcursor
+    ${LIB_XCURSOR}
 )
 
 install(FILES

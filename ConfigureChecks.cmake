@@ -88,6 +88,20 @@ if(X11_Xrender_FOUND)
   set(HAVE_XRENDER 1)
 endif()
 
+# LIB_* of the optional X libraries: the imported target or nothing
+foreach(_x XTEST:XTest:Xtst XCURSOR:Xcursor:Xcursor XRENDER:Xrender:Xrender
+           XFIXES:Xfixes:Xfixes XRANDR:Xrandr:Xrandr XSS:Xss:Xss)
+  string(REPLACE ":" ";" _x "${_x}")
+  list(GET _x 0 _var)
+  list(GET _x 1 _found)
+  list(GET _x 2 _tgt)
+  if(X11_${_found}_FOUND)
+    set(LIB_${_var} X11::${_tgt})
+  else()
+    set(LIB_${_var} "")
+  endif()
+endforeach()
+
 # ---- paths ---------------------------------------------------------------
 # kdm/configure.in.in asked imake (xmkmf) for BINDIR and LIBDIR of X; imake
 # is gone from current X.Org, these are its values there.
@@ -259,8 +273,10 @@ check_function_exists(sigaction HAVE_SIGACTION)
 
 # ---- ksplashml (ksplashml/themeengine/simple/configure.in.in) ------------
 option(KDE3_WITH_XINERAMA "Xinerama support in ksplashsimple" ON)
+set(LIB_XINERAMA "")
 if(KDE3_WITH_XINERAMA AND X11_Xinerama_FOUND)
   set(HAVE_XINERAMA 1)
+  set(LIB_XINERAMA X11::Xinerama X11::Xext)
 endif()
 
 # ---- kwin (kwin/kompmgr/configure.in.in) ---------------------------------
@@ -321,3 +337,4 @@ int main(void) { DNSServiceRefDeallocate((DNSServiceRef) 0);
     cmake_pop_check_state()
   endif()
 endif()
+

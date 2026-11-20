@@ -27,7 +27,7 @@ kde3_add_library(khotkeys_shared SHARED VERSION_INFO 1:0:0
     windows.h
   LINK
     KDE3::kio
-    X11::Xtst
+    ${LIB_XTEST}
     X11::Xext
     X11::X11
 )
