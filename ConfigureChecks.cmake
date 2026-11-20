@@ -186,3 +186,20 @@ else()
   set(PASSWDLIBS ${LIBCRYPT} ${LIBSHADOW})
 endif()
 
+# ---- kdesu (kdesu/configure.in.in) ---------------------------------------
+# the group kdesud is installed setgid to: "nogroup", "nobody" or 65534
+set(KDESUD_NOGROUP 65534)
+foreach(_grp nogroup nobody)
+  execute_process(COMMAND getent group ${_grp} RESULT_VARIABLE _r
+    OUTPUT_QUIET ERROR_QUIET)
+  if(_r EQUAL 0)
+    set(KDESUD_NOGROUP ${_grp})
+    break()
+  endif()
+endforeach()
+option(KDE3_KDESU_SUDO_BACKEND "Use sudo instead of su as kdesu backend" OFF)
+if(KDE3_KDESU_SUDO_BACKEND)
+  set(DEFAULT_SUPER_USER_COMMAND sudo)
+else()
+  set(DEFAULT_SUPER_USER_COMMAND su)
+endif()

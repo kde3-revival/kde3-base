@@ -98,3 +98,7 @@
 /* Define if you use shadow passwords */
 #cmakedefine HAVE_SHADOW 1
 
+/* ---- kdesu -------------------------------------------------------- */
+
+/* Use su or sudo */
+#define DEFAULT_SUPER_USER_COMMAND "@DEFAULT_SUPER_USER_COMMAND@"

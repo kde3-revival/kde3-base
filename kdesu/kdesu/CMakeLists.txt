@@ -1,0 +1,10 @@
+kde3_add_executable(kdesu
+  SOURCES
+    kdesu.cpp
+    sudlg.cpp
+  MOC
+    sudlg.h
+  LINK
+    KDE3::kio
+    KDE3::kdesu
+)

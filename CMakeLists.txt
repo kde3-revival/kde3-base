@@ -34,3 +34,4 @@ install(PROGRAMS
 
 add_subdirectory(libkonq)
 add_subdirectory(kcheckpass)
+add_subdirectory(kdesu)
