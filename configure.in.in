@@ -24,11 +24,6 @@ AC_CHECK_HEADER(pty.h)
 AC_CHECK_FUNC(ptsname,,)
 
 
-dnl Checks for RPC functions
-AC_CHECK_FUNC(clnttcp_create, , [
-  AC_CHECK_LIB(nsl, clnttcp_create, [LIBRPC="-lnsl"])])
-AC_SUBST(LIBRPC)
-
 dnl Check for ossaudio on NetBSD
 AC_CHECK_LIB(ossaudio, main, [LIBOSSAUDIO="-lossaudio"])
 AC_SUBST(LIBOSSAUDIO)

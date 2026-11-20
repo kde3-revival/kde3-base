@@ -3,12 +3,9 @@
 "dtd/kdex.dtd" [
 <!ENTITY kio-bzip SYSTEM "bzip.docbook">
 <!ENTITY kio-bzip2 SYSTEM "bzip2.docbook">
-<!ENTITY kio-cgi SYSTEM "cgi.docbook">
 <!ENTITY kio-data SYSTEM "data.docbook">
 <!ENTITY kio-file SYSTEM "file.docbook">
-<!ENTITY kio-finger SYSTEM "finger.docbook">
 <!ENTITY kio-fish SYSTEM "fish.docbook">
-<!ENTITY kio-floppy SYSTEM "floppy.docbook">
 <!ENTITY kio-ftp SYSTEM "ftp.docbook">
 <!ENTITY kio-gopher SYSTEM "gopher.docbook">
 <!ENTITY kio-gzip SYSTEM "gzip.docbook">
@@ -21,12 +18,9 @@
 <!ENTITY kio-lan SYSTEM "lan.docbook">
 <!ENTITY kio-ldap SYSTEM "ldap.docbook">
 <!ENTITY kio-mailto SYSTEM "mailto.docbook">
-<!ENTITY kio-mac SYSTEM "mac.docbook">
 <!ENTITY kio-man SYSTEM "man.docbook">
 <!ENTITY kio-mrml SYSTEM "mrml.docbook"> <!-- post release, put this in the right module -->
 <!ENTITY kio-news SYSTEM "news.docbook">
-<!ENTITY kio-nfs SYSTEM "nfs.docbook">
-<!ENTITY kio-nntp SYSTEM "nntp.docbook">
 <!ENTITY kio-pop3 SYSTEM "pop3.docbook">
 <!ENTITY kio-pop3s SYSTEM "pop3s.docbook">
 <!ENTITY kio-print SYSTEM "print.docbook">
@@ -51,12 +45,9 @@
 <title>IO-Slaves</title>
 &kio-bzip;
 &kio-bzip2;
-&kio-cgi;
 &kio-data;
 &kio-file;
-&kio-finger;
 &kio-fish;
-&kio-floppy;
 &kio-ftp;
 &kio-gopher;
 &kio-gzip;
@@ -69,12 +60,9 @@
 &kio-lan;
 &kio-ldap;
 &kio-mailto;
-&kio-mac;
 &kio-man;
 &kio-mrml;
 &kio-news;
-&kio-nfs;
-&kio-nntp;
 &kio-pop3;
 &kio-pop3s;
 &kio-print;
