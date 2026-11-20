@@ -1,0 +1,50 @@
+include_directories(
+  "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  "${CMAKE_CURRENT_BINARY_DIR}/.."
+  "${PROJECT_SOURCE_DIR}"
+  "${PROJECT_BINARY_DIR}"
+  ${X11_INCLUDE_DIR})
+
+kde3_add_executable(kdm
+  SOURCES
+    access.c
+    auth.c
+    bootman.c
+    choose.c
+    client.c
+    ctrl.c
+    daemon.c
+    dm.c
+    dpylist.c
+    error.c
+    genauth.c
+    inifile.c
+    krb5auth.c
+    mitauth.c
+    netaddr.c
+    policy.c
+    process.c
+    protodpy.c
+    reset.c
+    resource.c
+    rpcauth.c
+    server.c
+    session.c
+    sessreg.c
+    socket.c
+    streams.c
+    util.c
+    xdmauth.c
+    xdmcp.c
+  LINK
+    X11::X11
+    X11::Xau
+    ${LIBXDMCP}
+    ${PASSWDLIBS}
+    ${LIBSHADOW}
+    ${KRB5_LIBS}
+    ${LIBRESOLV}
+    ${KDE3_LIBUTIL}
+)
+# kdm_COMPILE_FIRST = ../config.ci
+add_dependencies(kdm kdm_config_ci)

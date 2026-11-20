@@ -209,3 +209,44 @@
 #cmakedefine COMPILE_LINUXCDPOLLING 1
 #cmakedefine HAVE_STATVFS 1
 
+/* ---- kdm ---------------------------------------------------------- */
+
+/* Define if the system uses a BSD-style init */
+#cmakedefine BSD_INIT 1
+#cmakedefine HAVE_GETTTYENT 1
+/* Define if the system uses extended utmp */
+#cmakedefine HAVE_UTMPX 1
+/* Define if the system has no getutent */
+#cmakedefine BSD_UTMP 1
+#cmakedefine HAVE_STRUCT_UTMP_UT_USER 1
+#cmakedefine HAVE_STRUCT_PASSWD_PW_EXPIRE 1
+#cmakedefine HAVE_STRUCT_SOCKADDR_IN_SIN_LEN 1
+#cmakedefine HAVE_SETLOGIN 1
+#cmakedefine HAVE_SETUSERCONTEXT 1
+#cmakedefine HAVE_GETUSERSHELL 1
+#cmakedefine HAVE_LOGIN_GETCLASS 1
+#cmakedefine HAVE_AUTH_TIMEOK 1
+#cmakedefine HAVE_SETPROCTITLE 1
+#cmakedefine HAVE_SYSINFO 1
+#cmakedefine HAVE_STRNLEN 1
+#cmakedefine HAVE_ARC4RANDOM 1
+/* Define the system's entropy device */
+#cmakedefine DEV_RANDOM "@DEV_RANDOM@"
+/* Define if kdm should be built with syslog support */
+#cmakedefine USE_SYSLOG 1
+/* Define if kdm should be built with XDMCP support */
+#cmakedefine XDMCP 1
+/* Define if kdm should be built with XDMAUTH support */
+#cmakedefine HASXDMAUTH 1
+/* Define if kdm should use Kerberos 5 for Xauth cookies. */
+#cmakedefine K5AUTH 1
+/* Define if kdm should use Sun's secure RPC for Xauth cookies. */
+#cmakedefine SECURE_RPC 1
+/* Define if kdm should use PAM */
+#cmakedefine USE_PAM 1
+/* Define if kdm should use shadow passwords */
+#cmakedefine USESHADOW 1
+/* Build kdm with built-in xconsole */
+#cmakedefine WITH_KDM_XCONSOLE 1
+/* Number of bits in a file offset, on hosts where this is settable. */
+#cmakedefine _FILE_OFFSET_BITS @_FILE_OFFSET_BITS@
