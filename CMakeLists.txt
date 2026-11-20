@@ -29,3 +29,5 @@ install(PROGRAMS
   startkde
   kde3
   DESTINATION ${KDE3_BIN_INSTALL_DIR})
+
+add_subdirectory(libkonq)
