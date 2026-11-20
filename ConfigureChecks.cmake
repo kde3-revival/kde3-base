@@ -253,3 +253,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(HAVE_PROC_CWD 1)
 endif()
 
+# ---- kdeprint (kdeprint/kprinter/configure.in.in) ------------------------
+check_function_exists(sigset HAVE_SIGSET)
+check_function_exists(sigaction HAVE_SIGACTION)
+

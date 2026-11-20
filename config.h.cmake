@@ -125,3 +125,8 @@
 /* Defines whether /proc/`pid`/cwd exists */
 #cmakedefine HAVE_PROC_CWD 1
 
+/* ---- kdeprint ----------------------------------------------------- */
+
+#cmakedefine HAVE_SIGSET 1
+#cmakedefine HAVE_SIGACTION 1
+

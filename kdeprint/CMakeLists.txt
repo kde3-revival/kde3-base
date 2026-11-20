@@ -1,0 +1,5 @@
+add_subdirectory(printmgr)
+add_subdirectory(kjobviewer)
+add_subdirectory(kprinter)
+add_subdirectory(slave)
+add_subdirectory(kdeprint_part)
