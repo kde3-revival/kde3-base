@@ -39,20 +39,12 @@ SoundRecorder::create_ptr SoundRecorder::create_fun = NULL;
 
 bool SoundRecorder::init( KLibrary* lib )
 {
-#ifdef HAVE_ARTS
-    if( create_fun == NULL && lib != NULL )
-        create_fun = (create_ptr) lib->symbol( "khotkeys_soundrecorder_create" );
-#endif
 //    kdDebug( 1217 ) << "soundrecorder:" << create_fun << ":" << lib << endl;
     return create_fun != NULL;
 }
 
 SoundRecorder* SoundRecorder::create( QObject* parent, const char* name )
 {
-#ifdef HAVE_ARTS
-    if( create_fun != NULL )
-        return create_fun( parent, name );
-#endif
     return new SoundRecorder( parent, name );
 }
 

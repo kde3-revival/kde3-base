@@ -233,7 +233,6 @@ PlayerSettingsDialog::PlayerSettingsDialog( QWidget *parent, bool modal )
 
     connect( m_ui->cbExternal, SIGNAL( toggled( bool ) ), this, SLOT( externalToggled( bool ) ) );
     connect( m_ui->grpPlayers, SIGNAL( clicked( int ) ), this, SLOT( slotChanged() ) );
-    connect( m_ui->volumeSlider, SIGNAL( valueChanged ( int ) ), this, SLOT( slotChanged() ) );
     connect( m_ui->reqExternal, SIGNAL( textChanged( const QString& ) ), this, SLOT( slotChanged() ) );
 }
 
@@ -245,50 +244,17 @@ void PlayerSettingsDialog::load( bool useDefaults )
     bool useExternal = config.readBoolEntry( "Use external player", false );
     m_ui->cbExternal->setChecked( useExternal );
     m_ui->reqExternal->setURL( config.readPathEntry( "External player" ) );
-    m_ui->volumeSlider->setValue( config.readNumEntry( "Volume", 100 ) );
-
-    if ( !m_ui->cbExternal->isChecked() )
-    {
-        config.setGroup( "StartProgress" );
-        if ( config.readBoolEntry( "Use Arts", true ) )
-        {
-            m_ui->cbArts->setChecked( true );
-        }
-        else
-        {
-            m_ui->cbNone->setChecked( true );
-        }
-    }
+    m_ui->cbNone->setChecked( !useExternal );
 }
 
 void PlayerSettingsDialog::save()
 {
-    // see kdelibs/arts/knotify/knotify.cpp
+    // see kdelibs/knotify/knotify.cpp
     KConfig config( "knotifyrc", false, false );
     config.setGroup( "Misc" );
 
     config.writePathEntry( "External player", m_ui->reqExternal->url() );
     config.writeEntry( "Use external player", m_ui->cbExternal->isChecked() );
-    config.writeEntry( "Volume", m_ui->volumeSlider->value() );
-
-    config.setGroup( "StartProgress" );
-
-    if ( m_ui->cbNone->isChecked() )
-    {
-        // user explicitly says "no sound!"
-        config.writeEntry( "Use Arts", false );
-    }
-    else if ( m_ui->cbArts->isChecked() )
-    {
-        // use explicitly said to use aRts so we turn it back on
-        // we don't want to always set this to the value of
-        // m_ui->cbArts->isChecked() since we don't want to
-        // turn off aRts support just because they also chose
-        // an external player
-        config.writeEntry( "Use Arts", true );
-        config.writeEntry( "Arts Init", true ); // reset it for the next time
-    }
-
     config.sync();
 }
 

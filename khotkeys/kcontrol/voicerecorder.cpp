@@ -37,10 +37,6 @@ VoiceRecorder::arts_play_fun VoiceRecorder::arts_play = NULL;
 
 bool VoiceRecorder::init( KLibrary* lib )
 {
-#ifdef HAVE_ARTS
-    if( arts_play == NULL && lib != NULL )
-        arts_play = (arts_play_fun) lib->symbol( "khotkeys_voicerecorder_arts_play" );
-#endif
 //    kdDebug( 1217 ) << "voicerecorder:" << arts_play << ":" << lib << endl;
     return arts_play != NULL;
 }
@@ -84,24 +80,6 @@ void VoiceRecorder::slotStopPressed()
 
 void VoiceRecorder::slotPlayPressed()
 {
-#ifdef HAVE_ARTS
-        if( !haveArts() || arts_play == NULL )
-            return;
-	/*if(!_modified)
-	{
-		QString fileName = locateLocal( "appdata", _original_voiuceid +  ".wav"  );
-                arts_play( fileName );
-	}
-	else
-	{*/
-	if(!_tempFile)
-	{
-		_tempFile=new KTempFile(QString::null,".wav");
-		_tempFile->setAutoDelete(true);
-	}
-	_sound.save(_tempFile->name());
-        arts_play( _tempFile->name());
-#endif
 }
 
 Sound VoiceRecorder::sound() const

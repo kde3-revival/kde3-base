@@ -17,16 +17,12 @@ AC_CHECK_HEADERS(sys/time.h crypt.h \
 	lastlog.h sys/socket.h sys/sockio.h \
 	sys/m_wait.h ncurses.h paths.h login_cap.h syslog.h \
 	sys/wait.h sys/ucred.h sys/mount.h floatingpoint.h fstab.h mntent.h \
-	Alib.h libutil.h util.h time.h limits.h vfork.h string.h float.h \
+	libutil.h util.h time.h limits.h vfork.h string.h float.h \
 	math.h nan.h ieeefp.h
 )
 AC_CHECK_HEADER(pty.h)
 AC_CHECK_FUNC(ptsname,,)
 
-
-dnl Checks for Alib on HP-UX (added by deller, Apr 29 1999)
-AC_CHECK_LIB(Alib, main, [LIBALIB="-lAlib"]) dnl HP-UX network audio server
-AC_SUBST(LIBALIB)
 
 dnl Checks for RPC functions
 AC_CHECK_FUNC(clnttcp_create, , [
@@ -36,12 +32,6 @@ AC_SUBST(LIBRPC)
 dnl Check for ossaudio on NetBSD
 AC_CHECK_LIB(ossaudio, main, [LIBOSSAUDIO="-lossaudio"])
 AC_SUBST(LIBOSSAUDIO)
-
-dnl Check for AIX stuff
-AC_CHECK_LIB(cfg, main, [LIBCFG="-lcfg"]) dnl for AIX
-AC_SUBST(LIBCFG)
-AC_CHECK_LIB(odm, main, [LIBODM="-lodm"]) dnl for AIX
-AC_SUBST(LIBODM)
 
 dnl SMB checks moved to their own configure.in.in
 

@@ -62,9 +62,7 @@ Voice::~Voice()
 
 void Voice::enable( bool enabled_P )
     {
-#ifndef HAVE_ARTS
     enabled_P = false; // never enabled when there's no support
-#endif
     if( _enabled == enabled_P )
         return;
     _enabled = enabled_P;

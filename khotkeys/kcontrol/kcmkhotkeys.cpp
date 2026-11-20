@@ -297,18 +297,6 @@ void Module::changed()
 
 void Module::init_arts()
     {
-#ifdef HAVE_ARTS
-    if( haveArts())
-        {
-        KLibrary* arts = KLibLoader::self()->library( "khotkeys_arts" );
-        if( arts == NULL )
-            kdDebug( 1217 ) << "Couldn't load khotkeys_arts:" << KLibLoader::self()->lastErrorMessage() << endl;
-        if( arts != NULL && VoiceRecorder::init( arts ))
-            ; // ok
-        else
-            disableArts();
-        }
-#endif
     }
 
 Module* module; // CHECKME

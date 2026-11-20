@@ -12,7 +12,7 @@ kcm_khotkeys_la_SOURCES = \
     windowselector.cpp gestures_settings_tab.cpp general_settings_tab.cpp \
     voicerecorder.cpp voicerecordpage.cpp voice_settings_tab.cpp
     
-kcm_khotkeys_la_LIBADD  = ui/libui.la $(LIB_KDEUI) $(LIB_ARTS) 
+kcm_khotkeys_la_LIBADD  = ui/libui.la $(LIB_KDEUI)
 kcm_khotkeys_la_LDFLAGS = $(all_libraries) -module -avoid-version -no-undefined
 
 kcm_khotkeys_init_la_SOURCES = init.cpp

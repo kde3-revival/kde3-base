@@ -1,4 +1,4 @@
-SUBDIRS = shared kcontrol app data update $(KHOTKEYS_ARTS_SUBDIR)
+SUBDIRS = shared kcontrol app data update
 
 khotkeys_autostart_DATA = khotkeys.desktop
 khotkeys_autostartdir = $(datadir)/autostart

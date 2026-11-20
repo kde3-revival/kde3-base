@@ -51,10 +51,6 @@ Triggers_tab::Triggers_tab( QWidget* parent_P, const char* name_P )
     popup->insertItem( i18n( "Shortcut Trigger..." ), TYPE_SHORTCUT_TRIGGER );
     popup->insertItem( i18n( "Gesture Trigger..." ), TYPE_GESTURE_TRIGGER );
     popup->insertItem( i18n( "Window Trigger..." ), TYPE_WINDOW_TRIGGER );
-#ifdef HAVE_ARTS
-    if( haveArts())
-        popup->insertItem( i18n( "Voice Trigger..." ), TYPE_VOICE_TRIGGER );
-#endif
     connect( popup, SIGNAL( activated( int )), SLOT( new_selected( int )));
     connect( triggers_listview, SIGNAL( doubleClicked ( QListViewItem *, const QPoint &, int ) ),
              this, SLOT( modify_pressed() ) );

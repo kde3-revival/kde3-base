@@ -571,14 +571,6 @@ Control</guilabel> tab, you can configure your power management options for
 this screen such as blanking.  </para></listitem>
 </varlistentry>
 
-<varlistentry><term><guilabel>Joystick</guilabel></term>
-
-<listitem><para>This section allows you to configure your joystick and test
-that it is working properly. You can also calibrate your joystick here, and
-manually specify the joystick device if it is not autodetected correctly.
-</para></listitem>
-</varlistentry>
-
 <varlistentry><term><guilabel>Keyboard</guilabel></term>
 
 <listitem><para>This module allows you to configure basic keyboard settings.

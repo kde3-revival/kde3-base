@@ -270,16 +270,10 @@ software.
 <para><ulink url="help:/kinfocenter/protocols/index.html">Protocols</ulink></para>
 </listitem>
 <listitem>
-<para><ulink url="help:/kinfocenter/samba/index.html">Samba Status Information</ulink></para>
-</listitem>
-<listitem>
 <para><ulink url="help:/kinfocenter/scsi/index.html">SCSI</ulink></para>
 </listitem>
 <listitem>
 <para><ulink url="help:/kinfocenter/sound/index.html">Sound</ulink></para>
-</listitem>
-<listitem>
-<para><ulink url="help:/kinfocenter/usb/index.html">USB Devices</ulink></para>
 </listitem>
 <listitem>
 <para><ulink url="help:/kinfocenter/xserver/index.html">X-Server</ulink></para>

@@ -16,7 +16,7 @@
 #    the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
 #    Boston, MA 02110-1301, USA.
 
-INCLUDES = -I$(kde_includes)/arts $(all_includes)
+INCLUDES = $(all_includes)
 SUBDIRS = pics favicons
 
 lib_LTLIBRARIES = libkonq.la
@@ -52,15 +52,6 @@ include_HEADERS = konq_popupmenu.h knewmenu.h \
     kivdirectoryoverlay.h \
     konq_faviconmgr.h konq_xmlguiclient.h konqbookmarkmanager.h konq_filetip.h
 
-
-if include_ARTS
-ARTS_MODULE = konq_sound.la
-endif
-
-kde_module_LTLIBRARIES = $(ARTS_MODULE)
-konq_sound_la_SOURCES = konq_sound.cc
-konq_sound_la_LDFLAGS = $(all_libraries) -module $(KDE_PLUGIN)
-konq_sound_la_LIBADD = -lsoundserver_idl -lartskde
 
 noinst_HEADERS = konq_sound.h
 

@@ -2,7 +2,6 @@
 configure.in.in
 ./kappfinder/configure.in.in
 ./kcontrol/access/configure.in.in
-./kcontrol/accessibility/configure.in.in
 ./kcontrol/crypto/configure.in.in
 ./kcontrol/energy/configure.in.in
 ./kcontrol/fonts/configure.in.in
@@ -10,15 +9,11 @@ configure.in.in
 ./kcontrol/info/configure.in.in
 ./kcontrol/input/configure.in.bot
 ./kcontrol/input/configure.in.in
-./kcontrol/joystick/configure.in.in
 ./kcontrol/kfontinst/configure.in.bot
 ./kcontrol/kfontinst/configure.in.in
 ./kcontrol/nics/configure.in.in
 ./kcontrol/randr/configure.in.in
 ./kcontrol/screensaver/configure.in.in
-./kcontrol/smartcard/configure.in.in
-./kcontrol/usbview/configure.in.in
-./kcontrol/view1394/configure.in.in
 ./kdeprint/configure.in.in
 ./kdeprint/kprinter/configure.in.in
 ./kdesktop/configure.in.in

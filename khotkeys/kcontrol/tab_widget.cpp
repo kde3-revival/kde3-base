@@ -77,11 +77,6 @@ Tab_widget::Tab_widget( QWidget* parent_P, const char* name_P )
          i < TAB_END;
          ++i )
         connect( this, SIGNAL( clear_pages_signal()), pages[ i ], SLOT( clear_data()));
-#ifdef HAVE_ARTS
-    if( haveArts())
-        show_pages(( TAB_INFO, TAB_GENERAL_SETTINGS, TAB_GESTURES_SETTINGS, TAB_VOICE_SETTINGS ));
-    else
-#endif
         show_pages(( TAB_INFO, TAB_GENERAL_SETTINGS, TAB_GESTURES_SETTINGS ));
     current_type = NONE;
     current_data_type = TYPE_GENERIC;
@@ -343,11 +338,6 @@ void Tab_widget::check_action_type()
         kdDebug( 1217 ) << "setting none" << endl;
         if( current_type == NONE )
             return;
-#ifdef HAVE_ARTS
-        if( haveArts())
-            show_pages(( TAB_INFO, TAB_GENERAL_SETTINGS, TAB_GESTURES_SETTINGS, TAB_VOICE_SETTINGS ));
-        else
-#endif
             show_pages(( TAB_INFO, TAB_GENERAL_SETTINGS, TAB_GESTURES_SETTINGS ));
         current_type = NONE;
         return;
