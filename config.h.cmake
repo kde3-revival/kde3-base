@@ -146,3 +146,44 @@
 
 /* Define if you have the XComposite extension */
 #cmakedefine HAVE_XCOMPOSITE 1
+
+/* ---- kdesktop ----------------------------------------------------- */
+
+/* Define if you have the XScreenSaver extension */
+#cmakedefine HAVE_XSCREENSAVER 1
+/* Define if you have the xf86misc extension */
+#cmakedefine HAVE_XF86MISC 1
+/* Define if you have XF86MiscSetGrabKeysState() */
+#cmakedefine HAVE_XF86MISCSETGRABKEYSSTATE 1
+/* Define if you have glXChooseVisual() */
+#cmakedefine HAVE_GLXCHOOSEVISUAL 1
+
+/* ---- kcontrol ----------------------------------------------------- */
+
+/* If we are going to use OpenSSL */
+#cmakedefine HAVE_SSL 1
+/* Define if you have DPMS support */
+#cmakedefine HAVE_DPMS 1
+/* Define if you have the DPMSCapable prototype in <X11/extensions/dpms.h> */
+#cmakedefine HAVE_DPMSCAPABLE_PROTO 1
+/* Define if you have the DPMSInfo prototype in <X11/extensions/dpms.h> */
+#cmakedefine HAVE_DPMSINFO_PROTO 1
+/* Defines if your system has the libfontconfig library */
+#cmakedefine HAVE_FONTCONFIG 1
+/* Define if you have FreeType2 library */
+#cmakedefine HAVE_FREETYPE2 1
+/* Defines if you have Xft */
+#cmakedefine HAVE_XFT 1
+#cmakedefine HAVE_LINUX_RAW_H 1
+#cmakedefine HAVE_SYS_RAW_H 1
+#cmakedefine HAVE_DEVINFO_H 1
+/* Define if you have long long as datatype */
+#cmakedefine HAVE_LONG_LONG 1
+/* Defined if you have libusb */
+#cmakedefine HAVE_LIBUSB 1
+#cmakedefine HAVE_GETIFADDRS 1
+#cmakedefine HAVE_GETNAMEINFO 1
+/* Define to 1 if `sa_len' is a member of `struct sockaddr'. */
+#cmakedefine HAVE_STRUCT_SOCKADDR_SA_LEN 1
+/* The size of `long', as computed by sizeof. */
+#define SIZEOF_LONG @SIZEOF_LONG@
