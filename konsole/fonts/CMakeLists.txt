@@ -1,10 +1,17 @@
-# The PCF fonts are made from the BDF sources with bdftopcf.
+# The PCF fonts are made from the BDF sources with bdftopcf, which the
+# build needs, like the autotools build did; KDEBASE_KONSOLE_FONTS=OFF
+# leaves the fonts out instead.
+option(KDEBASE_KONSOLE_FONTS "Install Konsole's console fonts (needs bdftopcf)" ON)
+if(NOT KDEBASE_KONSOLE_FONTS)
+  return()
+endif()
 find_program(BDFTOPCF_EXECUTABLE bdftopcf)
 find_program(MKFONTDIR_EXECUTABLE mkfontdir)
 mark_as_advanced(BDFTOPCF_EXECUTABLE MKFONTDIR_EXECUTABLE)
 if(NOT BDFTOPCF_EXECUTABLE)
-  message(STATUS "bdftopcf not found: the Konsole console fonts are not installed")
-  return()
+  message(FATAL_ERROR "bdftopcf (X.Org's font utilities) was not found; it is needed "
+    "for Konsole's console fonts.  Install it, or configure with "
+    "-DKDEBASE_KONSOLE_FONTS=OFF to build without the fonts.")
 endif()
 
 set(_fonts)
