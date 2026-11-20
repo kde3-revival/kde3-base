@@ -58,7 +58,7 @@
                 <property name="margin">
                     <number>0</number>
                 </property>
-                <widget class="QRadioButton" row="2" column="0" rowspan="1" colspan="3">
+                <widget class="QRadioButton" row="3" column="0" rowspan="1" colspan="3">
                     <property name="name">
                         <cstring>cbNone</cstring>
                     </property>
@@ -71,7 +71,7 @@
                         <cstring>cbExternal</cstring>
                     </property>
                     <property name="text">
-                        <string>&amp;Use an external player</string>
+                        <string>&amp;Play sounds</string>
                     </property>
                 </widget>
                 <spacer row="1" column="0">
@@ -120,6 +120,23 @@
                             <verstretch>0</verstretch>
                         </sizepolicy>
                     </property>
+                    <property name="whatsThis" stdset="0">
+                        <string>The program that plays the notification sounds, for instance paplay or pw-play. Leave it empty to play them through the sound server (PulseAudio or PipeWire), or, when there is none, with a player found automatically.</string>
+                    </property>
+                </widget>
+                <widget class="QLabel" row="2" column="1" rowspan="1" colspan="2">
+                    <property name="name">
+                        <cstring>lblPlayerHint</cstring>
+                    </property>
+                    <property name="enabled">
+                        <bool>false</bool>
+                    </property>
+                    <property name="text">
+                        <string>Leave the player empty to use the sound server (PulseAudio/PipeWire) or an auto-detected player.</string>
+                    </property>
+                    <property name="alignment">
+                        <set>WordBreak|AlignTop</set>
+                    </property>
                 </widget>
             </grid>
         </widget>
@@ -155,6 +172,12 @@
         <sender>cbExternal</sender>
         <signal>toggled(bool)</signal>
         <receiver>reqExternal</receiver>
+        <slot>setEnabled(bool)</slot>
+    </connection>
+    <connection>
+        <sender>cbExternal</sender>
+        <signal>toggled(bool)</signal>
+        <receiver>lblPlayerHint</receiver>
         <slot>setEnabled(bool)</slot>
     </connection>
 </connections>

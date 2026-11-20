@@ -126,16 +126,11 @@ a message box appear in response to a system notification.  One notification doe
 <para>The bottom line operates the same, but when you select the button labeled <guibutton>Turn Off All</guibutton>, all the notifications of the selected type will be disabled.</para>
 </sect2>
 <sect2><title>Change sound player options</title>
-<para>If you click the button labeled <guibutton>Player settings</guibutton>, a small dialog box will appear with three radio buttons:</para>
+<para>If you click the button labeled <guibutton>Player settings</guibutton>, a small dialog box will appear with two radio buttons:</para>
 <variablelist>
 <varlistentry>
-<term><guilabel>Use the &kde; sound system</guilabel></term>
-<listitem><para>If a mark is in this radio button, &kde; will play all sound notifications through the &kde; sound system (&arts;).  You can adjust the volume of system notifications using the slider.</para>
-<note><para>The slider only affects &kde; system notifications.  Changes to this slider will not affect other sounds on your computer.</para></note></listitem>
-</varlistentry>
-<varlistentry>
-<term><guilabel>Use external player</guilabel></term>
-<listitem><para>If a mark is in this radio button, &kde; will not use the &kde; sound system to play the sound.  This is a good choice if the sound format you want to use is not supported by the &kde; notification system or if you don't use the &arts; sound daemon. After checking the radio box, enter the full path and name of the program you want to use into the text field.  You can use the folder button (located along the right side) to browse the directory tree.</para></listitem>
+<term><guilabel>Play sounds</guilabel></term>
+<listitem><para>If a mark is in this radio button, &kde; plays the sound notifications. Leave the <guilabel>Player</guilabel> field empty to play them through the sound server (PulseAudio or PipeWire), or, when no sound server can be reached, with a player found automatically. To always use a particular program instead, enter the full path and name of the program into the <guilabel>Player</guilabel> field.  You can use the folder button (located along the right side) to browse the directory tree.</para></listitem>
 </varlistentry>
 <varlistentry>
 <term><guilabel>No audio output</guilabel></term>
