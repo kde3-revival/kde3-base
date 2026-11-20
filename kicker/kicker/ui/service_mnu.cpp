@@ -807,6 +807,11 @@ void PanelServiceMenu::selectFirstItem()
 // updates "recent" section of KMenu
 void PanelServiceMenu::updateRecentlyUsedApps(KService::Ptr &service)
 {
+    if (!service)
+    {
+        return;
+    }
+
     QString strItem(service->desktopEntryPath());
 
     // don't add an item from root kmenu level

@@ -904,6 +904,11 @@ void QuickLauncher::setRefreshEnabled(bool enable)
 void QuickLauncher::serviceStartedByStorageId(QString /*starter*/, QString storageId)
 {
     KService::Ptr service = KService::serviceByStorageId(storageId);
+    if (!service)
+    {
+        kdDebug() << storageId << " is not a known service." << endl;
+        return;
+    }
     if (service->icon() == QString::null) 
     {
         kdDebug() << storageId << " has no icon. Makes no sense to add it.";

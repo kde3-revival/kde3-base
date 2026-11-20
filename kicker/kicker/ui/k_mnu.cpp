@@ -99,7 +99,10 @@ void PanelKMenu::slotServiceStartedByStorageId(QString starter,
         kdDebug() << "KMenu - updating recently used applications: " <<
             storageId << endl;
         KService::Ptr service = KService::serviceByStorageId(storageId);
-        updateRecentlyUsedApps(service);
+        if (service)
+        {
+            updateRecentlyUsedApps(service);
+        }
     }
 }
 
@@ -631,7 +634,8 @@ void PanelKMenu::createRecentMenuItems()
             }
         }
 
-        if (!KickerSettings::showMenuTitles())
+        if (!KickerSettings::showMenuTitles() &&
+            RecentlyLaunchedApps::the().m_nNumMenuItems > 0)
         {
             insertSeparator(RecentlyLaunchedApps::the().m_nNumMenuItems);
         }
@@ -721,7 +725,8 @@ void PanelKMenu::updateRecent()
                 break;
         }
 
-        if (!KickerSettings::showMenuTitles())
+        if (!KickerSettings::showMenuTitles() &&
+            RecentlyLaunchedApps::the().m_nNumMenuItems > 0)
         {
             insertSeparator(RecentlyLaunchedApps::the().m_nNumMenuItems);
         }
