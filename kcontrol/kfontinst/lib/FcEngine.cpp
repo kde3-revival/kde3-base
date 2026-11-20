@@ -13,6 +13,7 @@
 #ifdef HAVE_XFT
 #include <X11/Xlib.h>
 #include <X11/Xft/Xft.h>
+#include <fontconfig/fcfreetype.h>
 #include <fixx11h.h>
 #endif
 
