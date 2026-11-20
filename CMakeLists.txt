@@ -16,6 +16,8 @@ list(PREPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake/modules")
 # kdelibs: the CMake package, install prefix, compiler settings, RUNPATH
 include(cmake/KDELibs.cmake)
 
+include(KDEBaseMacros)
+
 include(ConfigureChecks.cmake)
 configure_file(config.h.cmake "${PROJECT_BINARY_DIR}/config.h")
 # automake passes -DHAVE_CONFIG_H (DEFS)
@@ -31,3 +33,4 @@ install(PROGRAMS
   DESTINATION ${KDE3_BIN_INSTALL_DIR})
 
 add_subdirectory(libkonq)
+add_subdirectory(kcheckpass)

@@ -64,6 +64,9 @@
 #cmakedefine HAVE_PW_ENCRYPT 1
 #cmakedefine HAVE_SETPRIORITY 1
 
+/* Defines if your system has the crypt function */
+#cmakedefine HAVE_CRYPT 1
+
 /* types and members */
 #cmakedefine HAVE_STRUCT_UCRED 1
 
@@ -79,3 +82,19 @@
 #cmakedefine HAVE_XCURSOR 1
 /* Defined if your system has XRender support */
 #cmakedefine HAVE_XRENDER 1
+
+/* ---- passwords ---------------------------------------------------- */
+
+/* Defines if you have PAM (Pluggable Authentication Modules) */
+#cmakedefine HAVE_PAM 1
+/* Define if your PAM headers are in pam/ instead of security/ */
+#cmakedefine HAVE_PAM_PAM_APPL_H 1
+/* Define if your PAM support takes non-const arguments (Solaris) */
+#cmakedefine PAM_MESSAGE_NONCONST 1
+/* The PAM services to be used by kdm, kcheckpass and kscreensaver */
+#cmakedefine KDM_PAM_SERVICE "@KDM_PAM_SERVICE@"
+#cmakedefine KCHECKPASS_PAM_SERVICE "@KCHECKPASS_PAM_SERVICE@"
+#cmakedefine KSCREENSAVER_PAM_SERVICE "@KSCREENSAVER_PAM_SERVICE@"
+/* Define if you use shadow passwords */
+#cmakedefine HAVE_SHADOW 1
+
