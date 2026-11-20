@@ -1003,7 +1003,7 @@ void KCryptoConfig::load( bool useDefaults )
   }
 
   groups = _signers->list();
-  KConfig sigcfg("ksslcalist", true, false);
+  KSimpleConfig sigcfg(locateLocal("config", "ksslcalist"), true);
   caList->clear();
   for (QStringList::Iterator i = groups.begin();
                              i != groups.end();
@@ -2051,7 +2051,7 @@ void KCryptoConfig::slotCARestore() {
 
 
   QStringList groups = _signers->list();
-  KConfig sigcfg("ksslcalist", true, false);
+  KSimpleConfig sigcfg(locateLocal("config", "ksslcalist"), true);
 
   for (QStringList::Iterator i = groups.begin();
                              i != groups.end();
