@@ -1,0 +1,79 @@
+include_directories(
+  "${CMAKE_CURRENT_SOURCE_DIR}/../interfaces"
+  "${CMAKE_CURRENT_BINARY_DIR}/../interfaces"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../lib"
+)
+
+kde3_add_library(kateinterfaces SHARED VERSION_INFO 0:0:0
+  SOURCES
+    kateapp.cpp
+    kateconfigdialog.cpp
+    kateconfigplugindialogpage.cpp
+    kateconsole.cpp
+    katedocmanager.cpp
+    katefilelist.cpp
+    katefileselector.cpp
+    katemainwindow.cpp
+    katepluginmanager.cpp
+    kateviewmanager.cpp
+    kateviewspace.cpp
+    katemainwindowiface.skel
+    katemainwindowiface.cpp
+    kategrepdialog.cpp
+    katemailfilesdialog.cpp
+    kbookmarkhandler.cpp
+    katedocmanageriface.skel
+    kateappIface.cpp
+    kateappIface.skel
+    katedocmanageriface.cpp
+    kateexternaltools.cpp
+    katesavemodifieddialog.cpp
+    kateviewspacecontainer.cpp
+    katemwmodonhddialog.cpp
+    katesession.cpp
+    katemdi.cpp
+    katetabwidget.cpp
+  MOC
+    kateapp.h
+    kateconfigdialog.h
+    kateconfigplugindialogpage.h
+    kateconsole.h
+    katedocmanager.h
+    kateexternaltools.h
+    katefilelist.h
+    katefileselector.h
+    kategrepdialog.h
+    katemailfilesdialog.h
+    katemainwindow.h
+    katemdi.h
+    katemwmodonhddialog.h
+    katepluginmanager.h
+    katesavemodifieddialog.h
+    katesession.h
+    katetabwidget.h
+    kateviewmanager.h
+    kateviewspace.h
+    kateviewspacecontainer.h
+    kbookmarkhandler.h
+  LINK
+    kateinterfacesprivate
+    KDE3::kutils
+    kateutils
+)
+
+kde3_add_kdeinit_executable(kate
+  SOURCES
+    katemain.cpp
+  LINK
+    kateinterfaces
+)
+
+kde3_add_kdeinit_executable(kwrite
+  SOURCES
+    kwritemain.cpp
+  MOC
+    kwritemain.h
+  LINK
+    KDE3::katepartinterfaces
+    kateutils
+)
