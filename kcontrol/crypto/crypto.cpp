@@ -225,7 +225,8 @@ QString whatstr;
 
   setQuickHelp( i18n("<h1>Crypto</h1> This module allows you to configure SSL for"
      " use with most KDE applications, as well as manage your personal"
-     " certificates and the known certificate authorities."));
+     " certificates and the certificate authorities you trust in addition"
+     " to the ones of the system."));
 
   ___lehack = false;
   otherCertDelList.setAutoDelete(true);
@@ -722,8 +723,9 @@ QString whatstr;
 
   caList = new QListView(tabSSLCA);
   caList->setAllColumnsShowFocus(true);
-  whatstr = i18n("This list box shows which certificate authorities KDE"
-                 " knows about. You can easily manage them from here.");
+  whatstr = i18n("This list box shows the certificate authorities you added."
+                 " They are trusted in addition to the certificate authorities"
+                 " of the system. You can easily manage them from here.");
   QWhatsThis::add(caList, whatstr);
   grid->addMultiCellWidget(caList, 0, 3, 0, 6);
   caList->addColumn(i18n("Organization"));
@@ -740,7 +742,7 @@ QString whatstr;
   grid->addWidget(caSSLRemove, 1, 7);
   caSSLRemove->setEnabled(false);
 
-  caSSLRestore = new QPushButton(i18n("Res&tore"), tabSSLCA);
+  caSSLRestore = new QPushButton(i18n("Remove A&ll"), tabSSLCA);
   connect(caSSLRestore, SIGNAL(clicked()), SLOT(slotCARestore()));
   grid->addWidget(caSSLRestore, 2, 7);
 
@@ -2029,12 +2031,13 @@ CAItem *x = static_cast<CAItem *>(caList->selectedItem());
 
 void KCryptoConfig::slotCARestore() {
 
- int rc = KMessageBox::warningContinueCancel(this, i18n("This will revert your certificate signers database to the KDE default.\nThis operation cannot be undone.\nAre you sure you wish to continue?"), i18n("SSL"),i18n("Revert"));
+ int rc = KMessageBox::warningContinueCancel(this, i18n("This will remove all the certificate authorities you added; only the certificate authorities of the system will be trusted.\nThis operation cannot be undone.\nAre you sure you wish to continue?"), i18n("SSL"),i18n("Remove All"));
       if (rc == KMessageBox::Cancel) {
           return;
       }
 
-// For now, we just rm the existing file and rebuild
+// Remove the user's signer list (ksslcalist); kssl then trusts only the
+// certificate authorities of the system
 
    QString path = KGlobal::dirs()->saveLocation("config");
 
