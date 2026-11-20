@@ -232,3 +232,18 @@ cmake_push_check_state(RESET)
 set(CMAKE_REQUIRED_LIBRARIES ${X11_ICE_LIB})
 check_function_exists(_IceTransNoListen HAVE__ICETRANSNOLISTEN)
 cmake_pop_check_state()
+
+# ---- khotkeys (khotkeys/configure.in.in) ---------------------------------
+include(CheckCXXSourceRuns)
+check_cxx_source_runs("
+class A { public: virtual A* me(); };
+class X { public: int x; virtual void ff() {} };
+class B : public X, public A { public: virtual B* me(); };
+int foo(A* a) { A* aa = a->me(); return a == aa; }
+int main() { B* b = new B; return foo(b) == 0; }
+A* A::me() { return this; }
+B* B::me() { return this; }" _covariant_return_works)
+if(NOT _covariant_return_works)
+  set(COVARIANT_RETURN_BROKEN 1)
+endif()
+

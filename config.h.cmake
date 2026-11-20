@@ -114,3 +114,9 @@
 #cmakedefine HAVE_XFIXES 1
 /* Define to 1 if you have the `_IceTransNoListen' function. */
 #cmakedefine HAVE__ICETRANSNOLISTEN 1
+
+/* ---- khotkeys ----------------------------------------------------- */
+
+/* Define if covariant return in virtual methods does not work */
+#cmakedefine COVARIANT_RETURN_BROKEN 1
+

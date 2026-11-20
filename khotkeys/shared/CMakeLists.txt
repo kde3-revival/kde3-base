@@ -1,0 +1,33 @@
+kde3_add_library(khotkeys_shared SHARED VERSION_INFO 1:0:0
+  SOURCES
+    action_data.cpp
+    khotkeysglobal.cpp
+    triggers.cpp
+    windows.cpp
+    settings.cpp
+    actions.cpp
+    input.cpp
+    conditions.cpp
+    khlistview.cpp
+    khlistbox.cpp
+    gestures.cpp
+    voices.cpp
+    voicesignature.cpp
+    sound.cpp
+    soundrecorder.cpp
+  MOC
+    conditions.h
+    gestures.h
+    input.h
+    khlistbox.h
+    khlistview.h
+    soundrecorder.h
+    triggers.h
+    voices.h
+    windows.h
+  LINK
+    KDE3::kio
+    X11::Xtst
+    X11::Xext
+    X11::X11
+)
