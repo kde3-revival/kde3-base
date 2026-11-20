@@ -38,3 +38,22 @@ function(kdebase_install_setgid name group)
       message(STATUS \"Error: Could not install ${name} as setgid ${group}!!\")
     endif()")
 endfunction()
+
+# ---------------------------------------------------------------------
+# kdebase_dummy_cpp(<var>)
+#
+# "dummy.cpp: echo > dummy.cpp": the empty source a module or kdeinit
+# program needs whose code is all in convenience libraries.  Sets <var>
+# to the generated file in the current binary directory.
+
+function(kdebase_dummy_cpp var)
+  set(_f "${CMAKE_CURRENT_BINARY_DIR}/dummy.cpp")
+  get_property(_done DIRECTORY PROPERTY _KDEBASE_DUMMY_CPP)
+  if(NOT _done)
+    set_property(DIRECTORY PROPERTY _KDEBASE_DUMMY_CPP TRUE)
+    add_custom_command(OUTPUT "${_f}"
+      COMMAND ${CMAKE_COMMAND} -E touch "${_f}"
+      VERBATIM)
+  endif()
+  set(${var} "${_f}" PARENT_SCOPE)
+endfunction()
