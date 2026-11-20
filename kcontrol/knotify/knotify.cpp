@@ -241,7 +241,8 @@ void PlayerSettingsDialog::load( bool useDefaults )
     KConfig config( "knotifyrc", true, false );
 	 config.setReadDefaults( useDefaults );
     config.setGroup( "Misc" );
-    bool useExternal = config.readBoolEntry( "Use external player", false );
+    // default must match kdelibs/knotify/knotify.cpp (sounds on, player auto-detected)
+    bool useExternal = config.readBoolEntry( "Use external player", true );
     m_ui->cbExternal->setChecked( useExternal );
     m_ui->reqExternal->setURL( config.readPathEntry( "External player" ) );
     m_ui->cbNone->setChecked( !useExternal );
