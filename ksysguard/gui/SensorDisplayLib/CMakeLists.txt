@@ -1,0 +1,56 @@
+include_directories(
+  "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  "${CMAKE_CURRENT_SOURCE_DIR}/../ksgrd"
+  "${CMAKE_CURRENT_BINARY_DIR}/../ksgrd"
+)
+
+kde3_add_library(sensordisplays OBJECT
+  SOURCES
+    SensorDisplay.cc
+    BarGraph.cc
+    DancingBars.cc
+    DancingBarsSettings.cc
+    DummyDisplay.cc
+    FancyPlotter.cc
+    FancyPlotterSettings.cc
+    ListView.cc
+    LogFile.cc
+    MultiMeter.cc
+    MultiMeterSettings.cc
+    ProcessController.cc
+    ProcessList.cc
+    ReniceDlg.cc
+    SensorLogger.cc
+    SensorLoggerDlg.cc
+    SensorLoggerSettings.cc
+    ListViewSettings.cc
+    SignalPlotter.cc
+    ListViewSettingsWidget.ui
+    LogFileSettings.ui
+    MultiMeterSettingsWidget.ui
+    SensorLoggerDlgWidget.ui
+    SensorLoggerSettingsWidget.ui
+  MOC
+    BarGraph.h
+    DancingBars.h
+    DancingBarsSettings.h
+    DummyDisplay.h
+    FancyPlotter.h
+    FancyPlotterSettings.h
+    ListView.h
+    ListViewSettings.h
+    LogFile.h
+    MultiMeter.h
+    MultiMeterSettings.h
+    ProcessController.h
+    ProcessList.h
+    ReniceDlg.h
+    SensorDisplay.h
+    SensorLogger.h
+    SensorLoggerDlg.h
+    SensorLoggerSettings.h
+    SignalPlotter.h
+  LINK
+    ksgrd
+    KDE3::kio
+)

@@ -134,3 +134,10 @@
 
 /* Define if you have the Xinerama extension */
 #cmakedefine HAVE_XINERAMA 1
+
+/* ---- ksysguard ---------------------------------------------------- */
+
+/* Define to 1 if you have the <sensors/sensors.h> header file. */
+#cmakedefine HAVE_SENSORS_SENSORS_H 1
+/* Define if dns-sd is available */
+#cmakedefine HAVE_DNSSD 1
