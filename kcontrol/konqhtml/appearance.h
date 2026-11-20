@@ -18,6 +18,7 @@
 
 class QSpinBox;
 class KFontCombo;
+class KIntNumInput;
 
 class KAppearanceOptions : public KCModule
 {
