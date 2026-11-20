@@ -1851,14 +1851,14 @@ void KCryptoConfig::slotCAImport() {
 		                                 certFile.local8Bit(),
 						 X509_FILETYPE_PEM)) {
 		// X509_STORE and X509_OBJECT are opaque since OpenSSL 1.1.0
-		STACK_OF(X509_OBJECT) *certObjects = X509_STORE_get0_objects(certStore);
+		STACK_OF(X509_OBJECT) *certObjects = KOSSL::self()->X509_STORE_get0_objects(certStore);
 		for (int i = 0; i < sk_X509_OBJECT_num(certObjects); i++) {
 			X509_OBJECT* x5o = sk_X509_OBJECT_value(certObjects, i);
 			if (!x5o) continue;
 
-			if (X509_OBJECT_get_type(x5o) != X509_LU_X509) continue;
+			if (KOSSL::self()->X509_OBJECT_get_type(x5o) != X509_LU_X509) continue;
 
-			X509 *x5 = X509_OBJECT_get0_X509(x5o);
+			X509 *x5 = KOSSL::self()->X509_OBJECT_get0_X509(x5o);
 			if (!x5) continue;
 
 			// Easier to use in this form
