@@ -11,9 +11,9 @@ kdelibs has no function for.
   with mkpamserv when installing without DESTDIR and PAM is used.
 ``kdebase_install_time_path(<var> <dir>)``
   A directory of the installation for install(CODE).
-``kdebase_install_setgid(<program> <group>)``
+``kdebase_install_setgid(<program> <group> [<line>...])``
   ``install-exec-hook: (chown root:<group> $(bindir)/<program> && chmod
-  2755 ...) || echo "Error: ..."``.
+  2755 ...) || echo "Error: ..." <line>...``.
 #]=======================================================================]
 
 include_guard(GLOBAL)
@@ -43,6 +43,12 @@ function(kdebase_install_pam_service service)
 endfunction()
 
 function(kdebase_install_setgid name group)
+  # ARGN: more lines for the failure message
+  set(_more)
+  foreach(_l IN LISTS ARGN)
+    string(APPEND _more "
+      message(STATUS \"${_l}\")")
+  endforeach()
   kdebase_install_time_path(_bindir "${KDE3_BIN_INSTALL_DIR}")
   install(CODE "
     set(_f \"\$ENV{DESTDIR}${_bindir}/${name}\")
@@ -52,7 +58,7 @@ function(kdebase_install_setgid name group)
       execute_process(COMMAND chmod 2755 \"\${_f}\")
       message(STATUS \"${name} is installed setgid ${group}\")
     else()
-      message(STATUS \"Error: Could not install ${name} as setgid ${group}!!\")
+      message(STATUS \"Error: Could not install ${name} as setgid ${group}!!\")${_more}
     endif()")
 endfunction()
 

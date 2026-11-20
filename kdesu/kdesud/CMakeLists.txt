@@ -18,4 +18,5 @@ install(CODE "
   message(STATUS \"Kdesud is the daemon that implements the password caching.\")
   message(STATUS \"You should NOT use the password caching feature if kdesud is\")
   message(STATUS \"not installed setgid ${KDESUD_NOGROUP}.\")")
-kdebase_install_setgid(kdesud "${KDESUD_NOGROUP}")
+kdebase_install_setgid(kdesud "${KDESUD_NOGROUP}"
+  "The password caching feature is disabled.")
