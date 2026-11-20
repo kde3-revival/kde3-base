@@ -48,5 +48,18 @@ install(FILES
   mouse_cursor_theme.upd
   DESTINATION ${KDE3_DATA_INSTALL_DIR}/kconf_update)
 
+# install-data-hook: the directory for overriding fonts of the cursor
+# themes, with a fonts.dir ("-mkfontdir": failures are ignored)
+find_program(MKFONTDIR_EXECUTABLE mkfontdir)
+mark_as_advanced(MKFONTDIR_EXECUTABLE)
+kdebase_install_time_path(_overridedir "${KDE3_DATA_ROOT_INSTALL_DIR}/fonts/override")
+install(DIRECTORY DESTINATION ${KDE3_DATA_ROOT_INSTALL_DIR}/fonts/override)
+if(MKFONTDIR_EXECUTABLE)
+  install(CODE "execute_process(COMMAND \"${MKFONTDIR_EXECUTABLE}\"
+    \"\$ENV{DESTDIR}${_overridedir}\" RESULT_VARIABLE _r)")
+else()
+  install(CODE "message(STATUS \"mkfontdir not found: no fonts.dir in ${_overridedir}\")")
+endif()
+
 add_subdirectory(${_themepage})
 add_subdirectory(pics)
