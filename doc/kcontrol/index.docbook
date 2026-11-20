@@ -496,7 +496,6 @@ software.
 <para>
 <link linkend="midi">Midi</link>,
 <link linkend="mixer">Mixer</link>,
-<link linkend="sndserver">Sound Server</link>,
 <link linkend="bell">System Bell</link>
 </para>
 </listitem>
