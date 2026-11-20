@@ -677,9 +677,6 @@ void KMiniPager::aboutToShowContextMenu()
 {
     m_contextMenu->clear();
 
-    m_contextMenu->insertItem(SmallIcon("kpager"), i18n("&Launch Pager"), LaunchExtPager);
-    m_contextMenu->insertSeparator();
-
     m_contextMenu->insertItem(i18n("&Rename Desktop \"%1\"")
                                    .arg(kwin()->desktopName(m_rmbDesk)), RenameDesktop);
     m_contextMenu->insertSeparator();
@@ -757,10 +754,6 @@ void KMiniPager::contextMenuActivated(int result)
 
     switch (result)
     {
-        case LaunchExtPager:
-            showPager();
-            return;
-
         case ConfigureDesktops:
             kapp->startServiceByDesktopName("desktop");
             return;
@@ -836,71 +829,5 @@ void KMiniPager::slotDesktopNamesChanged()
     }
 
     updateLayout();
-}
-
-void KMiniPager::showPager()
-{
-    DCOPClient *dcop=kapp->dcopClient();
-
-    if (dcop->isApplicationRegistered("kpager"))
-    {
-       showKPager(true);
-    }
-    else
-    {
-    // Let's run kpager if it isn't running
-        connect( dcop, SIGNAL( applicationRegistered(const QCString &) ), this, SLOT(applicationRegistered(const QCString &)) );
-        dcop->setNotifications(true);
-        QString strAppPath(locate("exe", "kpager"));
-        if (!strAppPath.isEmpty())
-        {
-            KProcess process;
-            process << strAppPath;
-            process << "--hidden";
-            process.start(KProcess::DontCare);
-        }
-    }
-}
-
-void KMiniPager::showKPager(bool toggleShow)
-{
-    QPoint pt;
-    switch ( position() )
-    {
-        case pTop:
-            pt = mapToGlobal( QPoint(x(), y() + height()) );
-            break;
-        case pLeft:
-            pt = mapToGlobal( QPoint(x() + width(), y()) );
-            break;
-        case pRight:
-        case pBottom:
-        default:
-            pt=mapToGlobal( QPoint(x(), y()) );
-    }
-
-    DCOPClient *dcop=kapp->dcopClient();
-
-    QByteArray data;
-    QDataStream arg(data, IO_WriteOnly);
-    arg << pt.x() << pt.y() ;
-    if (toggleShow)
-    {
-        dcop->send("kpager", "KPagerIface", "toggleShow(int,int)", data);
-    }
-    else
-    {
-        dcop->send("kpager", "KPagerIface", "showAt(int,int)", data);
-    }
-}
-
-void KMiniPager::applicationRegistered( const QCString  & appName )
-{
-    if (appName == "kpager")
-    {
-        disconnect( kapp->dcopClient(), SIGNAL( applicationRegistered(const QCString &) ),
-                    this, SLOT(applicationRegistered(const QCString &)) );
-        showKPager(false);
-    }
 }
 

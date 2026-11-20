@@ -64,7 +64,7 @@ public:
     void setActive( WId active ) { m_activeWindow = active; }
     WId activeWindow() { return m_activeWindow; }
 
-    enum ConfigOptions { LaunchExtPager = 96, WindowThumbnails,
+    enum ConfigOptions { WindowThumbnails = 97,
                          WindowIcons, ConfigureDesktops, RenameDesktop };
     int labelType() const { return m_settings->labelType(); }
 
@@ -102,11 +102,8 @@ protected:
     void updateDesktopLayout(int,int,int);
     void resizeEvent(QResizeEvent*);
     void wheelEvent( QWheelEvent* e );
-    void showKPager(bool toggleShow);
 
 protected slots:
-    void showPager();
-    void applicationRegistered(const QCString &appName);
     void aboutToShowContextMenu();
     void contextMenuActivated(int);
 
