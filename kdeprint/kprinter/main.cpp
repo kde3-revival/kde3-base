@@ -35,7 +35,7 @@ static KCmdLineOptions options[] =
 	{ "n <number>",       I18N_NOOP("Number of copies"), 0 },
 	{ "o <option=value>", I18N_NOOP("Printer option" ),                       0},
 	{ "j <mode>",         I18N_NOOP("Job output mode (gui, console, none)" ), "gui"},
-	{ "system <printsys>",I18N_NOOP("Print system to use (lpd, cups)" ), 0},
+	{ "system <printsys>",I18N_NOOP("Print system to use (ignored, CUPS is the only one)" ), 0},
 	{ "stdin",            I18N_NOOP("Allow printing from STDIN" ),         0},
 	{ "nodialog",         I18N_NOOP("Do not show the print dialog (print directly)"), 0},
 	{ "+file(s)",	      I18N_NOOP("Files to load" ),                        0},
