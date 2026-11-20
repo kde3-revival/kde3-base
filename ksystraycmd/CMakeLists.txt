@@ -1,0 +1,9 @@
+kde3_add_executable(ksystraycmd
+  SOURCES
+    ksystraycmd.cpp
+    main.cpp
+  MOC
+    ksystraycmd.h
+  LINK
+    KDE3::kdeui
+)
