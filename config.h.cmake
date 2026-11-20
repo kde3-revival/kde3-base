@@ -108,3 +108,9 @@
 /* Use su or sudo */
 #define DEFAULT_SUPER_USER_COMMAND "@DEFAULT_SUPER_USER_COMMAND@"
 
+/* ---- klipper, ksmserver ------------------------------------------- */
+
+/* Define if you have the XFixes extension */
+#cmakedefine HAVE_XFIXES 1
+/* Define to 1 if you have the `_IceTransNoListen' function. */
+#cmakedefine HAVE__ICETRANSNOLISTEN 1

@@ -227,3 +227,8 @@ if(X11_Xfixes_FOUND)
   set(HAVE_XFIXES 1)
 endif()
 
+# ---- ksmserver (ksmserver/configure.in.in) -------------------------------
+cmake_push_check_state(RESET)
+set(CMAKE_REQUIRED_LIBRARIES ${X11_ICE_LIB})
+check_function_exists(_IceTransNoListen HAVE__ICETRANSNOLISTEN)
+cmake_pop_check_state()
