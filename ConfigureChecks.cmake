@@ -419,6 +419,8 @@ if(KDE3_WITH_DPMS AND X11_dpms_FOUND)
   # only (a static library as try_compile target is not linked).
   cmake_push_check_state(RESET)
   set(CMAKE_REQUIRED_INCLUDES ${X11_INCLUDE_DIR})
+  # (save/restore instead of block(): cmake_minimum_required is 3.20)
+  set(_saved_try_compile_target_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
   set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
   foreach(_decl DPMSCapable DPMSInfo)
     string(TOUPPER "HAVE_${_decl}_PROTO" _var)
@@ -430,7 +432,7 @@ int main(void) {
 #endif
   return 0; }" ${_var})
   endforeach()
-  unset(CMAKE_TRY_COMPILE_TARGET_TYPE)
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_compile_target_type}")
   cmake_pop_check_state()
 endif()
 
