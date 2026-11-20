@@ -222,3 +222,8 @@ else()
   message(STATUS "kxkb is not built: XKB headers or libxkbfile missing")
 endif()
 
+# ---- klipper (klipper/configure.in.in) -----------------------------------
+if(X11_Xfixes_FOUND)
+  set(HAVE_XFIXES 1)
+endif()
+
