@@ -145,10 +145,6 @@ libraries. Here is an overview of the directories:
 * libkonq
     Some libraries needed by Konqueror.
 
-* nsplugins
-    Together with OSF/Motif or Lesstif allows you to use Netscape (tm)
-    plugins in Konqueror.
-
 * pics
     Various icons and wallpapers.
 

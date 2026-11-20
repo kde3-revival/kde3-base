@@ -3780,7 +3780,7 @@ void KonqMainWindow::initActions()
       "kde-kcmhistory.desktop" << "kde-cookies.desktop" <<
       "kde-cache.desktop" << "kde-proxy.desktop" << "kde-kcmcss.desktop" <<
       "kde-crypto.desktop" << "kde-useragent.desktop" <<
-      "kde-khtml_plugins.desktop" << "kde-kcmkonqyperformance.desktop";
+      "kde-kcmkonqyperformance.desktop";
 
 
   if (!kapp->authorizeControlModules(configModules()).isEmpty())

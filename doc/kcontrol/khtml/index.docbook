@@ -1,7 +1,6 @@
 <?xml version="1.0" ?>
 <!DOCTYPE article PUBLIC "-//KDE//DTD DocBook XML V4.2-Based Variant V1.1//EN"
 "dtd/kdex.dtd" [
-<!ENTITY nsplugins-kcontrol SYSTEM "nsplugin.docbook">
 <!ENTITY % addindex "IGNORE">
 <!ENTITY % English "INCLUDE" > <!-- change language only here -->
 ]>
@@ -345,7 +344,6 @@ and HTTPS URLs for plugins</guilabel> by checking the box.</para>
 
 </sect2>
 
-&nsplugins-kcontrol;
 
 </sect1>
 

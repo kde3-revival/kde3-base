@@ -31,8 +31,6 @@
 #include <qlayout.h>
 
 #include "jsopts.h"
-#include "javaopts.h"
-#include "pluginopts.h"
 #include "appearance.h"
 #include "htmlopts.h"
 #include "filteropts.h"
@@ -59,12 +57,6 @@ extern "C"
 	{
 		KConfig *c = new KConfig( "konquerorrc", false, false );
 		return new KJSParts(c, parent, "kcmkonqhtml");
-	}
-
-	KDE_EXPORT KCModule *create_khtml_plugins(QWidget *parent, const char *name)
-	{
-		KConfig *c = new KConfig( "konquerorrc", false, false );
-		return new KPluginOptions(c, "Java/JavaScript Settings", parent, name);
 	}
 
         KDE_EXPORT KCModule *create_khtml_filter(QWidget *parent, const char *name )
@@ -102,10 +94,6 @@ KJSParts::KJSParts(KConfig *config, QWidget *parent, const char *name)
   layout->addWidget(tab);
 
   // ### the groupname is duplicated in KJSParts::save
-  java = new KJavaOptions( config, "Java/JavaScript Settings", this, name );
-  tab->addTab( java, i18n( "&Java" ) );
-  connect( java, SIGNAL( changed( bool ) ), SIGNAL( changed( bool ) ) );
-
   javascript = new KJavaScriptOptions( config, "Java/JavaScript Settings", this, name );
   tab->addTab( javascript, i18n( "Java&Script" ) );
   connect( javascript, SIGNAL( changed( bool ) ), SIGNAL( changed( bool ) ) );
@@ -119,22 +107,18 @@ KJSParts::~KJSParts()
 void KJSParts::load()
 {
   javascript->load();
-  java->load();
 }
 
 
 void KJSParts::save()
 {
   javascript->save();
-  java->save();
   
   // delete old keys after they have been migrated
-  if (javascript->_removeJavaScriptDomainAdvice
-      || java->_removeJavaScriptDomainAdvice) {
+  if (javascript->_removeJavaScriptDomainAdvice) {
     mConfig->setGroup("Java/JavaScript Settings");
     mConfig->deleteEntry("JavaScriptDomainAdvice");
     javascript->_removeJavaScriptDomainAdvice = false;
-    java->_removeJavaScriptDomainAdvice = false;
   }
   
   mConfig->sync();
@@ -151,7 +135,6 @@ void KJSParts::save()
 void KJSParts::defaults()
 {
   javascript->defaults();
-  java->defaults();
 }
 
 QString KJSParts::quickHelp() const
@@ -159,12 +142,9 @@ QString KJSParts::quickHelp() const
   return i18n("<h2>JavaScript</h2>On this page, you can configure "
               "whether JavaScript programs embedded in web pages should "
               "be allowed to be executed by Konqueror."
-              "<h2>Java</h2>On this page, you can configure "
-              "whether Java applets embedded in web pages should "
-              "be allowed to be executed by Konqueror."
               "<br><br><b>Note:</b> Active content is always a "
               "security risk, which is why Konqueror allows you to specify very "
-              "fine-grained from which hosts you want to execute Java and/or "
+              "fine-grained from which hosts you want to execute "
               "JavaScript programs." );
 }
 

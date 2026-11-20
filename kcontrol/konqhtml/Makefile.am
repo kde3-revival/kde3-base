@@ -6,9 +6,9 @@ METASOURCES = AUTO
 kde_module_LTLIBRARIES = kcm_konqhtml.la
 
 kcm_konqhtml_la_SOURCES = advancedTabDialog.cpp htmlopts.cpp jsopts.cpp \
-			     javaopts.cpp pluginopts.cpp appearance.cpp \
+			     appearance.cpp \
 			     khttpoptdlg.cpp policydlg.cpp main.cpp \
-			     jspolicies.cpp nsconfigwidget.ui policies.cpp \
+			     jspolicies.cpp policies.cpp \
 			     domainlistview.cpp advancedTabOptions.ui \
 			     filteropts.cpp
 

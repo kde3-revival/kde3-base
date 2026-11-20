@@ -28,7 +28,6 @@
 
 #include <kcmodule.h>
 
-class KJavaOptions;
 class KJavaScriptOptions;
 
 class QTabWidget;
@@ -52,7 +51,6 @@ private:
   QTabWidget   *tab;
 
   KJavaScriptOptions *javascript;
-  KJavaOptions       *java;
 
   KConfig *mConfig;
 };
