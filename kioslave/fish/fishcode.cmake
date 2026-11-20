@@ -1,0 +1,40 @@
+# cmake -DINPUT=fish.pl -DOUTPUT=fishcode.h -P fishcode.cmake
+#
+# fishcode.h: fish.pl as a C string with its checksum (the fishcode.h
+# rule of Makefile.am, which used $(MD5SUM) and sed).
+
+file(MD5 "${INPUT}" _sum)
+file(READ "${INPUT}" _text)
+set(_out "#define CHECKSUM \"${_sum}\"\nstatic const char *fishCode(\n")
+while(NOT _text STREQUAL "")
+  string(FIND "${_text}" "\n" _nl)
+  if(_nl EQUAL -1)
+    set(_line "${_text}")
+    set(_text "")
+  else()
+    string(SUBSTRING "${_text}" 0 ${_nl} _line)
+    math(EXPR _nl "${_nl} + 1")
+    string(SUBSTRING "${_text}" ${_nl} -1 _text)
+  endif()
+  # s/\\/\\\\/g; s/"/\\"/g; s/^[ \t]*/"/; /^"# /d;
+  # s/[ \t]*$/\\n"/; /^"\\n"$/d; s/{CHECKSUM}/<sum>/
+  string(REPLACE "\\" "\\\\" _line "${_line}")
+  string(REPLACE "\"" "\\\"" _line "${_line}")
+  string(REGEX MATCH "^[ \t]*" _lead "${_line}")
+  string(LENGTH "${_lead}" _lead)
+  string(SUBSTRING "${_line}" ${_lead} -1 _line)
+  set(_line "\"${_line}")
+  if(_line MATCHES "^\"# ")
+    continue()
+  endif()
+  string(REGEX REPLACE "[ \t]+$" "" _line "${_line}")
+  string(APPEND _line "\\n\"")
+  if(_line STREQUAL "\"\\n\"")
+    continue()
+  endif()
+  string(REPLACE "{CHECKSUM}" "${_sum}" _line "${_line}")
+  string(APPEND _out "${_line}\n")
+endwhile()
+string(APPEND _out ");\n")
+file(WRITE "${OUTPUT}.tmp" "${_out}")
+file(RENAME "${OUTPUT}.tmp" "${OUTPUT}")

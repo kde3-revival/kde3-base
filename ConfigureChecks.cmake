@@ -576,3 +576,85 @@ int main()
   string(TOUPPER "${_kde_mallinfo_type}" _t)
   set(KDE_MALLINFO_${_t} 1)
 endif()
+
+# ---- kioslave (kioslave/*/configure.in.in) -------------------------------
+# pop3, smtp: cyrus-sasl 2
+set(SASL2_LIBS "")
+check_include_file(sasl.h HAVE_SASL_H)
+check_include_file(sasl/sasl.h HAVE_SASL_SASL_H)
+if(HAVE_SASL_SASL_H)
+  check_library_exists(sasl2 sasl_client_init "" _have_libsasl2)
+  if(_have_libsasl2)
+    set(HAVE_LIBSASL2 1)
+    set(SASL2_LIBS sasl2)
+  endif()
+endif()
+if(NOT HAVE_LIBSASL2)
+  message(STATUS "cyrus-sasl 2 library is missing. The pop3 and smtp ioslaves will lack of a lot of authentication methods.")
+endif()
+
+# filter: bzip2 protocols when kdelibs has its bzip2 filter
+find_package(BZip2)
+
+# fish: kioslave/fish/configure.in.in added -D_GNU_SOURCE to CFLAGS and
+# CXXFLAGS of the whole of kdebase
+add_compile_definitions(_GNU_SOURCE)
+check_function_exists(isastream HAVE_ISASTREAM)
+
+# ldap (--with-ldap): OpenLDAP with LDAP_API_VERSION >= 2004
+option(KDE3_WITH_LDAP "The LDAP ioslave" ON)
+set(LDAP_LIBS "")
+if(KDE3_WITH_LDAP)
+  find_path(LDAP_INCLUDE_DIR ldap.h)
+  find_library(LDAP_LIBRARY ldap)
+  find_library(LBER_LIBRARY lber)
+  mark_as_advanced(LDAP_INCLUDE_DIR LDAP_LIBRARY LBER_LIBRARY)
+  if(LDAP_INCLUDE_DIR AND LDAP_LIBRARY)
+    set(LDAP_LIBS ${LDAP_LIBRARY})
+    if(LBER_LIBRARY)
+      list(APPEND LDAP_LIBS ${LBER_LIBRARY})
+    endif()
+    list(APPEND LDAP_LIBS ${LIBRESOLV})
+    cmake_push_check_state(RESET)
+    set(CMAKE_REQUIRED_INCLUDES ${LDAP_INCLUDE_DIR})
+    set(CMAKE_REQUIRED_LIBRARIES ${LDAP_LIBS})
+    check_c_source_compiles("#include <ldap.h>
+#if LDAP_API_VERSION < 2004
+#error LDAP version too old
+#endif
+int main(void) { LDAP *ldap = 0; return ldap != 0; }" HAVE_LIBLDAP)
+    cmake_pop_check_state()
+  endif()
+  if(NOT HAVE_LIBLDAP)
+    set(LDAP_LIBS "")
+  endif()
+endif()
+
+# media: linux/cdrom.h; HAL (COMPILE_HALBACKEND) is not supported any more
+check_include_file(linux/cdrom.h COMPILE_LINUXCDPOLLING)
+check_function_exists(statvfs HAVE_STATVFS)
+
+# smb (--with-samba=check): libsmbclient
+set(KDE3_WITH_SAMBA "check" CACHE STRING "The smb ioslave: check, ON or OFF")
+set(KDE3_BUILD_KIO_SMB FALSE)
+if(KDE3_WITH_SAMBA)
+  pkg_check_modules(SMBCLIENT IMPORTED_TARGET smbclient)
+  if(SMBCLIENT_FOUND)
+    set(KDE3_BUILD_KIO_SMB TRUE)
+  elseif(NOT KDE3_WITH_SAMBA STREQUAL "check")
+    message(FATAL_ERROR "KDE3_WITH_SAMBA was given, but test for libsmbclient failed")
+  endif()
+endif()
+
+# thumbnail (--with-openexr=check): OpenEXR
+set(KDE3_WITH_OPENEXR "check" CACHE STRING "OpenEXR thumbnails: check, ON or OFF")
+set(LIB_EXR "")
+if(KDE3_WITH_OPENEXR)
+  pkg_check_modules(OPENEXR IMPORTED_TARGET OpenEXR)
+  if(OPENEXR_FOUND)
+    set(LIB_EXR PkgConfig::OPENEXR)
+  elseif(NOT KDE3_WITH_OPENEXR STREQUAL "check")
+    message(FATAL_ERROR "KDE3_WITH_OPENEXR was given, but test for OpenEXR failed")
+  endif()
+endif()
+

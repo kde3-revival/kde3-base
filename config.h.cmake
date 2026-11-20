@@ -197,3 +197,15 @@
 #cmakedefine KDE_MALLINFO_FIELD_hblkhd 1
 #cmakedefine KDE_MALLINFO_FIELD_uordblks 1
 #cmakedefine KDE_MALLINFO_FIELD_usmblks 1
+
+/* ---- kioslave ----------------------------------------------------- */
+
+/* Define if you have cyrus-sasl2 libraries */
+#cmakedefine HAVE_LIBSASL2 1
+#cmakedefine HAVE_SASL_H 1
+#cmakedefine HAVE_SASL_SASL_H 1
+#cmakedefine HAVE_ISASTREAM 1
+/* media linux cd polling compilation */
+#cmakedefine COMPILE_LINUXCDPOLLING 1
+#cmakedefine HAVE_STATVFS 1
+
