@@ -601,9 +601,6 @@ if(HAVE_SASL_SASL_H)
     set(SASL2_LIBS sasl2)
   endif()
 endif()
-if(NOT HAVE_LIBSASL2)
-  message(STATUS "cyrus-sasl 2 library is missing. The pop3 and smtp ioslaves will lack of a lot of authentication methods.")
-endif()
 
 # filter: bzip2 protocols when kdelibs has its bzip2 filter
 find_package(BZip2)
@@ -771,23 +768,35 @@ if(CMAKE_SIZEOF_VOID_P EQUAL 4)
 endif()
 
 # configure.in.bot of kioslave/smb, kcontrol/* etc.: the summary of what
-# is left out
+# is left out.  <result variable>:<option switching it off, or ->:<what>
 foreach(_what
-    "HAVE_PAM:PAM"
-    "HAVE_LIBSASL2:cyrus-sasl 2 (pop3, smtp)"
-    "HAVE_LIBLDAP:OpenLDAP (ldap ioslave)"
-    "KDE3_BUILD_KIO_SMB:libsmbclient (smb ioslave)"
-    "LIB_EXR:OpenEXR (EXR thumbnails)"
-    "HAVE_LIBUSB:libusb 0.1 (Logitech mouse support)"
-    "HAVE_SENSORS_SENSORS_H:lm_sensors (ksysguardd)"
-    "HAVE_DNSSD:libdns_sd (ksysguardd)"
-    "HAVE_GL:OpenGL"
-    "HAVE_XSCREENSAVER:XScreenSaver extension"
-    "KDE3_BUILD_KFONTINST:FreeType 2 and fontconfig (kfontinst)"
-    "KDE3_BUILD_KDM:libXau and libXdmcp (kdm)")
-  string(REGEX MATCH "^[^:]*" _var "${_what}")
-  string(REGEX REPLACE "^[^:]*:" "" _desc "${_what}")
+    "HAVE_PAM:KDE3_PAM:PAM"
+    "HAVE_SSL:KDE3_WITH_SSL:SSL in the crypto module (OpenSSL, kdelibs with SSL)"
+    "KDE3_BUILD_KOMPMGR:KDE3_WITH_COMPOSITE:Xcomposite, Xdamage, Xrender and Xfixes (kompmgr)"
+    "HAVE_XCOMPOSITE:KDE3_WITH_COMPOSITE:Xcomposite (taskmanager)"
+    "HAVE_XINERAMA:KDE3_WITH_XINERAMA:Xinerama (ksplashsimple)"
+    "HAVE_DPMS:KDE3_WITH_DPMS:DPMS (power saving)"
+    "KDE3_BUILD_KXKB:-:XKB headers and libxkbfile (kxkb)"
+    "HAVE_LIBSASL2:-:cyrus-sasl 2 (the pop3 and smtp ioslaves lack a lot of authentication methods)"
+    "HAVE_LIBLDAP:KDE3_WITH_LDAP:OpenLDAP (ldap ioslave)"
+    "KDE3_BUILD_KIO_SMB:KDE3_WITH_SAMBA:libsmbclient (smb ioslave)"
+    "LIB_EXR:KDE3_WITH_OPENEXR:OpenEXR (EXR thumbnails)"
+    "HAVE_LIBUSB:KDE3_WITH_LIBUSB:libusb 0.1 (Logitech mouse support)"
+    "HAVE_SENSORS_SENSORS_H:KDE3_WITH_SENSORS:lm_sensors (ksysguardd)"
+    "HAVE_DNSSD:KDE3_WITH_DNSSD:libdns_sd (ksysguardd)"
+    "HAVE_GL:KDE3_WITH_GL:OpenGL"
+    "HAVE_XSCREENSAVER:KDE3_WITH_XSCREENSAVER:XScreenSaver extension"
+    "KDE3_BUILD_KFONTINST:-:FreeType 2 and fontconfig (kfontinst)"
+    "KDE3_BUILD_KDM:-:libXau and libXdmcp (kdm)")
+  string(REPLACE ":" ";" _what "${_what}")
+  list(GET _what 0 _var)
+  list(GET _what 1 _opt)
+  list(GET _what 2 _desc)
   if(NOT ${_var})
-    message(STATUS "Not found, built without: ${_desc}")
+    if(NOT _opt STREQUAL "-" AND DEFINED ${_opt} AND NOT "${${_opt}}" STREQUAL "" AND NOT ${_opt})
+      message(STATUS "Switched off (${_opt}): ${_desc}")
+    else()
+      message(STATUS "Not found, built without: ${_desc}")
+    endif()
   endif()
 endforeach()
