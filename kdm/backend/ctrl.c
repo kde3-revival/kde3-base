@@ -38,6 +38,7 @@ from the copyright holder.
 #include "dm_socket.h"
 #include "dm_error.h"
 
+#include <sys/stat.h>
 #include <string.h>
 #include <signal.h>
 #include <pwd.h>
