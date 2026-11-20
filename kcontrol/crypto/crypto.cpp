@@ -121,17 +121,22 @@ QString CipherItem::configName() const
 
 
 
-OtherCertItem::OtherCertItem( QListView *view, const QString& sub, const QString& md5, bool perm, int policy, QDateTime exp, KCryptoConfig *module )
-    : QListViewItem( view, QString::null ), _sub(sub), _md5(md5), _exp(exp), _perm(perm), _policy(policy)
+OtherCertItem::OtherCertItem( QListView *view, KSSLCertificate *cert, const QString& md5, bool perm, int policy, QDateTime exp, KCryptoConfig *module )
+    : QListViewItem( view, QString::null ), _sub(cert->getSubject()), _md5(md5), _cert(cert), _exp(exp), _perm(perm), _policy(policy)
 
 {
     m_module = module;
-KSSLX509Map cert(sub);
-    setText(0, cert.getValue("O"));
-    setText(1, cert.getValue("CN").replace("\n", ", "));
+KSSLX509Map subject(_sub);
+    setText(0, subject.getValue("O"));
+    setText(1, subject.getValue("CN").replace("\n", ", "));
 
     if (_exp.date().year() > 3000 || _exp.date().year() < 1900)
        _exp.setDate(QDate(3000,1,1));
+}
+
+OtherCertItem::~OtherCertItem()
+{
+    delete _cert;
 }
 
 void OtherCertItem::stateChange( bool )
@@ -942,11 +947,11 @@ void KCryptoConfig::load( bool useDefaults )
     policies->setGroup(*i);
     KSSLCertificate *cert = KSSLCertificate::fromString(policies->readEntry("Certificate", QString::null).local8Bit());
     if (cert) {
-      new OtherCertItem(otherSSLBox, cert->getSubject(), *i,
+      // the item keeps the certificate: the policy is saved for it
+      new OtherCertItem(otherSSLBox, cert, *i,
                         policies->readBoolEntry("Permanent", true),
                         policies->readNumEntry("Policy", 3),
                         policies->readDateTimeEntry("Expires"), this );
-      delete cert;
     }
   }
 
@@ -1109,10 +1114,10 @@ void KCryptoConfig::save()
                                        " cipher, SSLv3 will not work."),
                                    i18n("SSLv3 Ciphers"));
   // SSL Policies code
+  // keyed by the certificate itself: by CN, kssld changed the first
+  // cached certificate with that CN, which need not be this one
   for (OtherCertItem *x = otherCertDelList.first(); x != 0; x = otherCertDelList.next()) {
-     KSSLX509Map cert(x->configName());
-     QString thisCN = cert.getValue("CN");
-     _cc.removeByCN(thisCN);
+     _cc.removeByCertificate(*x->getCert());
      otherCertDelList.remove(x);
   }
   // Go through the non-deleted ones and save them
@@ -1120,10 +1125,8 @@ void KCryptoConfig::save()
         static_cast<OtherCertItem *>(otherSSLBox->firstChild());
                                                               x;
              x = static_cast<OtherCertItem *>(x->nextSibling())) {
-     KSSLX509Map cert(x->configName());
-     QString thisCN = cert.getValue("CN");
      QDateTime expires = x->getExpires();
-     _cc.modifyByCN(thisCN, (KSSLCertificateCache::KSSLCertificatePolicy)x->getPolicy(), x->isPermanent(), expires);
+     _cc.modifyByCertificate(*x->getCert(), (KSSLCertificateCache::KSSLCertificatePolicy)x->getPolicy(), x->isPermanent(), expires);
   }
 
   // SSL Personal certificates code

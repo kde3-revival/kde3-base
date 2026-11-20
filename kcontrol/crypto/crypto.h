@@ -43,6 +43,7 @@ class KComboBox;
 class KCryptoConfig;
 class KPushButton;
 class KSSLCertBox;
+class KSSLCertificate;
 class KSSLSigners;
 class KURLLabel;
 class KURLRequester;
@@ -75,13 +76,15 @@ private:
 class OtherCertItem : public QListViewItem
 {
 public:
-    OtherCertItem(QListView *view, const QString& sub, const QString& md5, bool perm, int policy, QDateTime exp, KCryptoConfig *module );
-    ~OtherCertItem() {}
+    // takes ownership of cert
+    OtherCertItem(QListView *view, KSSLCertificate *cert, const QString& md5, bool perm, int policy, QDateTime exp, KCryptoConfig *module );
+    ~OtherCertItem();
 
     QString configName() const;
     const QString& getSub() { return _sub; }
     int getPolicy() { return _policy; }
     const QString& getMD5() { return _md5; }
+    KSSLCertificate *getCert() { return _cert; }
     bool isPermanent() { return _perm; }
     QDateTime getExpires() { return _exp; }
     void setPolicy(int x) { _policy = x; }
@@ -93,6 +96,7 @@ protected:
 
 private:
     QString _sub, _md5;
+    KSSLCertificate *_cert;
     KCryptoConfig *m_module; // just to call configChanged()
     QDateTime _exp;
     bool _perm;
