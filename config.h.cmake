@@ -187,3 +187,13 @@
 #cmakedefine HAVE_STRUCT_SOCKADDR_SA_LEN 1
 /* The size of `long', as computed by sizeof. */
 #define SIZEOF_LONG @SIZEOF_LONG@
+
+/* ---- konqueror ---------------------------------------------------- */
+
+/* mallinfo() is available in <stdlib.h> / <malloc.h> */
+#cmakedefine KDE_MALLINFO_STDLIB 1
+#cmakedefine KDE_MALLINFO_MALLOC 1
+/* Use mallinfo field hblkhd / uordblks / usmblks */
+#cmakedefine KDE_MALLINFO_FIELD_hblkhd 1
+#cmakedefine KDE_MALLINFO_FIELD_uordblks 1
+#cmakedefine KDE_MALLINFO_FIELD_usmblks 1

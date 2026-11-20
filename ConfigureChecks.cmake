@@ -493,3 +493,86 @@ if(X11_Xrandr_FOUND)
   cmake_pop_check_state()
 endif()
 check_type_size(long SIZEOF_LONG)
+
+# ---- konqueror (konqueror/preloader/configure.in.in) ---------------------
+# mallinfo() for the memory usage estimate in konq_mainwindow.cc
+set(_kde_mallinfo_type "")
+foreach(_h stdlib malloc)
+  check_cxx_source_compiles("#include <${_h}.h>
+int main() { struct mallinfo m; int dummy; m = mallinfo(); dummy = m.hblkhd;
+  dummy = m.uordblks; dummy = m.usmblks; return dummy; }" KDE_HAVE_MALLINFO_${_h})
+  if(KDE_HAVE_MALLINFO_${_h})
+    set(_kde_mallinfo_type ${_h})
+    break()
+  endif()
+endforeach()
+if(_kde_mallinfo_type)
+  # which fields grow by the allocated size (run test of KDE_MALLINFO_CHECK_FIELD)
+  foreach(_field hblkhd uordblks usmblks)
+    string(CONFIGURE [==[
+#include <@_kde_mallinfo_type@.h>
+enum use_type { No, Yes, Never };
+use_type use_field = No;
+const int SIZE = 4 * 1024 * 1024;
+const int SMALL_SIZE = 4 * 1024;
+
+void dif( struct mallinfo& m1, struct mallinfo& m2, bool alloc )
+    {
+    int difval = m2.@_field@ - m1.@_field@;
+    if( alloc )
+    {
+    if( difval >= SIZE && difval < 2 * SIZE && use_field != Never )
+        use_field = Yes;
+    }
+    else // !alloc
+    {
+    difval = -difval;
+    if( difval > SMALL_SIZE && ( difval < SIZE || difval >= 2 * SIZE ) && use_field == Yes )
+        use_field = Never;
+    }
+    }
+
+int main()
+    {
+    free( malloc( SIZE * 2 )); // avoid Doug Lea's malloc feature of having total_max in usmblks
+    struct mallinfo m1 = mallinfo();
+    void* mem1 = malloc( SIZE );
+    struct mallinfo m2 = mallinfo();
+    free( mem1 );
+    struct mallinfo m3 = mallinfo();
+    void* mem2[ SIZE / 32 ];
+    for( int i = 0;
+     i < SIZE / 32;
+     ++i )
+    mem2[ i ] = malloc( 32 );
+    struct mallinfo m4 = mallinfo();
+    for( int i = 0;
+     i < SIZE / 32;
+     ++i )
+    free( mem2[ i ] );
+    struct mallinfo m5 = mallinfo();
+    void* mem3[ SIZE / 1024 ];
+    for( int i = 0;
+     i < SIZE / 1024;
+     ++i )
+    mem3[ i ] = malloc( 1024 );
+    struct mallinfo m6 = mallinfo();
+    for( int i = 0;
+     i < SIZE / 1024;
+     ++i )
+    free( mem3[ i ] );
+    struct mallinfo m7 = mallinfo();
+    dif( m1, m2, true );
+    dif( m2, m3, false );
+    dif( m3, m4, true );
+    dif( m4, m5, false );
+    dif( m5, m6, true );
+    dif( m6, m7, false );
+    return use_field == Yes ? 0 : 1;
+    }
+]==] _src @ONLY)
+    check_cxx_source_runs("${_src}" KDE_MALLINFO_FIELD_${_field})
+  endforeach()
+  string(TOUPPER "${_kde_mallinfo_type}" _t)
+  set(KDE_MALLINFO_${_t} 1)
+endif()
