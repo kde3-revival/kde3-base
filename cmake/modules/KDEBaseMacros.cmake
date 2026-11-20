@@ -39,7 +39,10 @@ function(kdebase_install_setgid name group)
     execute_process(COMMAND chown \"root:${group}\" \"\${_f}\" RESULT_VARIABLE _r
       OUTPUT_QUIET ERROR_QUIET)
     if(_r EQUAL 0)
-      execute_process(COMMAND chmod 2755 \"\${_f}\")
+      execute_process(COMMAND chmod 2755 \"\${_f}\" RESULT_VARIABLE _r
+        OUTPUT_QUIET ERROR_QUIET)
+    endif()
+    if(_r EQUAL 0)
       message(STATUS \"${name} is installed setgid ${group}\")
     else()
       message(STATUS \"Error: Could not install ${name} as setgid ${group}!!\")${_more}
