@@ -634,9 +634,12 @@ NetworkBackendPrivate::Device *NetworkBackendPrivate::findDevice(NMDevice *devic
 
 // The activations this applet started on @p device are over.  A new
 // connection that never came up (a mistyped password given up on, a
-// network gone) is deleted again.
+// network gone, one replaced by the next the user chose) is deleted again.
 void NetworkBackendPrivate::finishActivations(NMDevice *device, bool success)
 {
+    NMActiveConnection *active = success ? nm_device_get_active_connection(device) : 0;
+    NMRemoteConnection *up = active ? nm_active_connection_get_connection(active) : 0;
+
     QValueList<Activation>::Iterator it = activations.begin();
     while (it != activations.end())
     {
@@ -648,7 +651,7 @@ void NetworkBackendPrivate::finishActivations(NMDevice *device, bool success)
 
         if ((*it).connection)
         {
-            if (!success && (*it).isNew && cancellable)
+            if ((!success || (*it).connection != up) && (*it).isNew && cancellable)
             {
                 kdDebug() << "network applet: deleting the new connection "
                           << nm_connection_get_path(NM_CONNECTION((*it).connection))
@@ -1687,6 +1690,14 @@ void NetworkBackend::connectWithPassword(const QString &ssid, const QString &pas
     if (!ap)
     {
         emit connectionFailed(ssid, i18n("The network was not found."));
+        return;
+    }
+
+    // made meanwhile (asked for twice)
+    NMRemoteConnection *known = d->knownConnection(NM_DEVICE(wifi), ssid);
+    if (known)
+    {
+        d->activate(known, NM_DEVICE(wifi), ap, ssid);
         return;
     }
 

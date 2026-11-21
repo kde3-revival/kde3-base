@@ -21,6 +21,7 @@
 #define NETWORKAPPLET_H
 
 #include <qdatetime.h>
+#include <qguardedptr.h>
 #include <qmap.h>
 #include <qptrlist.h>
 #include <qstring.h>
@@ -123,6 +124,8 @@ private:
 
     // the password dialogs of the agent's requests
     QMap<int, PasswordDialog *> m_requests;
+    // the password dialogs of new networks, by SSID
+    QMap<QString, QGuardedPtr<PasswordDialog> > m_newPasswords;
     // the network the user did not give a password for, when
     QString m_cancelled;
     QTime m_cancelTime;

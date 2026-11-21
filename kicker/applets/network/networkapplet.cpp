@@ -151,6 +151,14 @@ NetworkApplet::~NetworkApplet()
     }
     m_requests.clear();
 
+    // and the ones of new networks would do nothing anymore
+    QMap<QString, QGuardedPtr<PasswordDialog> >::Iterator nit;
+    for (nit = m_newPasswords.begin(); nit != m_newPasswords.end(); ++nit)
+    {
+        delete (PasswordDialog *)nit.data();
+    }
+    m_newPasswords.clear();
+
     disconnect(m_backend, 0, this, 0);
     NetworkBackend::deref();
 }
@@ -508,10 +516,33 @@ void NetworkApplet::connectTo(const QString &ssid)
             break;
         case NetworkBackend::NeedPassword:
         {
-            PasswordDialog *dialog =
-                new PasswordDialog(ssid, QString::null,
-                                   network.security == NetworkBackend::WPA3Personal,
-                                   0, "networkpassword");
+            // the dialogs closed meanwhile
+            QMap<QString, QGuardedPtr<PasswordDialog> >::Iterator nit =
+                m_newPasswords.begin();
+            while (nit != m_newPasswords.end())
+            {
+                QMap<QString, QGuardedPtr<PasswordDialog> >::Iterator next = nit;
+                ++next;
+                if (!nit.data())
+                {
+                    m_newPasswords.remove(nit);
+                }
+                nit = next;
+            }
+
+            // asked already
+            PasswordDialog *dialog = m_newPasswords.contains(ssid)
+                                         ? (PasswordDialog *)m_newPasswords[ssid] : 0;
+            if (dialog)
+            {
+                dialog->raise();
+                KWin::forceActiveWindow(dialog->winId());
+                break;
+            }
+            dialog = new PasswordDialog(ssid, QString::null,
+                                        network.security == NetworkBackend::WPA3Personal,
+                                        0, "networkpassword");
+            m_newPasswords[ssid] = dialog;
             connect(dialog, SIGNAL(okClicked()), SLOT(newPasswordEntered()));
             connect(dialog, SIGNAL(finished()), dialog, SLOT(delayedDestruct()));
             dialog->show();
