@@ -24,6 +24,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #ifndef __taskbar_h__
 #define __taskbar_h__
 
+#include <qptrlist.h>
+
 #include <kpanelextension.h>
 #include <taskmanager.h>
 
@@ -127,7 +129,12 @@ private:
     bool                        shouldGroup() const;
     bool                        isGrouping;
     void                        reGroup();
+    bool                        onlyCurrentScreenWanted() const;
+    void                        takeKeys();
+    TaskBar*                    taskBarForKeys();
     KGlobalAccel*               keys;
+    static QPtrList<TaskBar>    s_taskBars;
+    static TaskBar*             s_keyOwner;
     KTextShadowEngine* m_textShadowEngine;
     QTimer m_relayoutTimer;
     bool m_ignoreUpdates;

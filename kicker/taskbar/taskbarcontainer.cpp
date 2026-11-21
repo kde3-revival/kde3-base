@@ -81,6 +81,10 @@ TaskBarContainer::TaskBarContainer( bool enableFrame, QWidget *parent, const cha
 
     connectDCOPSignal("", "", "kdeTaskBarConfigChanged()",
                       "configChanged()", false);
+    // the panel settings: the main panel on every screen makes the
+    // taskbars show the windows of their own screens
+    connectDCOPSignal("kicker", "kicker", "configurationChanged()",
+                      "configChanged()", false);
 }
 
 TaskBarContainer::~TaskBarContainer()

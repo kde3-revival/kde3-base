@@ -26,6 +26,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <math.h>
 
 #include <qapplication.h>
+#include <qcursor.h>
 #include <qbitmap.h>
 #include <qdesktopwidget.h>
 #include <qlayout.h>
@@ -40,6 +41,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <kimageeffect.h>
 #include <klocale.h>
 #include <kstandarddirs.h>
+#include <kwin.h>
 
 #include "kickerSettings.h"
 #include "taskbarsettings.h"
@@ -49,6 +51,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "taskbar.h"
 #include "taskbar.moc"
 
+#include <netwm.h> // after the Qt headers: it brings in Xlib
+
+QPtrList<TaskBar> TaskBar::s_taskBars;
+TaskBar* TaskBar::s_keyOwner = 0;
 
 TaskBar::TaskBar( QWidget *parent, const char *name )
     : Panner( parent, name ),
@@ -58,6 +64,7 @@ TaskBar::TaskBar( QWidget *parent, const char *name )
       m_sortByDesktop(false),
       m_showIcon(false),
       m_showOnlyIconified(false),
+      keys(0),
       m_textShadowEngine(0),
       m_ignoreUpdates(false)
 {
@@ -116,16 +123,87 @@ TaskBar::TaskBar( QWidget *parent, const char *name )
     blocklayout = false;
 
     connect(kapp, SIGNAL(settingsChanged(int)), SLOT(slotSettingsChanged(int)));
-    keys = new KGlobalAccel( this );
-#include "taskbarbindings.cpp"
-    keys->readSettings();
-    keys->updateConnections();
+    s_taskBars.append(this);
+    if (!s_keyOwner)
+    {
+        takeKeys();
+    }
 
     reLayout();
 }
 
+// The shortcuts, grabbed by one taskbar of the process: with a taskbar
+// on every screen, a press would switch once per taskbar otherwise.  The
+// owner passes the press on to the taskbar of the active window's screen.
+void TaskBar::takeKeys()
+{
+    s_keyOwner = this;
+
+    keys = new KGlobalAccel( this );
+#include "taskbarbindings.cpp"
+    keys->readSettings();
+    keys->updateConnections();
+}
+
+TaskBar* TaskBar::taskBarForKeys()
+{
+    if (s_taskBars.count() < 2)
+    {
+        return this;
+    }
+
+    QDesktopWidget* desktop = QApplication::desktop();
+    int screen = -1;
+    NETRootInfo root(qt_xdisplay(), NET::ActiveWindow);
+    if (root.activeWindow())
+    {
+        KWin::WindowInfo info = KWin::windowInfo(root.activeWindow(), NET::WMGeometry);
+        screen = desktop->screenNumber(info.geometry().center());
+    }
+
+    if (screen < 0)
+    {
+        screen = desktop->screenNumber(QCursor::pos());
+    }
+
+    // the taskbar of that screen, else one that shows every screen
+    TaskBar* showsAll = 0;
+    for (QPtrListIterator<TaskBar> it(s_taskBars); it.current(); ++it)
+    {
+        TaskBar* taskBar = it.current();
+        if (!taskBar->m_showOnlyCurrentScreen)
+        {
+            if (!showsAll)
+            {
+                showsAll = taskBar;
+            }
+        }
+        else if (taskBar->showScreen() == screen)
+        {
+            return taskBar;
+        }
+    }
+
+    return showsAll ? showsAll : this;
+}
+
 TaskBar::~TaskBar()
 {
+    s_taskBars.removeRef(this);
+    if (s_keyOwner == this)
+    {
+        // ungrabbed before the next taskbar grabs them
+        keys->setEnabled(false);
+        delete keys;
+        keys = 0;
+        s_keyOwner = 0;
+
+        if (!s_taskBars.isEmpty())
+        {
+            s_taskBars.first()->takeKeys();
+        }
+    }
+
     for (TaskContainer::Iterator it = m_hiddenContainers.begin();
          it != m_hiddenContainers.end();
          ++it)
@@ -240,10 +318,10 @@ void TaskBar::configure()
     m_showIcon = TaskBarSettings::showIcon();
     m_showOnlyIconified = TaskBarSettings::showOnlyIconified();
 
+    bool wasShowOnlyCurrentScreen = m_showOnlyCurrentScreen;
+    int wasCurrentScreen = m_currentScreen;
     m_currentScreen = -1;    // Show all screens or re-get our screen
-    m_showOnlyCurrentScreen = TaskBarSettings::showCurrentScreenOnly() &&
-                              QApplication::desktop()->isVirtualDesktop() &&
-                              QApplication::desktop()->numScreens() > 1;
+    m_showOnlyCurrentScreen = onlyCurrentScreenWanted();
 
     // we need to watch geometry issues if we aren't showing windows when we
     // are paying attention to the current Xinerama screen
@@ -272,6 +350,15 @@ void TaskBar::configure()
         }
     }
 
+    // the windows of other screens were never added, or are to go
+    // (blocklayout: from the constructor, which adds the windows itself)
+    if (!blocklayout &&
+        (wasShowOnlyCurrentScreen != m_showOnlyCurrentScreen ||
+         (m_showOnlyCurrentScreen && wasCurrentScreen != showScreen())))
+    {
+        reGroup();
+    }
+
     TaskManager::the()->setXCompositeEnabled(TaskBarSettings::showThumbnails());
 
     reLayoutEventually();
@@ -291,7 +378,12 @@ void TaskBar::moveEvent( QMoveEvent* e )
 
 void TaskBar::resizeEvent( QResizeEvent* e )
 {
-    if (m_showOnlyCurrentScreen)
+    if (m_showOnlyCurrentScreen != onlyCurrentScreenWanted())
+    {
+        // put onto one screen, or stretched over several
+        configure();
+    }
+    else if (m_showOnlyCurrentScreen)
     {
         QPoint topLeft = mapToGlobal(this->geometry().topLeft());
         if (m_currentScreen != QApplication::desktop()->screenNumber(topLeft))
@@ -1147,21 +1239,46 @@ void TaskBar::wheelEvent(QWheelEvent* e)
 
 void TaskBar::slotActivateNextTask()
 {
-    activateNextTask( true );
+    taskBarForKeys()->activateNextTask( true );
 }
 
 void TaskBar::slotActivatePreviousTask()
 {
-    activateNextTask( false );
+    taskBarForKeys()->activateNextTask( false );
 }
 
 void TaskBar::slotSettingsChanged( int category )
 {
-    if( category == (int) KApplication::SETTINGS_SHORTCUTS )
+    if( category == (int) KApplication::SETTINGS_SHORTCUTS && keys )
     {
         keys->readSettings();
         keys->updateConnections();
     }
+}
+
+bool TaskBar::onlyCurrentScreenWanted() const
+{
+    QDesktopWidget* desktop = QApplication::desktop();
+    if (!desktop->isVirtualDesktop() || desktop->numScreens() < 2)
+    {
+        return false;
+    }
+
+    if (TaskBarSettings::showCurrentScreenOnly())
+    {
+        return true;
+    }
+
+    // With the main panel on every screen, each taskbar shows the windows
+    // of its screen, if it is on a single one.
+    if (!KickerSettings::mainPanelOnEveryScreen())
+    {
+        return false;
+    }
+
+    QRect panel = topLevelWidget()->geometry();
+    int screen = desktop->screenNumber(panel.center());
+    return screen >= 0 && desktop->screenGeometry(screen).contains(panel);
 }
 
 int TaskBar::showScreen() const
