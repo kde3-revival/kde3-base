@@ -17,6 +17,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <qmap.h>
 #include <qrect.h>
 #include <qstring.h>
+#include <qvaluevector.h>
 
 #include <X11/Xlib.h>
 
@@ -32,6 +33,7 @@ class EffectPicture;
 namespace Compositing
 {
 class Presenter;
+struct RectF;
 }
 
 /*
@@ -112,6 +114,10 @@ class Effects : public QObject
         void renderFrame( bool immediate = false );
         bool updateAnim( EffectAnim* anim, double t );
         void drawAnim( EffectAnim* anim, XID dst );
+        void drawPicture( XID dst, EffectPicture& pic, const Compositing::RectF& rect, double alpha, bool shaped,
+            const QValueVector< XRectangle >& shape );
+        bool blendTarget( int w, int h );
+        void freeBlendTarget();
         void drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copies, XID dst, double p, double alpha );
         void dumpFrame();
         void report();
@@ -148,6 +154,10 @@ class Effects : public QObject
         bool frame_wanted;
         bool finishing; // the last frame (without animations) is being shown
         bool need_immediate; // our window is new: its first frame is copied at once
+        // the scratch picture for blending the downscaled copies
+        Pixmap blend_pixmap;
+        XID blend_picture;
+        int blend_w, blend_h;
         double last_frame;
 
         // statistics (KWIN_EFFECTS_DEBUG), per session

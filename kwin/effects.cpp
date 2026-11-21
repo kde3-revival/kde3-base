@@ -77,7 +77,10 @@ namespace
 // downscaled copies of the windows (see EffectPicture::copy()): halved
 // across and along separately, down to 1/64 (a window minimized into a
 // taskbar button is drawn at about 1/30); none for windows larger than
-// 4096x2160 (the copies take a third of a window more, in GPU memory)
+// 4096x2160.  In GPU memory: the copies along the diagonal (a scale alike
+// in both directions) take a third of the window more; all pairs of
+// levels, which the genie and the morphs may make over an animation, at
+// most about three times the window (they go with the animation)
 const int CopyLevels = 7;
 const long CopyLimit = 4096L * 2160;
 // the first repaint of a window shown or resized: damage, then quiet for
@@ -186,7 +189,7 @@ class EffectPicture
     {
     public:
         EffectPicture() : format( NULL ), alpha( false ), depth( 0 ), visual( NULL ), owned( false ),
-            transformed( false )
+            transformed( false ), opaque_pixmap( None ), opaque_picture( None )
             {
             pixmap[ 0 ] = None;
             picture[ 0 ] = None;
@@ -211,7 +214,7 @@ class EffectPicture
                 {
                 *cw = w[ 0 ];
                 *ch = h[ 0 ];
-                return picture[ 0 ];
+                return base( dpy );
                 }
             const int key = lx * 16 + ly;
             QMap< int, Copy >::ConstIterator it = copies.find( key );
@@ -231,8 +234,10 @@ class EffectPicture
             Copy c;
             c.w = across ? QMAX( 1, ( sw + 1 ) / 2 ) : sw;
             c.h = down ? QMAX( 1, ( sh + 1 ) / 2 ) : sh;
-            c.pixmap = XCreatePixmap( dpy, DefaultRootWindow( dpy ), c.w, c.h, depth );
-            c.picture = XRenderCreatePicture( dpy, c.pixmap, format, 0, NULL );
+            c.pixmap = XCreatePixmap( dpy, DefaultRootWindow( dpy ), c.w, c.h,
+                alpha ? DefaultDepth( dpy, DefaultScreen( dpy )) : depth );
+            c.picture = XRenderCreatePicture( dpy, c.pixmap, alpha
+                ? XRenderFindVisualFormat( dpy, DefaultVisual( dpy, DefaultScreen( dpy ))) : format, 0, NULL );
             XRenderPictureAttributes pa;
             pa.repeat = RepeatPad;
             XRenderChangePicture( dpy, src, CPRepeat, &pa );
@@ -248,8 +253,41 @@ class EffectPicture
             *ch = c.h;
             return c.picture;
             }
+        /*
+         What the screen shows of the window: itself, or for an ARGB window
+         its colours without the alpha (the server draws them so, without a
+         compositing manager: Src, the premultiplied colours as they are), in
+         a copy without alpha.  Scaled windows are drawn from this: an ARGB
+         window looks the same while animated as before and after.
+        */
+        Picture base( Display* dpy )
+            {
+            if( !alpha )
+                return picture[ 0 ];
+            if( opaque_picture == None )
+                {
+                opaque_pixmap = XCreatePixmap( dpy, DefaultRootWindow( dpy ), w[ 0 ], h[ 0 ],
+                    DefaultDepth( dpy, DefaultScreen( dpy )));
+                opaque_picture = XRenderCreatePicture( dpy, opaque_pixmap,
+                    XRenderFindVisualFormat( dpy, DefaultVisual( dpy, DefaultScreen( dpy ))), 0, NULL );
+                setTransform( dpy, picture[ 0 ], 1, 1, 0, 0 );
+                XRenderSetPictureFilter( dpy, picture[ 0 ], FilterNearest, NULL, 0 );
+                transformed = false;
+                XRenderComposite( dpy, PictOpSrc, picture[ 0 ], None, opaque_picture, 0, 0, 0, 0, 0, 0,
+                    w[ 0 ], h[ 0 ] );
+                }
+            return opaque_picture;
+            }
+        bool isBase( Picture p ) const { return p == picture[ 0 ] || ( p == opaque_picture && p != None ); }
         void dropCopies( Display* dpy )
             {
+            if( opaque_picture != None )
+                {
+                XRenderFreePicture( dpy, opaque_picture );
+                XFreePixmap( dpy, opaque_pixmap );
+                }
+            opaque_picture = None;
+            opaque_pixmap = None;
             for( QMap< int, Copy >::ConstIterator it = copies.begin();
                  it != copies.end();
                  ++it )
@@ -305,6 +343,8 @@ class EffectPicture
             int w, h;
             };
         QMap< int, Copy > copies; // by lx * 16 + ly
+        Pixmap opaque_pixmap; // base() of an ARGB window
+        Picture opaque_picture;
         Pixmap pixmap[ 1 ];
         Picture picture[ 1 ];
         int w[ 1 ], h[ 1 ];
@@ -417,6 +457,10 @@ Effects::Effects( Workspace* w )
       frame_wanted( false ),
       finishing( false ),
       need_immediate( false ),
+      blend_pixmap( None ),
+      blend_picture( None ),
+      blend_w( 0 ),
+      blend_h( 0 ),
       last_frame( 0 ),
       frame_count( 0 ),
       dump_index( 0 ),
@@ -1140,6 +1184,7 @@ void Effects::endSession()
     finishing = false;
     trapErrors( dpy );
     presenter->stop();
+    freeBlendTarget();
     if( out != None )
         XDestroyWindow( dpy, out );
     out = None;
@@ -1507,20 +1552,23 @@ static int copyLevelFraction( double scale, double* fraction )
     return level;
     }
 
-// one copy of pic drawn into rect (the box covers the pixels touched, the
-// transformation puts it at rect.x, rect.y exactly: no rounding, no jitter)
-static void drawCopy( Display* dpy, Picture dst, EffectPicture& pic, int lx, int ly, const RectF& rect,
-    double alpha, int ox, int oy, bool src_op )
+// the copy ( lx, ly ) of pic prepared for drawing into rect from the box
+// at dx, dy: the transformation maps with the copy's nominal size (the
+// window's size / 2^level; a copy is rounded up by up to a pixel, which
+// falls outside rect), so that all copies land at the same place, to the
+// subpixel (no rounding, no jitter); true at the identity
+static bool prepareCopy( Display* dpy, EffectPicture& pic, int lx, int ly, const RectF& rect, int dx, int dy,
+    Picture* src_return )
     {
     int cw, ch;
     Picture src = pic.copy( dpy, lx, ly, &cw, &ch );
-    const double sx = rect.w / cw;
-    const double sy = rect.h / ch;
-    const int dx = (int) floor( rect.x );
-    const int dy = (int) floor( rect.y );
-    const int dw = (int) ceil( rect.x + rect.w ) - dx;
-    const int dh = (int) ceil( rect.y + rect.h ) - dy;
-    const bool identity = src == pic.picture[ 0 ] && fabs( sx - 1 ) < 1e-9 && fabs( sy - 1 ) < 1e-9
+    // (copy() gives the window itself for windows without copies)
+    const bool base = pic.isBase( src );
+    const double nw = base ? pic.w[ 0 ] : double( pic.w[ 0 ] ) / ( 1 << lx );
+    const double nh = base ? pic.h[ 0 ] : double( pic.h[ 0 ] ) / ( 1 << ly );
+    const double sx = rect.w / nw;
+    const double sy = rect.h / nh;
+    const bool identity = base && fabs( sx - 1 ) < 1e-9 && fabs( sy - 1 ) < 1e-9
         && rect.x == dx && rect.y == dy;
     if( identity )
         {
@@ -1534,56 +1582,94 @@ static void drawCopy( Display* dpy, Picture dst, EffectPicture& pic, int lx, int
         }
     if( src == pic.picture[ 0 ] )
         pic.transformed = !identity;
-    Picture mask = None;
-    if( alpha < 1.0 )
-        mask = solidPicture( dpy, Qt::black, alpha );
-    // at scale 1 like the server's automatic compositing (Src, also for
-    // ARGB windows), else blended (the edges are anti-aliased)
-    const int op = src_op && mask == None && identity ? PictOpSrc : PictOpOver;
-    XRenderComposite( dpy, op, src, mask, dst, 0, 0, 0, 0, dx - ox, dy - oy, dw, dh );
-    if( mask != None )
-        XRenderFreePicture( dpy, mask );
+    *src_return = src;
+    return identity;
     }
 
 /*
  pic drawn into rect, with alpha, offset by -ox, -oy.
 
  Scaled down, a bilinear filter skips pixels (the text shimmers and
- breaks up as the window moves): drawn from the copy downscaled by at most
- a half more (EffectPicture::copy()), blended with the next smaller one by
- how far the scale is towards it, like trilinear filtering: no aliasing,
- and no jump in sharpness when the copy changes.  Scaled up (the old
- contents of a maximized window), bilinear.
+ breaks up as the window moves): drawn from the copies downscaled by at
+ most a half more (EffectPicture::copy()), the two levels around the
+ scale blended in each direction by how far the scale is between them
+ (bilinearly over up to four copies, like trilinear filtering, but per
+ direction: a morph scales the two directions differently): no aliasing
+ and no jump in sharpness when a level changes.  The blend is composed in
+ a scratch picture and drawn with alpha from there: exact also for
+ translucent windows.  Scaled up (the old contents of a maximized window),
+ bilinear.
 */
-static void drawPicture( Display* dpy, Picture dst, EffectPicture& pic, const RectF& rect, double alpha,
-    int ox, int oy, bool shaped, const QValueVector< XRectangle >& shape )
+void Effects::drawPicture( Picture dst, EffectPicture& pic, const RectF& rect, double alpha,
+    bool shaped, const QValueVector< XRectangle >& shape )
     {
     if( pic.isNull() || alpha <= 1.0 / 512 || rect.w < 0.5 || rect.h < 0.5 || ( shaped && shape.isEmpty()))
         return;
+    const int ox = area.x();
+    const int oy = area.y();
     double fx, fy;
     const int lx = copyLevelFraction( rect.w / pic.w[ 0 ], &fx );
     const int ly = copyLevelFraction( rect.h / pic.h[ 0 ], &fy );
-    const bool blend_x = fx > 1.0 / 64;
-    const bool blend_y = fy > 1.0 / 64;
-    // the weight of the smaller copy
-    double f = blend_x && blend_y ? ( fx + fy ) / 2 : blend_x ? fx : blend_y ? fy : 0;
-    if( (long) pic.w[ 0 ] * pic.h[ 0 ] > CopyLimit )
-        f = 0; // (no copies)
+    // the copies and their weights
+    struct { int lx, ly; double w; } parts[ 4 ];
+    int count = 0;
+    const bool copies = (long) pic.w[ 0 ] * pic.h[ 0 ] <= CopyLimit;
+    for( int i = 0;
+         i < 4;
+         ++i )
+        {
+        const int bx = i & 1;
+        const int by = i >> 1;
+        const double w = ( bx ? fx : 1 - fx ) * ( by ? fy : 1 - fy );
+        if( w <= 1.0 / 512 || ( !copies && ( bx || by )))
+            continue;
+        parts[ count ].lx = lx + bx;
+        parts[ count ].ly = ly + by;
+        parts[ count ].w = w;
+        ++count;
+        }
+    double sum = 0;
+    for( int i = 0;
+         i < count;
+         ++i )
+        sum += parts[ i ].w;
+    const int dx = (int) floor( rect.x );
+    const int dy = (int) floor( rect.y );
+    const int dw = (int) ceil( rect.x + rect.w ) - dx;
+    const int dh = (int) ceil( rect.y + rect.h ) - dy;
     if( shaped && !shape.isEmpty())
         {
         QValueVector< XRectangle > clip = scaledShape( shape, QSize( pic.w[ 0 ], pic.h[ 0 ] ), rect, ox, oy );
         XRenderSetPictureClipRectangles( dpy, dst, 0, 0, &clip[ 0 ], clip.size());
         }
-    if( f < 1.0 / 64 )
-        drawCopy( dpy, dst, pic, lx, ly, rect, alpha, ox, oy, true );
-    else
-        { // (1 - f) of the larger copy, f of the smaller one, alpha in all: the
-          // first one weaker by as much as the second one covers it
-        const double a2 = alpha * f;
-        const double a1 = a2 < 0.999 ? alpha * ( 1 - f ) / ( 1 - a2 ) : 0;
-        drawCopy( dpy, dst, pic, lx, ly, rect, a1, ox, oy, false );
-        drawCopy( dpy, dst, pic, lx + ( blend_x ? 1 : 0 ), ly + ( blend_y ? 1 : 0 ), rect, a2, ox, oy, false );
+    Picture mask = alpha < 1.0 ? solidPicture( dpy, Qt::black, alpha ) : None;
+    if( count <= 1 )
+        { // one copy (or the window itself): drawn directly
+        Picture src;
+        const bool identity = prepareCopy( dpy, pic, count == 1 ? parts[ 0 ].lx : lx,
+            count == 1 ? parts[ 0 ].ly : ly, rect, dx, dy, &src );
+        // at scale 1 like the server's automatic compositing (Src, also for
+        // ARGB windows), else blended (the edges are anti-aliased)
+        const int op = mask == None && identity ? PictOpSrc : PictOpOver;
+        XRenderComposite( dpy, op, src, mask, dst, 0, 0, 0, 0, dx - ox, dy - oy, dw, dh );
         }
+    else if( blendTarget( dw, dh ))
+        { // the weighted sum in the scratch picture (premultiplied, also its alpha), then over dst
+        for( int i = 0;
+             i < count;
+             ++i )
+            {
+            Picture src;
+            prepareCopy( dpy, pic, parts[ i ].lx, parts[ i ].ly, rect, dx, dy, &src );
+            Picture weight = solidPicture( dpy, Qt::black, parts[ i ].w / sum );
+            XRenderComposite( dpy, i == 0 ? PictOpSrc : PictOpAdd, src, weight, blend_picture,
+                0, 0, 0, 0, 0, 0, dw, dh );
+            XRenderFreePicture( dpy, weight );
+            }
+        XRenderComposite( dpy, PictOpOver, blend_picture, mask, dst, 0, 0, 0, 0, dx - ox, dy - oy, dw, dh );
+        }
+    if( mask != None )
+        XRenderFreePicture( dpy, mask );
     if( shaped && !shape.isEmpty())
         {
         XRenderPictureAttributes pa;
@@ -1592,12 +1678,34 @@ static void drawPicture( Display* dpy, Picture dst, EffectPicture& pic, const Re
         }
     }
 
+// the scratch picture for blending copies (ARGB), at least w x h
+bool Effects::blendTarget( int w, int h )
+    {
+    if( blend_picture != None && w <= blend_w && h <= blend_h )
+        return true;
+    freeBlendTarget();
+    blend_w = QMAX( w, area.width());
+    blend_h = QMAX( h, area.height());
+    blend_pixmap = XCreatePixmap( dpy, root, blend_w, blend_h, 32 );
+    blend_picture = XRenderCreatePicture( dpy, blend_pixmap, XRenderFindStandardFormat( dpy, PictStandardARGB32 ),
+        0, NULL );
+    return blend_picture != None;
+    }
+
+void Effects::freeBlendTarget()
+    {
+    if( blend_picture != None )
+        XRenderFreePicture( dpy, blend_picture );
+    if( blend_pixmap != None )
+        XFreePixmap( dpy, blend_pixmap );
+    blend_picture = None;
+    blend_pixmap = None;
+    blend_w = blend_h = 0;
+    }
+
 void Effects::drawAnim( EffectAnim* anim, Picture dst )
     {
-    const int ox = area.x();
-    const int oy = area.y();
     EffectScene::Win* live = scene->find( anim->frame );
-    static const QValueVector< XRectangle > noshape;
     switch( anim->kind )
         {
         case EffectAnim::Iconify:
@@ -1615,7 +1723,7 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
                 }
             if( anim->p <= 0 && anim->p_to == 0 )
                 { // restored, waiting for the repaint
-                drawPicture( dpy, dst, *pic, RectF( anim->geom ), 1.0, ox, oy, shaped, *shape );
+                drawPicture( dst, *pic, RectF( anim->geom ), 1.0, shaped, *shape );
                 return;
                 }
             if( anim->style == Genie )
@@ -1628,16 +1736,16 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
             RectF rect = mix( RectF( anim->geom ), target, anim->p );
             anim->drawn = rect;
             const double alpha = 1 - anim->p * anim->p * anim->p * anim->p;
-            drawPicture( dpy, dst, *pic, rect, alpha, ox, oy, shaped, *shape );
+            drawPicture( dst, *pic, rect, alpha, shaped, *shape );
             break;
             }
         case EffectAnim::Morph:
             {
             RectF rect = mix( RectF( anim->old_geom ), RectF( anim->geom ), anim->p );
             if( anim->fade < 1 )
-                drawPicture( dpy, dst, anim->snap, rect, 1.0, ox, oy, anim->shaped, anim->shape );
+                drawPicture( dst, anim->snap, rect, 1.0, anim->shaped, anim->shape );
             if( anim->fade > 0 && live != NULL )
-                drawPicture( dpy, dst, live->pic, rect, anim->fade, ox, oy, live->shaped, live->shape );
+                drawPicture( dst, live->pic, rect, anim->fade, live->shaped, live->shape );
             break;
             }
         case EffectAnim::Open:
@@ -1659,7 +1767,7 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
             RectF rect( g.cx() - g.w * s / 2, g.cy() - g.h * s / 2, g.w * s, g.h * s );
             if( anim->p >= 1 )
                 rect = g;
-            drawPicture( dpy, dst, *pic, rect, anim->p, ox, oy, shaped, *shape );
+            drawPicture( dst, *pic, rect, anim->p, shaped, *shape );
             break;
             }
         }
@@ -2085,6 +2193,10 @@ bool Effects::x11Event( XEvent* e )
             if( anim->damage == de->damage )
                 {
                 XDamageSubtract( dpy, de->damage, None, None );
+                // (the captured contents of a morph are the window's own pixmap
+                // until it is resized: their copies change with it)
+                if( anim->kind == EffectAnim::Morph && anim->geom.size() == anim->old_geom.size())
+                    anim->snap.dropCopies( dpy );
                 const double t = now();
                 if( t >= anim->wait_start )
                     {
