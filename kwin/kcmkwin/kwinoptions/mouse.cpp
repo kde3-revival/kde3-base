@@ -530,7 +530,7 @@ const char* KTitleBarActionsConfig::functionMax( int i )
 void KTitleBarActionsConfig::load()
 {
   config->setGroup("Windows");
-  setComboText(coTiDbl, config->readEntry("TitlebarDoubleClickCommand","Shade").ascii());
+  setComboText(coTiDbl, config->readEntry("TitlebarDoubleClickCommand","Maximize").ascii());
   for (int t = 0; t < 3; ++t)
     setComboText(coMax[t],config->readEntry(cnf_Max[t], tbl_Max[t]).ascii());
 
@@ -571,7 +571,7 @@ void KTitleBarActionsConfig::save()
 
 void KTitleBarActionsConfig::defaults()
 {
-  setComboText(coTiDbl, "Shade");
+  setComboText(coTiDbl, "Maximize");
   setComboText(coTiAct1,"Raise");
   setComboText(coTiAct2,"Lower");
   setComboText(coTiAct3,"Operations menu");

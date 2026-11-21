@@ -124,7 +124,7 @@ unsigned long Options::updateSettings()
     electric_borders = config->readNumEntry("ElectricBorders", 0);
     electric_border_delay = config->readNumEntry("ElectricBorderDelay", 150);
 
-    OpTitlebarDblClick = windowOperation( config->readEntry("TitlebarDoubleClickCommand", "Shade"), true );
+    OpTitlebarDblClick = windowOperation( config->readEntry("TitlebarDoubleClickCommand", "Maximize"), true );
     d->OpMaxButtonLeftClick = windowOperation( config->readEntry("MaximizeButtonLeftClickCommand", "Maximize"), true );
     d->OpMaxButtonMiddleClick = windowOperation( config->readEntry("MaximizeButtonMiddleClickCommand", "Maximize (vertical only)"), true );
     d->OpMaxButtonRightClick = windowOperation( config->readEntry("MaximizeButtonRightClickCommand", "Maximize (horizontal only)"), true );
