@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<!-- Konsole's console fonts (console8x16, 9x15).  Link this file into
+     /etc/fonts/conf.d so that fontconfig, and so Xft, finds them. -->
+<fontconfig>
+  <dir>@KONSOLE_FONT_DIR@</dir>
+</fontconfig>
