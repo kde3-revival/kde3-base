@@ -15,9 +15,15 @@
  *   monitors disconnect when they sleep and connect again, slowly, when
  *   they wake up. A monitor that is gone counts as unplugged only when it
  *   stayed away for removeGraceMs after it went and after the monitors
- *   were last seen in power save, unless none of the remaining ones is on.
- * - When monitors that went away come back, what they had before is put
- *   back if the driver changed it meanwhile.
+ *   were last seen in power save; when none of the remaining ones is on,
+ *   removeGraceMs after the monitors were last seen in power save.
+ * - When monitors that went away come back switched off (by the driver),
+ *   their arrangement is put back (at most once a minute). A change made
+ *   by someone else and not remembered yet counts as theirs.
+ * - A change made by someone else while kded_randr waits for a monitor
+ *   that is gone is kept: nothing is applied then.
+ * - It starts only when no monitor seems to be missing (the monitors
+ *   cover the screen from 0,0), or after removeGraceMs.
  *
  * Copyright (C) 2026 Serghei Amelian
  *
@@ -46,7 +52,12 @@ public:
 	// a configuration changed by someone else is remembered when it did
 	// not change for this long (longer than the control module's 15 s
 	// confirmation, so that an arrangement that is reverted is not)
-	rememberQuietMs = 20000
+	rememberQuietMs = 30000,
+	// the start: no RandR event for this long
+	startQuietMs = 5000,
+	// monitors switched off by the driver are put back at most once in
+	// this time
+	restoreAgainMs = 60000
     };
 
     struct Action
@@ -89,15 +100,23 @@ public:
 
 private:
     Action wait( int ms, const QString &message );
+    // takes the server's arrangement as the known one and saves it
+    Action remember( const ScreenState &state, ProfileStore &store );
 
     bool m_enabled;
     bool m_started;
     QString m_set;          // the connected monitors of m_known
     Layout m_known;         // their arrangement, as last seen or applied
     bool m_reconnected;     // outputs (dis)connected since m_known
+    bool m_hasPending;      // changed by someone else, not remembered yet:
+    Layout m_pending;       // that arrangement
     long m_changeSince;     // when the set was first seen changed; -1: not
+    QString m_changeSet;    // the changed set and its arrangement then
+    Layout m_changeLayout;
     bool m_seenAsleep;
     long m_asleepAt;        // when the monitors were last seen in power save
+    long m_lastApply;       // when the last Apply was asked for
+    long m_startWaitSince;  // the start waits for a missing monitor since
     QString m_lastMessage;
 };
 

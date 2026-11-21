@@ -203,9 +203,13 @@ bool RandRDaemon::reconfigure()
     ScreenState state;
     if ( !query( state ) )
 	return false;
+    // not while the monitors sleep
+    if ( monitorsAsleep() )
+	return false;
     KConfig config( "displayrc", true );
     ProfileStore store( &config );
-    return apply( m_policy.reconfigure( state, store ), state.connectedSetKey() );
+    Layout layout = m_policy.reconfigure( state, store );
+    return !layout.isEmpty() && apply( layout, state.connectedSetKey() );
 }
 
 QString RandRDaemon::connectedSet()

@@ -35,6 +35,7 @@ public:
 k_dcop:
     // applies the saved profile of the connected monitors (or one
     // derived from what is known about them) now; false if that failed
+    // or the monitors are in power save
     bool reconfigure();
     // the identity of the connected monitors (the profile name)
     QString connectedSet();

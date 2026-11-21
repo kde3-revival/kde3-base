@@ -289,7 +289,9 @@ Layout layoutFor( const ScreenState &state, const ProfileStore &store,
 // the others (internal panel first, then by connector), with the mode a
 // profile has for them, else the current or preferred one. The primary
 // one: the reference's, else previous's, else the server's, else the
-// first one. Without any reference: defaultLayout().
+// first one. Monitors that the reference or previous has switched off
+// stay off. Without any reference: defaultLayout(); empty if no valid
+// layout can be made from the reference.
 Layout deriveLayout( const ScreenState &state, const ProfileStore &store,
 		     const Layout &previous );
 

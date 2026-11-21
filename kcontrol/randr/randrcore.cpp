@@ -1093,6 +1093,7 @@ Layout deriveLayout( const ScreenState &state, const ProfileStore &store,
 
     // the monitors the reference has, where it has them
     Layout l;
+    QValueList<QRect> resized;
     for ( Layout::ConstIterator it = ref.begin(); it != ref.end(); ++it ) {
 	if ( !(*it).enabled )
 	    continue;
@@ -1102,7 +1103,9 @@ Layout deriveLayout( const ScreenState &state, const ProfileStore &store,
 	OutputSetting s = *it;
 	s.name = o->name;
 	s.model = o->model;
-	// a mode the monitor does not have (any more): its preferred one
+	// a mode the monitor does not have (any more): its preferred one,
+	// and the monitors right of it or below it move along
+	QRect before = monitorRect( s );
 	const Mode *m = findMode( state, *o, s.width, s.height, s.rate );
 	if ( !m )
 	    m = preferredMode( state, *o );
@@ -1112,7 +1115,15 @@ Layout deriveLayout( const ScreenState &state, const ProfileStore &store,
 	s.height = m->height;
 	s.rate = m->rate;
 	l.append( s );
+	if ( monitorRect( s ).size() != before.size() )
+	    resized.append( before );
+	else
+	    resized.append( QRect() );
     }
+    for ( unsigned int i = 0; i < l.count(); ++i )
+	if ( resized[i].isValid() )
+	    adjustNeighbours( l, i, resized[i].x(), resized[i].y(),
+			      resized[i].width(), resized[i].height() );
     normalizeLayout( l );
     closeGaps( l, false );
     closeGaps( l, true );
@@ -1164,7 +1175,10 @@ Layout deriveLayout( const ScreenState &state, const ProfileStore &store,
 	s.width = m->width;
 	s.height = m->height;
 	s.rate = m->rate;
-	s.enabled = ( crtcs-- > 0 );
+	// switched off in the reference or before (a closed laptop): stays off
+	const OutputSetting *r = settingFor( ref, o.key ), *p = settingFor( previous, o.key );
+	bool keepOff = ( r && !r->enabled ) || ( p && !p->enabled );
+	s.enabled = !keepOff && ( crtcs-- > 0 );
 	l.append( s );
 	if ( s.enabled )
 	    placeAtRight( l, l.count() - 1 );
@@ -1187,8 +1201,9 @@ Layout deriveLayout( const ScreenState &state, const ProfileStore &store,
     for ( Layout::Iterator it = l.begin(); it != l.end(); ++it )
 	(*it).primary = ( (*it).key == primary );
 
+    // not to be made from the reference: nothing rather than another order
     if ( !validateLayout( l ) )
-	return defaultLayout( state );
+	return Layout();
     return l;
 }
 
