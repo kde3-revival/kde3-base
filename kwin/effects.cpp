@@ -175,7 +175,8 @@ bool mayBeShaped( Client* c )
 class EffectPicture
     {
     public:
-        EffectPicture() : format( NULL ), alpha( false ), depth( 0 ), visual( NULL ), owned( false )
+        EffectPicture() : format( NULL ), alpha( false ), depth( 0 ), visual( NULL ), owned( false ),
+            transformed( false )
             {
             for( int i = 0;
                  i < MipLevels;
@@ -249,6 +250,8 @@ class EffectPicture
                 XRenderComposite( dpy, PictOpSrc, src, None, picture[ l ], 0, 0, 0, 0, 0, 0, lw, lh );
                 pa.repeat = RepeatNone;
                 XRenderChangePicture( dpy, src, CPRepeat, &pa );
+                if( l == 1 )
+                    transformed = true;
                 }
             return level;
             }
@@ -257,6 +260,7 @@ class EffectPicture
         int depth;
         Visual* visual;
         bool owned;
+        bool transformed; // picture 0 not at the identity (drawn scaled)
         Pixmap pixmap[ MipLevels ];
         Picture picture[ MipLevels ];
         int w[ MipLevels ], h[ MipLevels ];
@@ -1429,6 +1433,8 @@ static void drawPicture( Display* dpy, Picture dst, EffectPicture& pic, const Re
         setTransform( dpy, src, 1 / sx, 1 / sy, ( dx - rect.x ) / sx, ( dy - rect.y ) / sy );
         XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
         }
+    if( level == 0 )
+        pic.transformed = !identity;
     if( shaped && !shape.isEmpty())
         {
         QValueVector< XRectangle > clip = scaledShape( shape, QSize( pic.w[ 0 ], pic.h[ 0 ] ), rect, ox, oy );
@@ -1480,6 +1486,7 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
             if( anim->style == Genie )
                 {
                 drawGenie( anim, pic->picture[ 0 ], pic->w[ 0 ], pic->h[ 0 ], dst, anim->p, 1.0 );
+                pic->transformed = true;
                 return;
                 }
             RectF target = fitInto( anim->geom.width(), anim->geom.height(), anim->icon );
@@ -1761,6 +1768,12 @@ void Effects::renderFrame( bool immediate )
         else if( !animated && win->geom.intersects( area ) && !win->pic.isNull())
             {
             Picture src = win->pic.picture[ 0 ];
+            if( win->pic.transformed )
+                { // (drawn scaled while it was animated)
+                setTransform( dpy, src, 1, 1, 0, 0 );
+                XRenderSetPictureFilter( dpy, src, FilterNearest, NULL, 0 );
+                win->pic.transformed = false;
+                }
             if( win->shaped )
                 {
                 QValueVector< XRectangle > clip = scaledShape( win->shape, win->geom.size(), RectF( win->geom ),
