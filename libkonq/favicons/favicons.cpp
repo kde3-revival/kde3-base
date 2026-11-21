@@ -54,7 +54,86 @@ struct FaviconsModulePrivate
     KIO::MetaData metaData;
     QString faviconsDir;
     QCache<QString> faviconsCache;
+    time_t largeSince;   // icons written before have no 32 pixel copy
 };
+
+// A site's icon at size x size pixels, alpha kept: scaled down to fit (an
+// exact average of whole pixels when the size divides the icon's, 32 -> 16
+// or 256 -> 32, which stays sharp), centred if it is not square.  Never
+// scaled up.
+static QImage iconOfSize(const QImage &src, int size)
+{
+    QImage img = src.depth() == 32 ? src : src.convertDepth(32);
+    int w = img.width(), h = img.height();
+    if (w > size || h > size)
+    {
+        if (w == h && w % size == 0)
+        {
+            const int factor = w / size;
+            const unsigned long n = factor * factor;
+            const bool alpha = img.hasAlphaBuffer();
+            QImage dst(size, size, 32);
+            dst.setAlphaBuffer(alpha);
+            for (int y = 0; y < size; ++y)
+            {
+                QRgb *d = reinterpret_cast<QRgb *>(dst.scanLine(y));
+                for (int x = 0; x < size; ++x)
+                {
+                    // colours weighted by their alpha
+                    unsigned long r = 0, g = 0, b = 0, a = 0;
+                    for (int sy = y * factor; sy < (y + 1) * factor; ++sy)
+                    {
+                        const QRgb *s = reinterpret_cast<const QRgb *>(img.scanLine(sy)) + x * factor;
+                        for (int sx = 0; sx < factor; ++sx)
+                        {
+                            unsigned long pa = alpha ? qAlpha(s[sx]) : 255;
+                            r += qRed(s[sx]) * pa;
+                            g += qGreen(s[sx]) * pa;
+                            b += qBlue(s[sx]) * pa;
+                            a += pa;
+                        }
+                    }
+                    d[x] = a ? qRgba((r + a / 2) / a, (g + a / 2) / a, (b + a / 2) / a, (a + n / 2) / n) : 0;
+                }
+            }
+            return dst;
+        }
+        if (w >= h)
+        {
+            h = QMAX(1, h * size / w);
+            w = size;
+        }
+        else
+        {
+            w = QMAX(1, w * size / h);
+            h = size;
+        }
+        img = img.smoothScale(w, h);
+    }
+    if (w == size && h == size)
+        return img;
+
+    QImage dst(size, size, 32);
+    dst.fill(0);   // before the alpha buffer: fill() keeps its alpha
+    dst.setAlphaBuffer(true);
+    const int x0 = (size - w) / 2, y0 = (size - h) / 2;
+    const bool alpha = img.hasAlphaBuffer();
+    for (int y = 0; y < h; ++y)
+    {
+        const QRgb *s = reinterpret_cast<const QRgb *>(img.scanLine(y));
+        QRgb *d = reinterpret_cast<QRgb *>(dst.scanLine(y + y0)) + x0;
+        for (int x = 0; x < w; ++x)
+            d[x] = alpha ? s[x] : (s[x] | 0xff000000);
+    }
+    return dst;
+}
+
+// The 32 pixel copy of an icon file: favicons/32/<name>.png.
+static QString largeIconFile(const QString &iconFile)
+{
+    int slash = iconFile.findRev('/');
+    return iconFile.left(slash + 1) + "32/" + iconFile.mid(slash + 1);
+}
 
 FaviconsModule::FaviconsModule(const QCString &obj)
     : KDEDModule(obj)
@@ -70,6 +149,18 @@ FaviconsModule::FaviconsModule(const QCString &obj)
     d->metaData.insert("no-auth", "true");
     d->config = new KSimpleConfig(locateLocal("data", "konqueror/faviconrc"));
     d->faviconsCache.setAutoDelete(true);
+    // Icons are kept at 32 pixels too since this version of the module;
+    // older ones are downloaded again when next asked for.
+    KConfigGroupSaver saver(d->config, "Icon Sizes");
+    d->largeSince = d->config->readUnsignedNumEntry("LargeIconsSince", 0);
+    // (a time in the future: the clock was wrong; icons written since
+    // would count as old ones for good)
+    if (!d->largeSince || d->largeSince > time(0))
+    {
+        d->largeSince = time(0);
+        d->config->writeEntry("LargeIconsSince", (unsigned int)d->largeSince);
+        d->config->sync();
+    }
 }
 
 FaviconsModule::~FaviconsModule()
@@ -150,6 +241,9 @@ bool FaviconsModule::isIconOld(const QString &icon)
     struct stat st;
     if (stat(QFile::encodeName(icon), &st) != 0)
         return true; // Trigger a new download on error
+
+    if (st.st_mtime < d->largeSince && !QFile::exists(largeIconFile(icon)))
+        return true; // written before icons had a 32 pixel copy
 
     return (time(0) - st.st_mtime) > 604800; // arbitrary value (one week)
 }
@@ -271,11 +365,35 @@ void FaviconsModule::slotResult(KIO::Job *job)
         // microsoft.com does that... (malte)
         if (!tooLarge && io.read() && qstrcmp(io.format(), "TGA") != 0 && !io.image().isNull())
         {
-            // Some sites have nasty 32x32 icons, according to the MS docs
-            // IE ignores them, well, we scale them, otherwise the location
-            // combo / menu will look quite ugly
-            if (io.image().width() != KIcon::SizeSmall || io.image().height() != KIcon::SizeSmall)
-                io.setImage(io.image().smoothScale(KIcon::SizeSmall, KIcon::SizeSmall));
+            // Kept at 16 pixels (menus, location bar, tabs, toolbars) and,
+            // if the site has an icon that large, at 32 (large toolbars;
+            // KIconLoader picks the size).  Large icons (180 or 256 pixel
+            // PNG files and ICO entries) are scaled down here, once.
+            QImage small = io.image();
+            QImage large = small;
+            if (qstrcmp(io.format(), "ICO") == 0)
+            {
+                // the entry closest to 32 pixels (the one read is 16); if
+                // that is smaller, the largest one (16 and 256 pixel icons)
+                static const char * const sizes[] = { "size=32", "size=256" };
+                for (unsigned i = 0; i < 2 && (i == 0 || large.width() < KIcon::SizeMedium); ++i)
+                {
+                    QBuffer bufferLarge(download.iconData);
+                    bufferLarge.open(IO_ReadOnly);
+                    QImageIO ioLarge;
+                    ioLarge.setIODevice(&bufferLarge);
+                    ioLarge.setFormat("ICO");
+                    ioLarge.setParameters(sizes[i]);
+                    if (ioLarge.read() && !ioLarge.image().isNull() &&
+                        (ioLarge.image().width() >= KIcon::SizeMedium || ioLarge.image().width() > large.width()))
+                        large = ioLarge.image();
+                }
+            }
+            small = iconOfSize(small, KIcon::SizeSmall);
+            if (large.width() >= KIcon::SizeMedium || large.height() >= KIcon::SizeMedium)
+                large = iconOfSize(large, KIcon::SizeMedium);
+            else
+                large = QImage();
 
             if (download.isHost)
                 iconName = download.hostOrURL;
@@ -284,10 +402,14 @@ void FaviconsModule::slotResult(KIO::Job *job)
 
             iconName = "favicons/" + iconName;
 
-            io.setIODevice(0);
-            io.setFileName(d->faviconsDir + iconName + ".png");
-            io.setFormat("PNG");
-            if (!io.write())
+            // The large copy first: the small one's time says it is there.
+            QString iconFile = d->faviconsDir + iconName + ".png";
+            QString largeFile = largeIconFile(iconFile);
+            if (!large.isNull())
+                KGlobal::dirs()->saveLocation("cache", "favicons/32/");
+            if (large.isNull() || !large.save(largeFile, "PNG"))
+                QFile::remove(largeFile);
+            if (!small.save(iconFile, "PNG"))
                 iconName = QString::null;
             else if (!download.isHost)
             {

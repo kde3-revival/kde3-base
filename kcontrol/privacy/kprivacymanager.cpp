@@ -151,6 +151,14 @@ bool KPrivacyManager::clearFavIcons()
   // erase all files in favicon directory
   for( QStringList::Iterator it = entries.begin() ; it != entries.end() ; ++it)
     if(!favIconDir.remove(*it)) m_error = true;
+
+  // and their 32 pixel copies
+  if( favIconDir.cd( "32" ) )
+  {
+    entries = favIconDir.entryList();
+    for( QStringList::Iterator it = entries.begin() ; it != entries.end() ; ++it)
+      if(!favIconDir.remove(*it)) m_error = true;
+  }
   return m_error;
 }
 
