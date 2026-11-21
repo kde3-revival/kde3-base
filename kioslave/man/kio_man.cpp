@@ -68,6 +68,14 @@ void stripExtension( QString *name )
         pos -= 4;
     else if ( name->find(".bz", -3) != -1 )
         pos -= 3;
+    else if ( name->find(".xz", -3) != -1 )
+        pos -= 3;
+    else if ( name->find(".zst", -4) != -1 )
+        pos -= 4;
+    else if ( name->find(".lzma", -5) != -1 )
+        pos -= 5;
+    else if ( name->find(".lz4", -4) != -1 )
+        pos -= 4;
 
     if ( pos > 0 )
         pos = name->findRev('.', pos-1);
@@ -477,7 +485,11 @@ void MANProtocol::get(const KURL& url )
        // ### TODO make it more generic (other extensions)
        if ((foundPages.count()==2) &&
            (((foundPages[0]+".gz") == foundPages[1]) ||
-            (foundPages[0] == (foundPages[1]+".gz"))))
+            (foundPages[0] == (foundPages[1]+".gz")) ||
+            ((foundPages[0]+".xz") == foundPages[1]) ||
+            (foundPages[0] == (foundPages[1]+".xz")) ||
+            ((foundPages[0]+".zst") == foundPages[1]) ||
+            (foundPages[0] == (foundPages[1]+".zst"))))
           pageFound=true;
        else
           outputMatchingPages(foundPages);
@@ -1310,6 +1322,14 @@ void MANProtocol::showIndex(const QString& section)
 	else if ( len >= 2 && strcmp( end-1, ".z" ) == 0 )
 	    end -= 2;
 	else if ( len >= 4 && strcmp( end-3, ".bz2" ) == 0 )
+	    end -= 4;
+	else if ( len >= 3 && strcmp( end-2, ".xz" ) == 0 )
+	    end -= 3;
+	else if ( len >= 4 && strcmp( end-3, ".zst" ) == 0 )
+	    end -= 4;
+	else if ( len >= 5 && strcmp( end-4, ".lzma" ) == 0 )
+	    end -= 5;
+	else if ( len >= 4 && strcmp( end-3, ".lz4" ) == 0 )
 	    end -= 4;
 
 	while ( end >= begin && *end != '.' )
