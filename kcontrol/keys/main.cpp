@@ -181,6 +181,21 @@ extern "C"
   // dialogs, kdeglobals is empty as long as you don't apply any change in controlcenter/keys.
   // However, avoid writing at every KDE startup, just update them after every rebuild of this file.
         KConfigGroup group( KGlobal::config(), "Global Shortcuts" );
+	// Once: [Apply] of an earlier kcm_keys wrote "none" for these actions
+	// (an action added since the last login was shown cleared).  Also done
+	// by kwin_meta_shortcuts.upd, but kded may run it only after this has
+	// read the "none" and is about to write it back.
+	KConfigGroup keyboard( KGlobal::config(), "Keyboard" );
+	if( !keyboard.readBoolEntry( "Meta Shortcuts Restored", false ) ) {
+	    static const char* const metaActions[] = { "Window to Next Screen",
+	        "Window to Previous Screen", "Window Maximize No Toggle",
+	        "Window Restore", 0 };
+	    for( int i = 0; metaActions[i]; i++ ) {
+	        if( group.readEntry( metaActions[i] ) == "none" )
+	            group.deleteEntry( metaActions[i], false, true );
+	    }
+	    keyboard.writeEntry( "Meta Shortcuts Restored", true, true, true );
+	}
         if( group.readEntry( "Defaults timestamp" ) != __DATE__ __TIME__ ) {
 	    kdDebug(125) << "KeyModule::init() - Read Config Bindings\n";
 	    // Check for old group,

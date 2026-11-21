@@ -290,7 +290,7 @@ void ShortcutsModule::slotKeyChange()
 
 // Shows the shortcuts of pConfig (the user's when 0) in pkc.  An action
 // without an entry there has its default shortcut, as KGlobalAccel and
-// KStdAccel read it.  Clearing such actions (syncToConfig()'s bClearUnset)
+// KStdAccel treat a missing entry.  Clearing such actions (bClearUnset)
 // made [Apply] write "none" for every action added since kcminit last wrote
 // all the actions at login, and for the actions a scheme file doesn't know,
 // which disabled their default shortcuts for good.
