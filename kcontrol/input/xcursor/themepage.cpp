@@ -135,6 +135,7 @@ void ThemePage::save()
 	KConfig c( "kcminputrc" );
 	c.setGroup( "Mouse" );
 	c.writeEntry( "cursorTheme", selectedTheme != "system" ? selectedTheme : QString::null );
+	c.sync();
 
 	KMessageBox::information( this, i18n("You have to restart KDE for these "
 				"changes to take effect."), i18n("Cursor Settings Changed"),

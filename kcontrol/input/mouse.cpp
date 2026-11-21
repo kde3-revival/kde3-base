@@ -61,6 +61,7 @@
 #include <kconfig.h>
 #include <kstandarddirs.h>
 #include <kdebug.h>
+#include <dcopref.h>
 #include <kaboutdata.h>
 
 #include <config.h>
@@ -589,6 +590,9 @@ void MouseConfig::save()
   ac.sync();
 
   themetab->save();
+  // the KIPC message of settings->save() came before the cursor theme
+  // was written: the XSETTINGS manager reads it again
+  DCOPRef( "kded", "xsettings" ).send( "reconfigure" );
 
   // restart kaccess
   kapp->startServiceByDesktopName("kaccess");

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+Name=XSettings
+Comment=Gives GTK applications and the toolkits that follow GTK the fonts, DPI and mouse settings of KDE
+ServiceTypes=KDEDModule
+X-KDE-ModuleType=Library
+X-KDE-Library=xsettings
+X-KDE-FactoryName=xsettings
+X-KDE-Kded-autoload=true
+X-KDE-Kded-load-on-demand=false
+X-KDE-Kded-phase=1
