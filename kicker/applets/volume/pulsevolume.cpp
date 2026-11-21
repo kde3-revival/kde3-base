@@ -312,7 +312,7 @@ int PulseVolume::volume() const
         return -1;
     }
 
-    return volumeToPercent(pa_cvolume_avg(&sink->volume));
+    return volumeToPercent(pa_cvolume_max(&sink->volume));
 }
 
 bool PulseVolume::isMuted() const
@@ -338,25 +338,14 @@ void PulseVolume::setVolume(int percent)
 
     uint32_t index = sink->index;
     pa_cvolume cv = sink->volume;
-    pa_volume_t avg = pa_cvolume_avg(&cv);
-    if (avg == target)
+    if (pa_cvolume_max(&cv) == target)
     {
         return;
     }
 
-    if (avg == PA_VOLUME_MUTED)
-    {
-        // no balance left to keep
-        pa_cvolume_set(&cv, cv.channels, target);
-    }
-    else
-    {
-        for (unsigned int i = 0; i < cv.channels; ++i)
-        {
-            uint64_t v = uint64_t(cv.values[i]) * target / avg;
-            cv.values[i] = v > PA_VOLUME_MAX ? PA_VOLUME_MAX : pa_volume_t(v);
-        }
-    }
+    // The loudest channel follows the slider, the others keep their
+    // proportion to it (pa_cvolume_scale sets them all when it is 0).
+    pa_cvolume_scale(&cv, target);
 
     unrefOperation(pa_context_set_sink_volume_by_index(m_context, index,
                                                        &cv, 0, 0));
