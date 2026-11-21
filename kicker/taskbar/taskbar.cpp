@@ -27,6 +27,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include <qapplication.h>
 #include <qcursor.h>
+#include <qwidgetlist.h>
 #include <qbitmap.h>
 #include <qdesktopwidget.h>
 #include <qlayout.h>
@@ -334,7 +335,12 @@ void TaskBar::configure()
         connect(TaskManager::the(), SIGNAL(windowChangedGeometry(Task::Ptr)),
                  this, SLOT(windowChangedGeometry(Task::Ptr)));
     }
-    TaskManager::the()->trackGeometry(m_showOnlyCurrentScreen);
+    // turned on, never off: the flag is the process's, shared with the
+    // other taskbars and the pager
+    if (m_showOnlyCurrentScreen)
+    {
+        TaskManager::the()->trackGeometry(true);
+    }
 
     if (wasShowWindows != m_showAllWindows ||
         wasSortByDesktop != m_sortByDesktop ||
@@ -378,12 +384,7 @@ void TaskBar::moveEvent( QMoveEvent* e )
 
 void TaskBar::resizeEvent( QResizeEvent* e )
 {
-    if (m_showOnlyCurrentScreen != onlyCurrentScreenWanted())
-    {
-        // put onto one screen, or stretched over several
-        configure();
-    }
-    else if (m_showOnlyCurrentScreen)
+    if (m_showOnlyCurrentScreen)
     {
         QPoint topLeft = mapToGlobal(this->geometry().topLeft());
         if (m_currentScreen != QApplication::desktop()->screenNumber(topLeft))
@@ -1269,16 +1270,36 @@ bool TaskBar::onlyCurrentScreenWanted() const
         return true;
     }
 
-    // With the main panel on every screen, each taskbar shows the windows
-    // of its screen, if it is on a single one.
+    // With the main panel on every screen, the taskbars of the main panel
+    // and of its copies show the windows of their screens, while there
+    // are copies; other taskbars (another panel, an applet proxy) show
+    // all.  Kicker names its panels "ExtensionContainer#<id>", and tells
+    // the taskbars when the copies change (kdeTaskBarConfigChanged()).
     if (!KickerSettings::mainPanelOnEveryScreen())
     {
         return false;
     }
 
-    QRect panel = topLevelWidget()->geometry();
-    int screen = desktop->screenNumber(panel.center());
-    return screen >= 0 && desktop->screenGeometry(screen).contains(panel);
+    QString panel = QString::fromLatin1(topLevelWidget()->name());
+    if (panel.startsWith("ExtensionContainer#Mirror_"))
+    {
+        return true;
+    }
+
+    if (panel != "ExtensionContainer#Main Panel")
+    {
+        return false;
+    }
+
+    bool mirrors = false;
+    QWidgetList* list = QApplication::topLevelWidgets();
+    for (QWidgetListIt it(*list); it.current() && !mirrors; ++it)
+    {
+        mirrors = QString::fromLatin1(it.current()->name()).startsWith("ExtensionContainer#Mirror_");
+    }
+    delete list;
+
+    return mirrors;
 }
 
 int TaskBar::showScreen() const
