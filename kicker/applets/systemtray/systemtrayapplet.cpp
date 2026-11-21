@@ -53,6 +53,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "systemtrayapplet.moc"
 
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
 
 extern "C"
 {
@@ -74,7 +75,9 @@ SystemTrayApplet::SystemTrayApplet(const QString& configFile, Type type, int act
     m_iconSelector(0),
     m_autoRetractTimer(0),
     m_autoRetract(false),
-    m_iconSize(24),
+    m_iconSize(22),
+    m_currentIconSize(22),
+    m_announcedIconSize(0),
     m_layout(0)
 {
     loadSettings();
@@ -151,20 +154,21 @@ void SystemTrayApplet::initialize()
 
         XSendEvent (display, root, False, StructureNotifyMask, (XEvent *)&xev);
     }
-    
+
+    announceIconSize();
     setBackground();
 }
 
 SystemTrayApplet::~SystemTrayApplet()
 {
-    for (TrayEmbedList::const_iterator it = m_hiddenWins.constBegin();
+    for (TrayItemList::const_iterator it = m_hiddenWins.constBegin();
          it != m_hiddenWins.constEnd();
          ++it)
     {
         delete *it;
     }
 
-    for (TrayEmbedList::const_iterator it = m_shownWins.constBegin();
+    for (TrayItemList::const_iterator it = m_shownWins.constBegin();
          it != m_shownWins.constEnd();
          ++it)
     {
@@ -219,25 +223,23 @@ void SystemTrayApplet::preferences()
     QListBox *shownListBox = m_iconSelector->availableListBox();
     QListBox *hiddenListBox = m_iconSelector->selectedListBox();
 
-    TrayEmbedList::const_iterator it = m_shownWins.begin();
-    TrayEmbedList::const_iterator itEnd = m_shownWins.end();
-    for (; it != itEnd; ++it)
+    // An icon is listed by its name; what is kept for it is its hideKey()
+    // (the Id of a StatusNotifierItem).  Passive StatusNotifierItems are
+    // hidden whatever the list says, but can still be put on it.
+    m_dialogKeys.clear();
+    for (int list = 0; list < 2; ++list)
     {
-        QString name = KWin::windowInfo((*it)->embeddedWinId()).name();
-        if(!shownListBox->findItem(name, Qt::ExactMatch | Qt::CaseSensitive))
+        const TrayItemList &items = list == 0 ? m_shownWins : m_hiddenWins;
+        for (TrayItemList::const_iterator it = items.begin(); it != items.end(); ++it)
         {
-            shownListBox->insertItem(KWin::icon((*it)->embeddedWinId(), 22, 22, true), name);
-        }
-    }
-
-    it = m_hiddenWins.begin();
-    itEnd = m_hiddenWins.end();
-    for (; it != itEnd; ++it)
-    {
-        QString name = KWin::windowInfo((*it)->embeddedWinId()).name();
-        if(!hiddenListBox->findItem(name, Qt::ExactMatch | Qt::CaseSensitive))
-        {
-            hiddenListBox->insertItem(KWin::icon((*it)->embeddedWinId(), 22, 22, true), name);
+            QString name = (*it)->displayName();
+            if (name.isEmpty() || m_dialogKeys.contains(name))
+            {
+                continue;
+            }
+            m_dialogKeys.insert(name, (*it)->hideKey());
+            QListBox *box = (*it)->isListed(m_hiddenIconList) ? hiddenListBox : shownListBox;
+            box->insertItem((*it)->dialogIcon(), name);
         }
     }
 
@@ -274,19 +276,53 @@ void SystemTrayApplet::applySettings()
     conf->writeEntry("Visible", m_visibleIconList);
     selection.clear();*/
 
-    m_hiddenIconList.clear();
+    // The entries of the icons which are not there now stay.
+    QStringList hidden;
+    for (QStringList::ConstIterator it = m_hiddenIconList.begin(); it != m_hiddenIconList.end(); ++it)
+    {
+        bool present = false;
+        for (int list = 0; list < 2 && !present; ++list)
+        {
+            const TrayItemList &items = list == 0 ? m_shownWins : m_hiddenWins;
+            for (TrayItemList::const_iterator item = items.begin(); item != items.end(); ++item)
+            {
+                if ((*item)->isListed(QStringList(*it)))
+                {
+                    present = true;
+                    break;
+                }
+            }
+        }
+        if (!present)
+        {
+            hidden.append(*it);
+        }
+    }
+
     QListBoxItem* item = m_iconSelector->selectedListBox()->firstItem();
     for (; item; item = item->next())
     {
-        m_hiddenIconList.append(item->text());
+        QString key = m_dialogKeys.contains(item->text()) ? m_dialogKeys[item->text()] : item->text();
+        if (!hidden.contains(key))
+        {
+            hidden.append(key);
+        }
     }
+    m_hiddenIconList = hidden;
     conf->writeEntry("Hidden", m_hiddenIconList);
     conf->sync();
 
-    TrayEmbedList::iterator it = m_shownWins.begin();
+    sortHidden();
+}
+
+// Each icon among the shown or the hidden ones, as the list of hidden icons
+// and its status say; the order of the icons stays.
+void SystemTrayApplet::sortHidden()
+{
+    TrayItemList::iterator it = m_shownWins.begin();
     while (it != m_shownWins.end())
     {
-        if (shouldHide((*it)->embeddedWinId()))
+        if (shouldHide(*it))
         {
             m_hiddenWins.append(*it);
             it = m_shownWins.erase(it);
@@ -300,7 +336,7 @@ void SystemTrayApplet::applySettings()
     it = m_hiddenWins.begin();
     while (it != m_hiddenWins.end())
     {
-        if (!shouldHide((*it)->embeddedWinId()))
+        if (!shouldHide(*it))
         {
             m_shownWins.append(*it);
             it = m_hiddenWins.erase(it);
@@ -416,7 +452,13 @@ void SystemTrayApplet::loadSettings()
 
     //Note This setting comes from kdeglobal.
     conf->setGroup("System Tray");
-    m_iconSize = conf->readNumEntry("systrayIconWidth", 22);
+    m_iconSize = QMIN(QMAX(conf->readNumEntry("systrayIconWidth", 22), 8), 128);
+
+    // after the start: the icons as the list says now
+    if (m_layout)
+    {
+        sortHidden();
+    }
 }
 
 void SystemTrayApplet::systemTrayWindowAdded( WId w )
@@ -461,70 +503,71 @@ void SystemTrayApplet::embedWindow( WId w, bool kde_tray )
     }
 
     connect(emb, SIGNAL(embeddedWindowDestroyed()), SLOT(updateTrayWindows()));
-    emb->setMinimumSize(m_iconSize, m_iconSize);
+    addItem(emb);
+}
 
-    if (shouldHide(w))
+void SystemTrayApplet::addItem(TrayItem *item)
+{
+    // Whatever size the program asks for: the size of the tray's icons.
+    item->setIconSize(m_currentIconSize);
+
+    if (shouldHide(item))
     {
-        emb->hide();
-        m_hiddenWins.append(emb);
+        item->widget()->hide();
+        m_hiddenWins.append(item);
         showExpandButton(true);
     }
     else
     {
-        emb->hide();
-        emb->setBackground();
-        emb->show();
-        m_shownWins.append(emb);
+        item->widget()->hide();
+        item->setBackground();
+        item->widget()->show();
+        m_shownWins.append(item);
     }
 }
 
 bool SystemTrayApplet::isWinManaged(WId w)
 {
-    TrayEmbedList::const_iterator lastEmb = m_shownWins.end();
-    for (TrayEmbedList::const_iterator emb = m_shownWins.begin(); emb != lastEmb; ++emb)
+    for (int list = 0; list < 2; ++list)
     {
-        if ((*emb)->embeddedWinId() == w) // we already manage it
+        const TrayItemList &items = list == 0 ? m_shownWins : m_hiddenWins;
+        for (TrayItemList::const_iterator it = items.begin(); it != items.end(); ++it)
         {
-            return true;
-        }
-    }
-
-    lastEmb = m_hiddenWins.end();
-    for (TrayEmbedList::const_iterator emb = m_hiddenWins.begin(); emb != lastEmb; ++emb)
-    {
-        if ((*emb)->embeddedWinId() == w) // we already manage it
-        {
-            return true;
+            TrayEmbed *emb = dynamic_cast<TrayEmbed *>(*it);
+            if (emb && emb->embeddedWinId() == w) // we already manage it
+            {
+                return true;
+            }
         }
     }
 
     return false;
 }
 
-bool SystemTrayApplet::shouldHide(WId w)
+bool SystemTrayApplet::shouldHide(const TrayItem *item) const
 {
-    return m_hiddenIconList.find(KWin::windowInfo(w).name()) != m_hiddenIconList.end();
+    return item->isPassive() || item->isListed(m_hiddenIconList);
 }
 
 void SystemTrayApplet::updateVisibleWins()
 {
-    TrayEmbedList::const_iterator lastEmb = m_hiddenWins.end();
-    TrayEmbedList::const_iterator emb = m_hiddenWins.begin();
+    TrayItemList::const_iterator lastEmb = m_hiddenWins.end();
+    TrayItemList::const_iterator emb = m_hiddenWins.begin();
 
     if (m_showHidden)
     {
         for (; emb != lastEmb; ++emb)
         {
-            (*emb)->hide();
+            (*emb)->widget()->hide();
             (*emb)->setBackground();
-            (*emb)->show();
+            (*emb)->widget()->show();
         }
     }
     else
     {
         for (; emb != lastEmb; ++emb)
         {
-            (*emb)->hide();
+            (*emb)->widget()->hide();
         }
     }
 }
@@ -588,37 +631,26 @@ void SystemTrayApplet::retract()
 
 void SystemTrayApplet::updateTrayWindows()
 {
-    TrayEmbedList::iterator emb = m_shownWins.begin();
-    while (emb != m_shownWins.end())
+    for (int list = 0; list < 2; ++list)
     {
-        WId wid = (*emb)->embeddedWinId();
-        if ((wid == 0) ||
-            ((*emb)->kdeTray() &&
-             !kwin_module->systemTrayWindows().contains(wid)))
+        TrayItemList &items = list == 0 ? m_shownWins : m_hiddenWins;
+        TrayItemList::iterator it = items.begin();
+        while (it != items.end())
         {
-            (*emb)->deleteLater();
-            emb = m_shownWins.erase(emb);
-        }
-        else
-        {
-            ++emb;
-        }
-    }
-
-    emb = m_hiddenWins.begin();
-    while (emb != m_hiddenWins.end())
-    {
-        WId wid = (*emb)->embeddedWinId();
-        if ((wid == 0) ||
-            ((*emb)->kdeTray() &&
-             !kwin_module->systemTrayWindows().contains(wid)))
-        {
-            (*emb)->deleteLater();
-            emb = m_hiddenWins.erase(emb);
-        }
-        else
-        {
-            ++emb;
+            TrayEmbed *emb = dynamic_cast<TrayEmbed *>(*it);
+            WId wid = emb ? emb->embeddedWinId() : 0;
+            if (emb &&
+                ((wid == 0) ||
+                 (emb->kdeTray() &&
+                  !kwin_module->systemTrayWindows().contains(wid))))
+            {
+                emb->deleteLater();
+                it = items.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
         }
     }
 
@@ -627,79 +659,35 @@ void SystemTrayApplet::updateTrayWindows()
     layoutTray();
 }
 
-int SystemTrayApplet::maxIconWidth() const
+// The side of the icons on a panel this thick: the configured size (22
+// pixels), smaller only where the panel is too small for it, as KDE's own
+// icons of tray size (the volume applet).  Whatever an embedded window or a
+// StatusNotifierItem asks for, it gets this.
+int SystemTrayApplet::iconSizeFor(int thickness) const
 {
-    int largest = m_iconSize;
-
-    TrayEmbedList::const_iterator lastEmb = m_shownWins.end();
-    for (TrayEmbedList::const_iterator emb = m_shownWins.begin(); emb != lastEmb; ++emb)
-    {
-        if (*emb == 0)
-        {
-            continue;
-        }
-
-        int width = (*emb)->width();
-        if (width > largest)
-        {
-            largest = width;
-        }
-    }
-
-    if (m_showHidden)
-    {
-        lastEmb = m_hiddenWins.end();
-        for (TrayEmbedList::const_iterator emb = m_hiddenWins.begin(); emb != lastEmb; ++emb)
-        {
-            int width = (*emb)->width();
-            if (width > largest)
-            {
-                largest = width;
-            }
-        }
-    }
-
-    return largest;
+    return QMAX(QMIN(m_iconSize, thickness - 2), 8);
 }
 
-int SystemTrayApplet::maxIconHeight() const
+// Tells the embedded clients the size of their icons and the orientation of
+// the tray (_NET_SYSTEM_TRAY_ICON_SIZE and _NET_SYSTEM_TRAY_ORIENTATION of
+// the system tray specification; GTK draws its icons at that size).
+void SystemTrayApplet::announceIconSize()
 {
-    int largest = m_iconSize;
-
-    TrayEmbedList::const_iterator lastEmb = m_shownWins.end();
-    for (TrayEmbedList::const_iterator emb = m_shownWins.begin(); emb != m_shownWins.end(); ++emb)
+    if (m_announcedIconSize == m_currentIconSize + (orientation() == Vertical ? 1000 : 0))
     {
-        if (*emb == 0)
-        {
-            continue;
-        }
-
-        int height = (*emb)->height();
-        if (height > largest)
-        {
-            largest = height;
-        }
+        return;
     }
+    m_announcedIconSize = m_currentIconSize + (orientation() == Vertical ? 1000 : 0);
 
-    if (m_showHidden)
-    {
-        lastEmb = m_hiddenWins.end();
-        for (TrayEmbedList::const_iterator emb = m_hiddenWins.begin(); emb != m_hiddenWins.end(); ++emb)
-        {
-            if (*emb == 0)
-            {
-                continue;
-            }
-
-            int height = (*emb)->height();
-            if (height > largest)
-            {
-                largest = height;
-            }
-        }
-    }
-
-    return largest;
+    Display *display = qt_xdisplay();
+    static Atom iconSizeAtom = XInternAtom(display, "_NET_SYSTEM_TRAY_ICON_SIZE", False);
+    static Atom orientationAtom = XInternAtom(display, "_NET_SYSTEM_TRAY_ORIENTATION", False);
+    long size = m_currentIconSize;
+    long orient = orientation() == Vertical ? 1 : 0;
+    XChangeProperty(display, winId(), iconSizeAtom, XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char *>(&size), 1);
+    XChangeProperty(display, winId(), orientationAtom, XA_CARDINAL, 32, PropModeReplace,
+                    reinterpret_cast<unsigned char *>(&orient), 1);
 }
 
 bool SystemTrayApplet::eventFilter(QObject* watched, QEvent* e)
@@ -744,7 +732,7 @@ int SystemTrayApplet::widthForHeight(int h) const
     }
 
     int currentHeight = height();
-    int minHeight = m_iconSize + 4;
+    int minHeight = iconSizeFor(h) + 4;
     if (currentHeight != h && currentHeight != minHeight)
     {
         SystemTrayApplet* me = const_cast<SystemTrayApplet*>(this);
@@ -764,7 +752,7 @@ int SystemTrayApplet::heightForWidth(int w) const
     }
 
     int currentWidth = width();
-    int minSize = m_iconSize + 4;
+    int minSize = iconSizeFor(w) + 4;
     if (currentWidth != w && currentWidth != minSize)
     {
         SystemTrayApplet* me = const_cast<SystemTrayApplet*>(this);
@@ -807,8 +795,28 @@ void SystemTrayApplet::layoutTray()
      * line = what line to draw an icon in */
     int i = 0, line, nbrOfLines, heightWidth;
     bool showExpandButton = m_expandButton && m_expandButton->isVisibleTo(this);
+
+    // every icon gets the same square
+    int thickness = orientation() == Vertical ? width() : height();
+    int iconSize = iconSizeFor(thickness);
+    if (iconSize != m_currentIconSize)
+    {
+        m_currentIconSize = iconSize;
+        for (int list = 0; list < 2; ++list)
+        {
+            const TrayItemList &items = list == 0 ? m_shownWins : m_hiddenWins;
+            for (TrayItemList::const_iterator it = items.begin(); it != items.end(); ++it)
+            {
+                (*it)->setIconSize(iconSize);
+            }
+        }
+    }
+    announceIconSize();
+
+    // a smaller margin on panels too small for it
+    int margin = thickness >= iconSize + 4 ? 2 : 1;
     delete m_layout;
-    m_layout = new QGridLayout(this, 1, 1, 2, 2);
+    m_layout = new QGridLayout(this, 1, 1, margin, 2);
 
     if (m_expandButton)
     {
@@ -838,8 +846,8 @@ void SystemTrayApplet::layoutTray()
 
     if (orientation() == Vertical)
     {
-        int iconWidth = maxIconWidth() + 2; // +2 for the margins that implied by the layout
-        heightWidth = width() - 2;
+        int iconWidth = iconSize + 2; // +2 for the spacing of the layout
+        heightWidth = width() - 2 * margin + 2;
         // to avoid nbrOfLines=0 we ensure heightWidth >= iconWidth!
         heightWidth = heightWidth < iconWidth ? iconWidth : heightWidth;
         nbrOfLines = heightWidth / iconWidth;
@@ -855,14 +863,14 @@ void SystemTrayApplet::layoutTray()
 
         if (m_showHidden)
         {
-            TrayEmbedList::const_iterator lastEmb = m_hiddenWins.end();
-            for (TrayEmbedList::const_iterator emb = m_hiddenWins.begin();
+            TrayItemList::const_iterator lastEmb = m_hiddenWins.end();
+            for (TrayItemList::const_iterator emb = m_hiddenWins.begin();
                  emb != lastEmb; ++emb)
             {
                 line = i % nbrOfLines;
-                (*emb)->hide();
-                (*emb)->show();
-                m_layout->addWidget(*emb, col, line,
+                (*emb)->widget()->hide();
+                (*emb)->widget()->show();
+                m_layout->addWidget((*emb)->widget(), col, line,
                                     Qt::AlignHCenter | Qt::AlignVCenter);
 
                 if (line + 1 == nbrOfLines)
@@ -874,14 +882,14 @@ void SystemTrayApplet::layoutTray()
             }
         }
 
-        TrayEmbedList::const_iterator lastEmb = m_shownWins.end();
-        for (TrayEmbedList::const_iterator emb = m_shownWins.begin();
+        TrayItemList::const_iterator lastEmb = m_shownWins.end();
+        for (TrayItemList::const_iterator emb = m_shownWins.begin();
              emb != lastEmb; ++emb)
         {
             line = i % nbrOfLines;
-            (*emb)->hide();
-            (*emb)->show();
-            m_layout->addWidget(*emb, col, line,
+            (*emb)->widget()->hide();
+            (*emb)->widget()->show();
+            m_layout->addWidget((*emb)->widget(), col, line,
                                 Qt::AlignHCenter | Qt::AlignVCenter);
 
             if (line + 1 == nbrOfLines)
@@ -894,8 +902,8 @@ void SystemTrayApplet::layoutTray()
     }
     else // horizontal
     {
-        int iconHeight = maxIconHeight() + 2; // +2 for the margins that implied by the layout
-        heightWidth = height() - 2;
+        int iconHeight = iconSize + 2; // +2 for the spacing of the layout
+        heightWidth = height() - 2 * margin + 2;
         heightWidth = heightWidth < iconHeight ? iconHeight : heightWidth; // to avoid nbrOfLines=0
         nbrOfLines = heightWidth / iconHeight;
 
@@ -910,13 +918,13 @@ void SystemTrayApplet::layoutTray()
 
         if (m_showHidden)
         {
-            TrayEmbedList::const_iterator lastEmb = m_hiddenWins.end();
-            for (TrayEmbedList::const_iterator emb = m_hiddenWins.begin(); emb != lastEmb; ++emb)
+            TrayItemList::const_iterator lastEmb = m_hiddenWins.end();
+            for (TrayItemList::const_iterator emb = m_hiddenWins.begin(); emb != lastEmb; ++emb)
             {
                 line = i % nbrOfLines;
-                (*emb)->hide();
-                (*emb)->show();
-                m_layout->addWidget(*emb, line, col,
+                (*emb)->widget()->hide();
+                (*emb)->widget()->show();
+                m_layout->addWidget((*emb)->widget(), line, col,
                                     Qt::AlignHCenter | Qt::AlignVCenter);
 
                 if (line + 1 == nbrOfLines)
@@ -928,14 +936,14 @@ void SystemTrayApplet::layoutTray()
             }
         }
 
-        TrayEmbedList::const_iterator lastEmb = m_shownWins.end();
-        for (TrayEmbedList::const_iterator emb = m_shownWins.begin();
+        TrayItemList::const_iterator lastEmb = m_shownWins.end();
+        for (TrayItemList::const_iterator emb = m_shownWins.begin();
              emb != lastEmb; ++emb)
         {
             line = i % nbrOfLines;
-            (*emb)->hide();
-            (*emb)->show();
-            m_layout->addWidget(*emb, line, col,
+            (*emb)->widget()->hide();
+            (*emb)->widget()->show();
+            m_layout->addWidget((*emb)->widget(), line, col,
                                 Qt::AlignHCenter | Qt::AlignVCenter);
 
             if (line + 1 == nbrOfLines)
@@ -959,23 +967,71 @@ void SystemTrayApplet::paletteChange(const QPalette & /* oldPalette */)
 
 void SystemTrayApplet::setBackground()
 {
-    TrayEmbedList::const_iterator lastEmb;
+    TrayItemList::const_iterator lastEmb;
     
     lastEmb = m_shownWins.end();
-    for (TrayEmbedList::const_iterator emb = m_shownWins.begin(); emb != lastEmb; ++emb)
+    for (TrayItemList::const_iterator emb = m_shownWins.begin(); emb != lastEmb; ++emb)
         (*emb)->setBackground();
     
     lastEmb = m_hiddenWins.end();
-    for (TrayEmbedList::const_iterator emb = m_hiddenWins.begin(); emb != lastEmb; ++emb)
+    for (TrayItemList::const_iterator emb = m_hiddenWins.begin(); emb != lastEmb; ++emb)
         (*emb)->setBackground();
 }
 
 
 TrayEmbed::TrayEmbed( bool kdeTray, QWidget* parent )
-    : QXEmbed( parent ), kde_tray( kdeTray )
+    : QXEmbed( parent ), kde_tray( kdeTray ), m_configureCount( 0 )
 {
     hide();
     setBackground();
+}
+
+QString TrayEmbed::displayName() const
+{
+    return KWin::windowInfo(embeddedWinId()).name();
+}
+
+QString TrayEmbed::hideKey() const
+{
+    return displayName();
+}
+
+bool TrayEmbed::isListed(const QStringList &hidden) const
+{
+    return hidden.contains(displayName());
+}
+
+QPixmap TrayEmbed::dialogIcon() const
+{
+    return KWin::icon(embeddedWinId(), 22, 22, true);
+}
+
+// The embedded window is as large as this widget (QXEmbed), whatever its
+// size hints ask for: GTK's icons ask for more than the tray size.
+void TrayEmbed::setIconSize(int size)
+{
+    setFixedSize(size, size);
+}
+
+bool TrayEmbed::x11Event(XEvent *e)
+{
+    // A client asking for another size again and again: QXEmbed answers each
+    // request with a ConfigureNotify (the size stays); a client which asks
+    // again on each of them would keep both busy.  More than 20 requests a
+    // second are left unanswered for the rest of the second.
+    if (e->type == ConfigureRequest && e->xconfigurerequest.window == embeddedWinId())
+    {
+        if (m_configureCount == 0 || m_configureTime.elapsed() > 1000)
+        {
+            m_configureTime.start();
+            m_configureCount = 0;
+        }
+        if (++m_configureCount > 20)
+        {
+            return true;
+        }
+    }
+    return QXEmbed::x11Event(e);
 }
 
 void TrayEmbed::setBackground()

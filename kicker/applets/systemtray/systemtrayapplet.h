@@ -27,6 +27,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <qvaluevector.h>
 #include <qstringlist.h>
 #include <qevent.h>
+#include <qdatetime.h>
+#include <qmap.h>
 #include <qxembed.h>
 
 #include <dcopobject.h>
@@ -34,6 +36,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <kpanelapplet.h>
 
 #include "simplebutton.h"
+#include "trayitem.h"
 
 class QGridLayout;
 class QTimer;
@@ -46,7 +49,7 @@ class SystemTrayApplet : public KPanelApplet, public DCOPObject
 {
     Q_OBJECT
     K_DCOP
-    typedef QValueVector<TrayEmbed*> TrayEmbedList;
+    typedef QValueVector<TrayItem*> TrayItemList;
 
 public:
 
@@ -56,8 +59,6 @@ public:
 
     int widthForHeight(int h) const;
     int heightForWidth(int w) const;
-    int maxIconWidth() const;
-    int maxIconHeight() const;
 
     bool eventFilter(QObject* watched, QEvent* e);
 
@@ -87,16 +88,21 @@ protected slots:
 private:
     void embedWindow( WId w, bool kde_tray );
     bool isWinManaged( WId w);
-    bool shouldHide( WId w);
+    bool shouldHide(const TrayItem *item) const;
+    void addItem(TrayItem *item);
+    void sortHidden();
     void updateVisibleWins();
     void expand();
     void retract();
     void showExpandButton(bool show);
     void refreshExpandButton();
+    int iconSizeFor(int thickness) const;
+    void announceIconSize();
 
-    TrayEmbedList m_shownWins;
-    TrayEmbedList m_hiddenWins;
+    TrayItemList m_shownWins;
+    TrayItemList m_hiddenWins;
     QStringList m_hiddenIconList;
+    QMap<QString, QString> m_dialogKeys;    // name in the dialog -> hideKey
     KWinModule *kwin_module;
     Atom net_system_tray_selection;
     Atom net_system_tray_opcode;
@@ -107,19 +113,34 @@ private:
     KActionSelector* m_iconSelector;
     QTimer* m_autoRetractTimer;
     bool m_autoRetract;
-    int m_iconSize;
+    int m_iconSize;         // configured
+    int m_currentIconSize;  // on this panel
+    int m_announcedIconSize;
     QGridLayout* m_layout;
 };
 
-class TrayEmbed : public QXEmbed
+class TrayEmbed : public QXEmbed, public TrayItem
 {
     Q_OBJECT
 public:
     TrayEmbed( bool kdeTray, QWidget* parent = NULL );
     bool kdeTray() const { return kde_tray; }
+
+    QWidget *widget() { return this; }
+    QString displayName() const;
+    QString hideKey() const;
+    bool isListed(const QStringList &hidden) const;
+    QPixmap dialogIcon() const;
+    void setIconSize(int size);
     void setBackground();
+
+protected:
+    bool x11Event(XEvent *e);
+
 private:
     bool kde_tray;
+    QTime m_configureTime;  // of the first of the last requests
+    int m_configureCount;
 };
 
 #endif
