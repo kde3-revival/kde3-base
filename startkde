@@ -19,7 +19,7 @@ fi
 # Check if a KDE session already is running
 if kcheckrunning >/dev/null 2>&1; then
 	echo "KDE seems to be already running on this display."
-	xmessage -geometry 500x100 "KDE seems to be already running on this display." > /dev/null 2>/dev/null
+	kstartupx --message "KDE seems to be already running on this display." > /dev/null 2>/dev/null
 	exit 1
 fi
 
@@ -70,7 +70,7 @@ kcmfonts General forceFontDPI 0
 EOF
 kstartupconfig
 if test $? -ne 0; then
-    xmessage -geometry 500x100 "Could not start kstartupconfig. Check your installation."
+    kstartupx --message "Could not start kstartupconfig. Check your installation."
 fi
 . $kdehome/share/config/startupconfig
 
@@ -210,7 +210,7 @@ fi
 for resource in tmp cache socket; do
     if ! lnusertemp $resource >/dev/null; then
         echo 'startkde: Call to lnusertemp failed (temporary directories full?). Check your installation.'  1>&2
-        xmessage -geometry 600x100 "Call to lnusertemp failed (temporary directories full?). Check your installation."
+        kstartupx --message "Call to lnusertemp failed (temporary directories full?). Check your installation."
         exit 1
     fi
 done
@@ -264,7 +264,7 @@ LD_BIND_NOW=true start_kdeinit_wrapper --new-startup +kcminit_startup
 if test $? -ne 0; then
   # Startup error
   echo 'startkde: Could not start kdeinit. Check your installation.'  1>&2
-  xmessage -geometry 500x100 "Could not start kdeinit. Check your installation."
+  kstartupx --message "Could not start kdeinit. Check your installation."
 fi
 
 # If the session should be locked from the start (locked autologin),
@@ -291,7 +291,7 @@ kwrapper ksmserver $KDEWM
 if test $? -eq 255; then
   # Startup error
   echo 'startkde: Could not start ksmserver. Check your installation.'  1>&2
-  xmessage -geometry 500x100 "Could not start ksmserver. Check your installation."
+  kstartupx --message "Could not start ksmserver. Check your installation."
 fi
 
 # wait if there's any crashhandler shown

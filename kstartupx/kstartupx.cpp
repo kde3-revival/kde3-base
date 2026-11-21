@@ -17,8 +17,9 @@
 */
 
 /*
- * kstartupx: the X settings startkde makes before KDE itself runs, so that
- * startkde does not need xsetroot and xprop.
+ * kstartupx: the X settings startkde makes before KDE itself runs and its
+ * error messages, so that startkde does not need xsetroot, xprop and
+ * xmessage.
  *
  *   --black-root             paint the root window black
  *                            (xsetroot -solid "#000000")
@@ -29,6 +30,10 @@
  *                             -set KDE_FULL_SESSION true)
  *   --remove-full-session    remove it again
  *                            (xprop -root -remove KDE_FULL_SESSION)
+ *   --message TEXT           show TEXT in a message box and wait until it is
+ *                            closed (xmessage TEXT); this needs only the
+ *                            X server and Qt, because it is used when KDE
+ *                            could not be started
  *
  * Several options may be given; they are applied in that order.  The exit
  * status is 0 on success, 1 for bad arguments and 2 if the display cannot
@@ -36,7 +41,11 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#include <qapplication.h>
+#include <qmessagebox.h>
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -47,19 +56,21 @@ enum
     BlackRoot = 1 << 0,
     RootCursor = 1 << 1,
     SetFullSession = 1 << 2,
-    RemoveFullSession = 1 << 3
+    RemoveFullSession = 1 << 3,
+    Message = 1 << 4
 };
 
 static int usage()
 {
     fprintf( stderr, "usage: kstartupx [--black-root] [--root-cursor]"
-        " [--set-full-session] [--remove-full-session]\n" );
+        " [--set-full-session] [--remove-full-session] [--message TEXT]\n" );
     return 1;
 }
 
 int main( int argc, char* argv[] )
 {
     int actions = 0;
+    const char* message = NULL;
     for( int i = 1; i < argc; ++i )
     {
         if( strcmp( argv[ i ], "--black-root" ) == 0 )
@@ -70,6 +81,11 @@ int main( int argc, char* argv[] )
             actions |= SetFullSession;
         else if( strcmp( argv[ i ], "--remove-full-session" ) == 0 )
             actions |= RemoveFullSession;
+        else if( strcmp( argv[ i ], "--message" ) == 0 && i + 1 < argc )
+        {
+            actions |= Message;
+            message = argv[ ++i ];
+        }
         else
             return usage();
     }
@@ -110,6 +126,18 @@ int main( int argc, char* argv[] )
         }
         if( actions & RemoveFullSession )
             XDeleteProperty( dpy, root, atom );
+    }
+
+    if( actions & Message )
+    {
+        // not a client of whatever session startkde may have been started from
+        unsetenv( "SESSION_MANAGER" );
+        QApplication app( dpy );
+        QMessageBox box( "KDE", QString::fromLocal8Bit( message ), QMessageBox::Warning,
+            QMessageBox::Ok | QMessageBox::Default | QMessageBox::Escape,
+            QMessageBox::NoButton, QMessageBox::NoButton );
+        box.setTextFormat( Qt::PlainText );
+        box.exec();
     }
 
     XCloseDisplay( dpy );
