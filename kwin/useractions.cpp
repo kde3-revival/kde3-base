@@ -49,6 +49,14 @@ namespace KWinInternal
 
 QPopupMenu* Workspace::clientPopup()
     {
+    if( popup != NULL && popup_stale && !popup->isVisible())
+        { // (compositing switched while it was shown)
+        delete popup;
+        popup = NULL;
+        desk_popup = NULL; // (its submenus go with it)
+        screen_popup = NULL;
+        popup_stale = false;
+        }
     if ( !popup )
         {
         popup = new QPopupMenu;

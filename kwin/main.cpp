@@ -29,6 +29,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "atoms.h"
 #include "options.h"
 #include "sm.h"
+#include "compositing.h"
 
 #define INT8 _X11INT8
 #define INT32 _X11INT32
@@ -67,6 +68,11 @@ int x11ErrorHandler(Display *d, XErrorEvent *e)
         }
 
     if (ignore_badwindow && (e->error_code == BadWindow || e->error_code == BadColor))
+        return 0;
+    // the compositor's damage of a window destroyed meanwhile (its damage
+    // object went with it, the event not read yet)
+    if( KWinInternal::Compositing::damage_error >= 0
+        && e->error_code == KWinInternal::Compositing::damage_error + 0 /* BadDamage */ )
         return 0;
 
     XGetErrorText(d, e->error_code, msg, sizeof(msg));

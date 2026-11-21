@@ -124,6 +124,7 @@ class SceneWindow
         int type; // UnmanagedType
         bool locker;
         bool unredirected;
+        bool own_redirect; // redirected by us alone (not by RedirectSubwindows)
         double candidate_since;
         double redirected_at;
         int shadow;
@@ -159,6 +160,7 @@ SceneWindow::SceneWindow( Window w )
     : id( w ), border( 0 ), mapped( false ), queried( false ), input_only( false ), override_redirect( false ),
       visual( NULL ), depth( 0 ), argb( false ), damage( None ), damaged( false ), pixmap( None ), texture( NULL ),
       bind_failed( false ), opacity( 1.0 ), type( TypeNone ), locker( false ), unredirected( false ),
+      own_redirect( false ),
       candidate_since( 0 ), redirected_at( 0 ), shadow( NoShadow ), shadow_radius( 0 ), shadow_dx( 0 ),
       shadow_dy( 0 ), shadow_alpha( 0 ), drawn( false ), replaced( false )
     {
@@ -204,6 +206,7 @@ static int countErrors( Display*, XErrorEvent* )
 // error trapping around a synchronous request (no XSync of its own)
 static void trap()
     {
+    XSync( qt_xdisplay(), False ); // (errors of earlier requests are not ours)
     trapped = 0;
     saved_handler = XSetErrorHandler( countErrors );
     }
@@ -218,7 +221,7 @@ Compositor::Compositor( Workspace* w )
     : ws( w ), dpy( qt_xdisplay()), root( qt_xrootwin()), screen_w( 0 ), screen_h( 0 ), active( false ),
       suspended( false ), failed_once( false ), foreign_retries( 0 ), selection( NULL ), rend( NULL ),
       shadows( NULL ), presenter( NULL ), per_monitor( false ), flips_failed( false ), copies_in_row( 0 ), latest_buffer( -1 ),
-      hold_until( 0 ), force_mode( 0 ), frame_requested( false ), last_render( 0 ), overlay( None ), frame_number( 0 ), frame_wanted( false ), root_pixmap( None ),
+      force_mode( 0 ), frame_requested( false ), last_render( 0 ), repaint_due( 0 ), overlay( None ), frame_number( 0 ), frame_wanted( false ), root_pixmap( None ),
       root_texture( NULL ), shape_event( 0 ), asap( false ), render_budget( 3.0 ), min_budget( 3.0 ), on_time( 0 ),
       target_vblank( 0 ), late_at_max( 0 ), late_failed( false ), submit_time( 0 ), shown_index( 0 ),
       immediate_server( false ), stat_frames( 0 ), stat_render( 0 ), stat_max_render( 0 ), stat_skipped( 0 ),
@@ -491,7 +494,7 @@ bool Compositor::start()
     XFixesDestroyRegion( dpy, empty );
     // (not a scene window)
     if( SceneWindow* w = findWindow( overlay ))
-        removeWindow( w );
+        removeWindow( w, false );
     if( !createBuffers())
         {
         stop( true, i18n( "the frame buffers could not be made" ));
@@ -500,7 +503,6 @@ bool Compositor::start()
     flips_failed = false;
     copies_in_row = 0;
     latest_buffer = -1;
-    hold_until = 0;
     const char* mode = getenv( "KWIN_COMPOSITOR_PRESENT" ); // overlay|monitors (tests)
     force_mode = mode == NULL ? 0 : strcmp( mode, "monitors" ) == 0 ? 2 : strcmp( mode, "overlay" ) == 0 ? 1 : 0;
     setupOutputs( force_mode == 2 );
@@ -617,6 +619,9 @@ void Compositor::stop( bool failed, const QString& why )
 
 bool Compositor::createBuffers()
     {
+    // (BadAlloc: not enough video memory)
+    trapErrors( dpy );
+    bool ok = true;
     for( int i = 0;
          i < BufferCount;
          ++i )
@@ -624,9 +629,9 @@ bool Compositor::createBuffers()
         buffers[ i ] = rend->createPresentBuffer( overlay, screen_w, screen_h, &buffer_pixmaps[ i ] );
         buffer_frame[ i ] = -1;
         if( buffers[ i ] == NULL )
-            return false;
+            ok = false;
         }
-    return true;
+    return untrapErrors( dpy ) == 0 && ok;
     }
 
 void Compositor::freeBuffers()
@@ -671,7 +676,7 @@ SceneWindow* Compositor::addWindow( Window id, bool query )
         XWindowAttributes attr;
         if( !XGetWindowAttributes( dpy, id, &attr ))
             {
-            removeWindow( w );
+            removeWindow( w, false );
             return NULL;
             }
         w->geom = QRect( attr.x, attr.y, attr.width + 2 * attr.border_width, attr.height + 2 * attr.border_width );
@@ -697,26 +702,38 @@ SceneWindow* Compositor::addWindow( Window id, bool query )
 #endif
     }
 
-void Compositor::removeWindow( SceneWindow* w )
+// (destroyed: its damage and redirections are gone with it; else, e.g.
+// reparented away, ours are undone)
+void Compositor::removeWindow( SceneWindow* w, bool destroyed )
     {
+#ifdef COMPOSITOR_BUILD
     if( w->mapped && w->queried && active )
         damageWindow( w );
     releaseContents( w );
-    if( w->unredirected )
+    if( !destroyed && ( w->damage != None || w->own_redirect ))
         {
-        overlay_hole = QRegion();
-        w->unredirected = false;
-        for( QPtrListIterator< SceneWindow > it( stacking );
-             it.current() != NULL;
-             ++it )
-            if( it.current()->unredirected )
-                overlay_hole |= it.current()->shapeOnScreen();
-        updateOverlayShape();
+        trap();
+        if( w->damage != None )
+            XDamageDestroy( dpy, w->damage );
+        if( w->own_redirect )
+            XCompositeUnredirectWindow( dpy, w->id, CompositeRedirectManual );
+        XSync( dpy, False );
+        untrap();
         }
+    w->damage = None;
     windows.remove( w->id );
     stacking.removeRef( w );
+    if( w->unredirected )
+        {
+        w->unredirected = false;
+        updateHole();
+        }
     delete w;
     unredirect_timer.start( 0, true );
+#else
+    Q_UNUSED( w );
+    Q_UNUSED( destroyed );
+#endif
     }
 
 // w goes right above the window above (None: at the bottom)
@@ -742,10 +759,11 @@ void Compositor::windowMapped( SceneWindow* w )
 #ifdef COMPOSITOR_BUILD
     if( !w->queried )
         {
+        const Window id = w->id; // (w is deleted when the window is gone)
         trap();
-        addWindow( w->id, true );
+        addWindow( id, true );
         untrap();
-        w = findWindow( w->id );
+        w = findWindow( id );
         if( w == NULL || !w->queried )
             return;
         }
@@ -766,6 +784,7 @@ void Compositor::windowMapped( SceneWindow* w )
     fetchType( w );
     updateShadow( w );
     w->bind_failed = false;
+    bindContents( w ); // (now: the round trips not in a frame)
     damageWindow( w );
     if( w->locker )
         checkUnredirect(); // at once, before anything is drawn
@@ -783,23 +802,17 @@ void Compositor::windowUnmapped( SceneWindow* w )
     w->mapped = false;
     releaseContents( w );
     if( w->unredirected )
-        { // (it is no longer in the way of the overlay)
+        { // (it is no longer in the way of the overlay; our unredirection
+          // of it stays: redirected again for its next map)
         w->unredirected = false;
-        overlay_hole = QRegion();
-        for( QPtrListIterator< SceneWindow > it( stacking );
-             it.current() != NULL;
-             ++it )
-            if( it.current()->unredirected )
-                overlay_hole |= it.current()->shapeOnScreen();
-        // redirected again by the server's subwindow redirection? No: our
-        // own unredirection of it stays; redirect it again for its next map
 #ifdef COMPOSITOR_BUILD
         trap();
         XCompositeRedirectWindow( dpy, w->id, CompositeRedirectManual );
         XSync( dpy, False );
         untrap();
+        w->own_redirect = true;
 #endif
-        updateOverlayShape();
+        updateHole();
         }
     w->candidate_since = 0;
     unredirect_timer.start( 0, true );
@@ -994,6 +1007,8 @@ bool Compositor::bindContents( SceneWindow* w )
     trapErrors( dpy );
     w->pixmap = XCompositeNameWindowPixmap( dpy, w->id );
     int errors = untrapErrors( dpy );
+    if( errors != 0 )
+        w->pixmap = None; // (no XID was made)
     if( errors == 0 )
         {
         trap();
@@ -1096,10 +1111,7 @@ bool Compositor::x11Event( XEvent* e )
         case DestroyNotify:
             if( e->xdestroywindow.event == root )
                 if( SceneWindow* w = findWindow( e->xdestroywindow.window ))
-                    {
-                    w->damage = None; // (destroyed with the window)
-                    removeWindow( w );
-                    }
+                    removeWindow( w, true );
             break;
         case MapNotify:
             if( e->xmap.event == root )
@@ -1142,8 +1154,12 @@ bool Compositor::x11Event( XEvent* e )
                         {
                         if( !w->shape.isNull())
                             fetchShape( w ); // (resized frames get new shapes, the event may come later)
+                        if( w->override_redirect )
+                            updateShadow( w ); // (covering a whole monitor now?)
                         damageWindow( w );
                         }
+                    if( w->unredirected )
+                        updateHole();
                     unredirect_timer.start( 0, true );
                     }
             break;
@@ -1153,11 +1169,16 @@ bool Compositor::x11Event( XEvent* e )
                 if( e->xreparent.parent == root )
                     {
                     SceneWindow* w = addWindow( e->xreparent.window, true );
-                    if( w != NULL && w->mapped )
-                        windowMapped( w );
+                    if( w != NULL )
+                        { // (on top, like a new window)
+                        stacking.removeRef( w );
+                        stacking.append( w );
+                        if( w->mapped )
+                            windowMapped( w );
+                        }
                     }
                 else if( SceneWindow* w = findWindow( e->xreparent.window ))
-                    removeWindow( w );
+                    removeWindow( w, false );
                 }
             break;
         case CirculateNotify:
@@ -1201,6 +1222,8 @@ bool Compositor::x11Event( XEvent* e )
                             fetchShape( w );
                             updateShadow( w );
                             damageWindow( w );
+                            if( w->unredirected )
+                                updateHole();
                             unredirect_timer.start( 0, true );
                             }
                 }
@@ -1302,7 +1325,7 @@ void Compositor::updateRootPixmap()
 */
 void Compositor::scheduleRepaint()
     {
-    if( !active || repaint_timer.isActive())
+    if( !active )
         return;
     if( frame_wanted )
         return; // (the completion of the queued frame starts it)
@@ -1338,6 +1361,11 @@ void Compositor::scheduleRepaint()
         if( earliest > 0 && earliest - render_budget > t )
             delay = (int) floor( earliest - render_budget - t );
         }
+    // (armed already: moved earlier when needed, e.g. a faster monitor)
+    const double due = now() + delay;
+    if( repaint_timer.isActive() && due >= repaint_due - 0.5 )
+        return;
+    repaint_due = due;
     repaint_timer.start( delay, true );
     }
 
@@ -1475,7 +1503,18 @@ bool Compositor::leadCompleted( bool skipped, int missed )
 void Compositor::setupOutputs( bool per_monitor_mode )
     {
 #ifdef COMPOSITOR_BUILD
+    const bool replacing = !outputs.isEmpty();
     freeOutputs();
+    if( replacing )
+        { // the old buffers may still be queued or on the screen (a flip):
+          // new ones (the server keeps the old ones while it needs them)
+        freeBuffers();
+        if( !createBuffers())
+            {
+            stop( true, i18n( "the frame buffers could not be made" ));
+            return;
+            }
+        }
     QDesktopWidget* desktop = QApplication::desktop();
     per_monitor = per_monitor_mode && desktop->numScreens() > 1 && force_mode != 1;
     const int count = per_monitor ? desktop->numScreens() : 1;
@@ -1490,8 +1529,17 @@ void Compositor::setupOutputs( bool per_monitor_mode )
             o->geom = desktop->screenGeometry( i ) & QRect( 0, 0, screen_w, screen_h );
             XSetWindowAttributes attr;
             attr.background_pixmap = None; // (the screen stays as it is until the first frame)
+            trap();
             o->window = XCreateWindow( dpy, overlay, o->geom.x(), o->geom.y(), o->geom.width(), o->geom.height(),
                 0, CopyFromParent, InputOutput, CopyFromParent, CWBackPixmap, &attr );
+            XSync( dpy, False );
+            if( untrap() != 0 )
+                { // (the overlay alone then)
+                delete o;
+                freeOutputs();
+                setupOutputs( false );
+                return;
+                }
             o->own_window = true;
             XserverRegion empty = XFixesCreateRegion( dpy, NULL, 0 );
             XFixesSetWindowShapeRegion( dpy, o->window, ShapeInput, 0, 0, empty );
@@ -1505,6 +1553,7 @@ void Compositor::setupOutputs( bool per_monitor_mode )
             }
         o->presenter = new Presenter( dpy );
         o->presenter->startExternal( o->window, buffer_pixmaps, BufferCount, have_present );
+        connect( o->presenter, SIGNAL( stalled()), SLOT( outputStalled()));
         o->pending = QRegion( o->geom );
         if( per_monitor && i == primary )
             outputs.prepend( o ); // the primary monitor paces the frames
@@ -1523,9 +1572,6 @@ void Compositor::setupOutputs( bool per_monitor_mode )
     frame_wanted = false;
     submit_time = 0;
     target_vblank = 0;
-    // (presentations of the old windows may still be queued: their buffers
-    // aren't drawn into for a few refreshes)
-    hold_until = now() + 60;
     if( active )
         {
         addRepaintFull();
@@ -1535,6 +1581,26 @@ void Compositor::setupOutputs( bool per_monitor_mode )
 #else
     Q_UNUSED( per_monitor_mode );
 #endif
+    }
+
+// a presenter got no events for long (the server stopped telling, a GPU
+// hang): its buffers' state is unknown, new ones and new outputs
+void Compositor::outputStalled()
+    {
+    if( !active )
+        return;
+    if( debug )
+        kdWarning( 1212 ) << "compositor: no presentation events, buffers anew" << endl;
+    QTimer::singleShot( 0, this, SLOT( resetOutputs()));
+    }
+
+void Compositor::resetOutputs()
+    {
+    if( active )
+        {
+        setupOutputs( per_monitor );
+        scheduleRepaint();
+        }
     }
 
 void Compositor::freeOutputs()
@@ -1619,26 +1685,33 @@ void Compositor::performRepaint()
         flushDamage();
         return;
         }
-    if( hold_until > 0 )
-        { // just switched the outputs
-        const double t = now();
-        if( t < hold_until )
-            {
-            repaint_timer.start( (int) ceil( hold_until - t ), true );
-            return;
-            }
-        hold_until = 0;
-        }
     // at most one frame queued in the server per monitor: wait when every
     // monitor that gets something has one
-    bool can = false;
+    // (damage on no monitor: nothing to draw there)
+    QRegion shown;
     for( QPtrListIterator< CompositorOutput > it( outputs );
-         it.current() != NULL && !can;
+         it.current() != NULL;
          ++it )
-        can = ( outputWanted( it.current()) || animating ) && !queuedOn( it.current());
+        shown |= QRegion( it.current()->geom );
+    pending &= shown;
+    bool can = false;
+    bool queued = false;
+    for( QPtrListIterator< CompositorOutput > it( outputs );
+         it.current() != NULL;
+         ++it )
+        if( outputWanted( it.current()) || animating )
+            {
+            if( queuedOn( it.current()))
+                queued = true;
+            else
+                can = true;
+            }
     if( !can )
         {
-        frame_wanted = true;
+        if( queued )
+            frame_wanted = true; // (a completion starts it)
+        else
+            flushDamage();
         return;
         }
     const int buf = freeBuffer();
@@ -1819,16 +1892,9 @@ void Compositor::paintBackground( const QRegion& region )
     if( region.isEmpty())
         return;
     rend->setClip( region );
-    if( root_texture != NULL )
-        {
-        rend->drawTexture( root_texture, 0, 0, 1.0, Render::BlendSource );
-        QRegion rest = region - QRegion( 0, 0, root_texture->width(), root_texture->height());
-        if( !rest.isEmpty())
-            {
-            rend->setClip( rest );
-            rend->fill( RectF( 0, 0, screen_w, screen_h ), Qt::black, 1.0, Render::BlendSource );
-            }
-        }
+    if( root_texture != NULL ) // (tiled, like the server draws it)
+        rend->drawTexture( root_texture, RectF( 0, 0, screen_w, screen_h ), RectF( 0, 0, screen_w, screen_h ), 1.0,
+            Render::NearestFilter, Render::BlendSource, Render::TileRepeat );
     else
         rend->fill( RectF( 0, 0, screen_w, screen_h ), Qt::black, 1.0, Render::BlendSource );
     }
@@ -2104,7 +2170,11 @@ void Compositor::checkUnredirect()
     const double t = now();
     double next = -1;
     const QRect screen( 0, 0, screen_w, screen_h );
-    // top-down: what is above each window
+    // top-down: what is above each window; first decided, then the windows
+    // redirected again, then the others unredirected (a redirected window's
+    // new pixmap is a copy of the screen: what is there must be still it,
+    // not the screen locker unredirected above it a moment before)
+    QPtrList< SceneWindow > redirect, unredirect;
     QRegion above;
     QPtrListIterator< SceneWindow > it( stacking );
     for( it.toLast();
@@ -2123,10 +2193,7 @@ void Compositor::checkUnredirect()
             {
             w->candidate_since = 0;
             if( w->unredirected )
-                {
-                setUnredirected( w, false );
-                w->redirected_at = t;
-                }
+                redirect.append( w );
             }
         else if( !w->unredirected )
             {
@@ -2135,14 +2202,43 @@ void Compositor::checkUnredirect()
             const double delay = w->locker ? 0
                 : ( w->redirected_at > 0 && t - w->redirected_at < 3000 ) ? UnredirectAgainDelay : UnredirectDelay;
             if( t - w->candidate_since >= delay )
-                setUnredirected( w, true );
+                unredirect.append( w );
             else if( next < 0 || w->candidate_since + delay - t < next )
                 next = w->candidate_since + delay - t;
             }
         above |= extents( w );
         }
+    for( SceneWindow* w = redirect.first();
+         w != NULL;
+         w = redirect.next())
+        {
+        setUnredirected( w, false );
+        w->redirected_at = t;
+        }
+    for( SceneWindow* w = unredirect.first();
+         w != NULL;
+         w = unredirect.next())
+        setUnredirected( w, true );
     if( next >= 0 )
         unredirect_timer.start( (int) ceil( next ) + 1, true );
+    }
+
+// where unredirected windows show through the overlay; what it covers again
+// is drawn anew (the buffers didn't draw there)
+void Compositor::updateHole()
+    {
+    QRegion hole;
+    for( QPtrListIterator< SceneWindow > it( stacking );
+         it.current() != NULL;
+         ++it )
+        if( it.current()->unredirected && it.current()->mapped )
+            hole |= it.current()->shapeOnScreen();
+    if( hole == overlay_hole )
+        return;
+    const QRegion uncovered = overlay_hole - hole;
+    overlay_hole = hole;
+    updateOverlayShape();
+    addRepaint( uncovered );
     }
 
 /*
@@ -2162,24 +2258,20 @@ void Compositor::setUnredirected( SceneWindow* w, bool unredirect )
         kdWarning( 1212 ) << "compositor: " << ( unredirect ? "unredirecting" : "redirecting" ) << " 0x"
             << QString::number( w->id, 16 ) << ( w->locker ? " (screen locker)" : "" ) << endl;
     w->unredirected = unredirect;
-    overlay_hole = QRegion();
-    for( QPtrListIterator< SceneWindow > it( stacking );
-         it.current() != NULL;
-         ++it )
-        if( it.current()->unredirected )
-            overlay_hole |= it.current()->shapeOnScreen();
     trap();
     if( unredirect )
         {
-        updateOverlayShape();
+        updateHole();
         XCompositeUnredirectWindow( dpy, w->id, CompositeRedirectManual );
+        w->own_redirect = false;
         releaseContents( w );
         }
     else
         {
         XCompositeRedirectWindow( dpy, w->id, CompositeRedirectManual );
+        w->own_redirect = true;
         w->bind_failed = false;
-        updateOverlayShape();
+        updateHole();
         damageWindow( w );
         }
     XSync( dpy, False );

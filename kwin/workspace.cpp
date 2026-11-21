@@ -94,6 +94,7 @@ Workspace::Workspace( bool restore )
     overview          (NULL),
     effects           (NULL),
     compositor_       (NULL),
+    popup_stale       (false),
     popupinfo         (0),
     popup             (0),
     advanced_popup    (0),
@@ -206,6 +207,12 @@ Workspace::Workspace( bool restore )
     // KWin composites itself (compositor.h), kompmgr is gone
     compositor_ = new Compositor( this );
     connect( compositor_, SIGNAL( activeChanged( bool )), SLOT( compositingChanged( bool )));
+    // (after the initialization: an X error during it makes KWin give up)
+    QTimer::singleShot( 0, this, SLOT( startCompositing()));
+    }
+
+void Workspace::startCompositing()
+    {
     compositor_->reconfigure();
     options->useTranslucency = compositor_->isActive();
     }
@@ -2560,11 +2567,16 @@ void Workspace::compositingChanged( bool on )
     {
     options->useTranslucency = on; // the opacity items of the window menu
     if( popup != NULL )
-        { // (made anew with or without them)
-        delete popup;
-        popup = NULL;
-        desk_popup = NULL; // (its submenus go with it)
-        screen_popup = NULL;
+        { // (made anew with or without them; not while it is shown)
+        if( popup->isVisible())
+            popup_stale = true;
+        else
+            {
+            delete popup;
+            popup = NULL;
+            desk_popup = NULL; // (its submenus go with it)
+            screen_popup = NULL;
+            }
         }
     if( on )
         {

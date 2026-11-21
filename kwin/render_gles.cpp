@@ -323,6 +323,8 @@ bool GlesPrivate::importDmaBuf( GLTexture* t, const DmaBuf& buf )
     t->image = createImage( egl, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, NULL, attribs );
     if( t->image == EGL_NO_IMAGE_KHR )
         return false;
+    while( glGetError() != GL_NO_ERROR )
+        ; // (earlier ones are not this import's)
     glBindTexture( GL_TEXTURE_2D, t->tex );
     imageTargetTexture( GL_TEXTURE_2D, (GLeglImageOES) t->image );
     return glGetError() == GL_NO_ERROR;
@@ -951,18 +953,20 @@ Texture* GlesRenderer::createPresentBuffer( Window window, int w, int h, Pixmap*
     return t;
     }
 
+/*
+ The X server processes requests in order: when the reply to a request
+ sent after the trigger comes, the fence was triggered and glamor had
+ flushed its rendering (glamor_sync_fence_set_triggered()).  A round trip,
+ not a wait on the shared fence: a server that never triggers it can't
+ hang KWin (an IO error instead).
+*/
 void GlesRenderer::acquireClientBuffers()
     {
     if( !d->use_fence )
         return;
-    xshmfence_reset( d->shm_fence );
+    d->flush();
     xcb_sync_trigger_fence( d->xcb, d->x_fence );
-    xcb_flush( d->xcb );
-    if( xshmfence_await( d->shm_fence ) != 0 )
-        {
-        kdWarning( 1212 ) << "compositor: the X fence failed, rendering without it" << endl;
-        d->use_fence = false;
-        }
+    free( xcb_get_input_focus_reply( d->xcb, xcb_get_input_focus( d->xcb ), NULL ));
     }
 
 SyncPoint GlesRenderer::finish()

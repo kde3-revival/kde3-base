@@ -420,6 +420,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void resetClientOpacity();
         void setTransButtonText(int value);
         void compositingChanged( bool active );
+        void startCompositing();
         // end 
 
     protected:
@@ -585,6 +586,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         Overview* overview;
         Effects* effects;
         Compositor* compositor_;
+        bool popup_stale; // the window menu to be made anew (compositing switched while shown)
         PopupInfo* popupinfo;
 
         QPopupMenu *popup;

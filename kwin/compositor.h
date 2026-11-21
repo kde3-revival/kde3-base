@@ -129,6 +129,8 @@ class Compositor : public QObject
     private slots:
         void performRepaint();
         void outputCompleted( bool skipped, int missed );
+        void outputStalled();
+        void resetOutputs();
         void outputIdle();
         void checkUnredirect();
         void retry();
@@ -148,7 +150,7 @@ class Compositor : public QObject
         // the scene's windows
         SceneWindow* findWindow( Window w ) const;
         SceneWindow* addWindow( Window w, bool query_attributes );
-        void removeWindow( SceneWindow* w );
+        void removeWindow( SceneWindow* w, bool destroyed );
         void restack( SceneWindow* w, Window above );
         void windowMapped( SceneWindow* w );
         void windowUnmapped( SceneWindow* w );
@@ -170,6 +172,7 @@ class Compositor : public QObject
         bool unredirectCandidate( const SceneWindow* w ) const;
         void setUnredirected( SceneWindow* w, bool unredirect );
         void updateOverlayShape();
+        void updateHole();
         void debugFrame( double start, const QRegion& repaint );
         QString outputStats() const;
         void dumpFrame( int buffer, const QRegion& repaint );
@@ -194,10 +197,10 @@ class Compositor : public QObject
         bool flips_failed; // the overlay was copied, not flipped
         int copies_in_row;
         int latest_buffer; // drawn last
-        double hold_until; // no drawing into buffers before (outputs switched)
         int force_mode; // KWIN_COMPOSITOR_PRESENT: 1 overlay, 2 monitors
         bool frame_requested; // (requestFrame())
         double last_render; // when the last frame was drawn
+        double repaint_due; // when the armed repaint timer fires
         Window overlay;
         // the present buffers and the frame each one shows (buffer age)
         enum { BufferCount = 3 };

@@ -45,6 +45,19 @@ namespace KWinInternal
 /*!
   Resizes the workspace after an XRANDR screen size change
  */
+/*
+ Moving and resizing as an outline (Transparent) draws with XOR on the
+ root window: with compositing that lands in the compositor's frames (the
+ root shows them when they are flipped).  Opaque then.
+*/
+static Options::MoveResizeMode effectiveMoveResizeMode( const WindowRules* rules, Options::MoveResizeMode mode )
+    {
+    Workspace* ws = Workspace::self();
+    if( ws != NULL && ws->compositor() != NULL && ws->compositor()->isActive())
+        return Options::Opaque;
+    return rules->checkMoveResizeMode( mode );
+    }
+
 void Workspace::desktopResized()
     {
     QRect geom = QApplication::desktop()->geometry();
@@ -2418,8 +2431,8 @@ void Client::positionGeometryTip()
         {
         if( !geometryTip )
             { // save under is not necessary with opaque, and seem to make things slower
-            bool save_under = ( isMove() && rules()->checkMoveResizeMode( options->moveMode ) != Options::Opaque )
-                        || ( isResize() && rules()->checkMoveResizeMode( options->resizeMode ) != Options::Opaque );
+            bool save_under = ( isMove() && effectiveMoveResizeMode( rules(), options->moveMode ) != Options::Opaque )
+                        || ( isResize() && effectiveMoveResizeMode( rules(), options->resizeMode ) != Options::Opaque );
             geometryTip = new GeometryTip( &xSizeHint, save_under );
             }
         QRect wgeom( moveResizeGeom ); // position of the frame, size of the window itself
@@ -2483,12 +2496,12 @@ bool Client::startMoveResize()
     // rule out non opaque windows from useless translucency settings, maybe resizes?
     if ((isResize() && options->removeShadowsOnResize) || (isMove() && options->removeShadowsOnMove))
         setShadowSize(0);
-    if (rules()->checkMoveResizeMode( options->moveMode ) == Options::Opaque){
+    if (effectiveMoveResizeMode( rules(), options->moveMode ) == Options::Opaque){
         savedOpacity_ = opacity_;
         setOpacity(options->translucentMovingWindows, options->movingWindowOpacity);
     }
-    if ( ( isMove() && rules()->checkMoveResizeMode( options->moveMode ) != Options::Opaque )
-      || ( isResize() && rules()->checkMoveResizeMode( options->resizeMode ) != Options::Opaque ) )
+    if ( ( isMove() && effectiveMoveResizeMode( rules(), options->moveMode ) != Options::Opaque )
+      || ( isResize() && effectiveMoveResizeMode( rules(), options->resizeMode ) != Options::Opaque ) )
         {
         grabXServer();
         kapp->sendPostedEvents();
@@ -2519,7 +2532,7 @@ void Client::finishMoveResize( bool cancel )
 void Client::leaveMoveResize()
     {
     // rule out non opaque windows from useless translucency settings, maybe resizes?
-    if (rules()->checkMoveResizeMode( options->moveMode ) == Options::Opaque)
+    if (effectiveMoveResizeMode( rules(), options->moveMode ) == Options::Opaque)
         setOpacity(true, savedOpacity_);
     if ((isResize() && options->removeShadowsOnResize) || (isMove() && options->removeShadowsOnMove))
         updateShadowSize();
@@ -2530,8 +2543,8 @@ void Client::leaveMoveResize()
         delete geometryTip;
         geometryTip = NULL;
         }
-    if ( ( isMove() && rules()->checkMoveResizeMode( options->moveMode ) != Options::Opaque )
-      || ( isResize() && rules()->checkMoveResizeMode( options->resizeMode ) != Options::Opaque ) )
+    if ( ( isMove() && effectiveMoveResizeMode( rules(), options->moveMode ) != Options::Opaque )
+      || ( isResize() && effectiveMoveResizeMode( rules(), options->resizeMode ) != Options::Opaque ) )
         ungrabXServer();
     XUngrabKeyboard( qt_xdisplay(), qt_x_time );
     XUngrabPointer( qt_xdisplay(), qt_x_time );
@@ -2766,14 +2779,14 @@ void Client::handleMoveResize( int x, int y, int x_root, int y_root )
 
     if( update )
         {
-        if( rules()->checkMoveResizeMode
-            ( isResize() ? options->resizeMode : options->moveMode ) == Options::Opaque )
+        if( effectiveMoveResizeMode( rules(),
+            isResize() ? options->resizeMode : options->moveMode ) == Options::Opaque )
             {
             setGeometry( moveResizeGeom );
             positionGeometryTip();
             }
-        else if( rules()->checkMoveResizeMode
-            ( isResize() ? options->resizeMode : options->moveMode ) == Options::Transparent )
+        else if( effectiveMoveResizeMode( rules(),
+            isResize() ? options->resizeMode : options->moveMode ) == Options::Transparent )
             {
             clearbound();  // it's necessary to move the geometry tip when there's no outline
             positionGeometryTip(); // shown, otherwise it would cause repaint problems in case

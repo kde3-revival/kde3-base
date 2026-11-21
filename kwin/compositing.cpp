@@ -47,6 +47,7 @@ bool have_render = false;
 bool have_composite = false;
 bool composite_panoramix = false;
 int damage_event = 0;
+int damage_error = -1;
 bool have_present = false;
 int present_opcode = 0;
 
@@ -70,7 +71,6 @@ bool checkExtensions( Display* dpy )
     if( have_render && XCompositeQueryExtension( dpy, &ev, &err )
         && XCompositeQueryVersion( dpy, &major, &minor ) && ( major > 0 || minor >= 3 ))
         {
-        int damage_error;
         int fixes_event, fixes_error;
         int fixes_major = 0, fixes_minor = 0;
         if( XDamageQueryExtension( dpy, &damage_event, &damage_error )
@@ -500,6 +500,11 @@ void Presenter::watchdog()
         return;
     queue = 0;
     next_msc = 0;
+    if( external )
+        { // (the server may still show or read them: not drawn into again)
+        emit stalled();
+        return;
+        }
     for( int i = 0;
          i < Buffers;
          ++i )

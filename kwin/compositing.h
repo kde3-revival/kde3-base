@@ -49,6 +49,7 @@ extern bool have_render; // RENDER 0.10
 extern bool have_composite; // Composite 0.3, Damage, XFixes 2 (not broken by PanoramiX)
 extern bool composite_panoramix; // Composite left out: several X screens joined by Xinerama
 extern int damage_event;
+extern int damage_error; // (the error base)
 extern bool have_present;
 extern int present_opcode;
 
@@ -187,6 +188,8 @@ class Presenter : public QObject
         void completed( bool skipped, int missed );
         // a buffer can be used again
         void idle();
+        // (external buffers) the server stopped telling: their state is unknown
+        void stalled();
     private slots:
         void watchdog();
     private:
