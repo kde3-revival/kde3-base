@@ -1156,6 +1156,12 @@ void KVirtualBGRenderer::setEnabled(bool enable)
 void KVirtualBGRenderer::desktopResized()
 {
     m_size = QApplication::desktop()->size();
+
+    // with a background per screen: a renderer for each monitor that
+    // is connected now
+    if (m_bDrawBackgroundPerScreen &&
+        m_numRenderers != (unsigned) QApplication::desktop()->numScreens())
+        load(m_desk, false);
     
     if (m_pPixmap)
     {
