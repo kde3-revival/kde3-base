@@ -853,6 +853,18 @@ if(KDEBASE_POWER_APPLET)
   cmake_pop_check_state()
 endif()
 
+# kicker/applets/network: the network applet talks to NetworkManager with
+# libnm (GLib-based: Qt runs on the GLib main loop)
+option(KDEBASE_NETWORK_APPLET "Build the NetworkManager panel applet (needs libnm)" ON)
+if(KDEBASE_NETWORK_APPLET)
+  pkg_check_modules(LIBNM QUIET IMPORTED_TARGET libnm>=1.24)
+  if(NOT LIBNM_FOUND)
+    message(FATAL_ERROR "libnm 1.24 or later (NetworkManager's client library) was "
+      "not found; it is needed for the network panel applet.  Install it, or "
+      "configure with -DKDEBASE_NETWORK_APPLET=OFF to build without the applet.")
+  endif()
+endif()
+
 # configure.in.bot of kioslave/smb, kcontrol/* etc.: the summary of what
 # is left out.  <result variable>:<option switching it off, or ->:<what>
 foreach(_what
@@ -880,7 +892,8 @@ foreach(_what
     "KDE3_BUILD_KDM:-:libXau and libXdmcp (kdm)"
     "KDEBASE_KONSOLE_FONTS:KDEBASE_KONSOLE_FONTS:Konsole's console fonts"
     "KDEBASE_VOLUME_APPLET:KDEBASE_VOLUME_APPLET:Volume control panel applet (libpulse)"
-    "KDEBASE_POWER_APPLET:KDEBASE_POWER_APPLET:Power panel applet (libupower-glib, GIO)")
+    "KDEBASE_POWER_APPLET:KDEBASE_POWER_APPLET:Power panel applet (libupower-glib, GIO)"
+    "KDEBASE_NETWORK_APPLET:KDEBASE_NETWORK_APPLET:NetworkManager panel applet (libnm)")
   string(REPLACE ":" ";" _what "${_what}")
   list(GET _what 0 _var)
   list(GET _what 1 _opt)

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Plugin
+Name=Network
+Comment=Wi-Fi networks and connections of NetworkManager
+Icon=network
+X-KDE-Library=network_panelapplet
+X-KDE-UniqueApplet=false
