@@ -811,6 +811,11 @@ switch( N )
     case TY_CSI_PR('h', 1049) : saveCursor(); screen[1]->clearEntireScreen(); setMode(MODE_AppScreen); break; //XTERM
     case TY_CSI_PR('l', 1049) : resetMode(MODE_AppScreen); restoreCursor(); break; //XTERM
 
+    case TY_CSI_PR('h', 2004) :          setMode      (MODE_BracketedPaste); break; //XTERM
+    case TY_CSI_PR('l', 2004) :        resetMode      (MODE_BracketedPaste); break; //XTERM
+    case TY_CSI_PR('s', 2004) :         saveMode      (MODE_BracketedPaste); break; //XTERM
+    case TY_CSI_PR('r', 2004) :      restoreMode      (MODE_BracketedPaste); break; //XTERM
+
     //FIXME: weird DEC reset sequence
     case TY_CSI_PE('p'      ) : /* IGNORED: reset         (        ) */ break;
 
@@ -1198,6 +1203,7 @@ void TEmuVt102::resetModes()
 {
   resetMode(MODE_Mouse1000); saveMode(MODE_Mouse1000);
   resetMode(MODE_AppScreen); saveMode(MODE_AppScreen);
+  resetMode(MODE_BracketedPaste); saveMode(MODE_BracketedPaste);
   // here come obsolete modes
   resetMode(MODE_AppCuKeys); saveMode(MODE_AppCuKeys);
   resetMode(MODE_NewLine  );
@@ -1211,6 +1217,9 @@ void TEmuVt102::setMode(int m)
   switch (m)
   {
     case MODE_Mouse1000 : if (connected) gui->setMouseMarks(false);
+    break;
+
+    case MODE_BracketedPaste : if (connected) gui->setBracketedPasteMode(true);
     break;
 
     case MODE_AppScreen : screen[1]->clearSelection();
@@ -1230,6 +1239,9 @@ void TEmuVt102::resetMode(int m)
   switch (m)
   {
     case MODE_Mouse1000 : if (connected) gui->setMouseMarks(true);
+    break;
+
+    case MODE_BracketedPaste : if (connected) gui->setBracketedPasteMode(false);
     break;
 
     case MODE_AppScreen : screen[0]->clearSelection();
@@ -1272,6 +1284,7 @@ void TEmuVt102::setConnect(bool c)
       setMode(MODE_Mouse1000);
     else
       resetMode(MODE_Mouse1000);
+    gui->setBracketedPasteMode(getMode(MODE_BracketedPaste));
 #if defined(HAVE_XKB)
     if (holdScreen)
       scrolllock_set_on();

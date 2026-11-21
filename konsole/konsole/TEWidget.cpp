@@ -344,6 +344,7 @@ TEWidget::TEWidget(QWidget *parent, const char *name)
 ,terminalSizeHint(false)
 ,terminalSizeStartup(true)
 ,bidiEnabled(false)
+,m_bracketedPaste(false)
 ,actSel(0)
 ,word_selection_mode(false)
 ,line_selection_mode(false)
@@ -1798,6 +1799,15 @@ void TEWidget::emitSelection(bool useXselection,bool appendReturn)
 {
   QApplication::clipboard()->setSelectionMode( useXselection );
   QString text = QApplication::clipboard()->text();
+  if ( m_bracketedPaste && ! text.isEmpty() )
+  {
+    // Tell the application which text is pasted (e.g. so that an editor
+    // does not auto-indent it, or a shell does not run it line by line).
+    // The text must not end the paste early.
+    text.remove("\033[201~");
+    text.prepend("\033[200~");
+    text.append("\033[201~");
+  }
   if(appendReturn)
     text.append("\r");
   if ( ! text.isEmpty() )

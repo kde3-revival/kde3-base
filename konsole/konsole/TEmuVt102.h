@@ -33,7 +33,8 @@
 #define MODE_AppKeyPad (MODES_SCREEN+2)
 #define MODE_Mouse1000 (MODES_SCREEN+3)
 #define MODE_Ansi      (MODES_SCREEN+4)
-#define MODE_total     (MODES_SCREEN+5)
+#define MODE_BracketedPaste (MODES_SCREEN+5)
+#define MODE_total     (MODES_SCREEN+6)
 
 struct DECpar
 {

@@ -124,6 +124,7 @@ public:
     void setVTFont(const QFont& font);
 
     void setMouseMarks(bool on);
+    void setBracketedPasteMode(bool on) { m_bracketedPaste = on; }
     static void setAntialias( bool enable ) { s_antialias = enable; }
     static bool antialias()                 { return s_antialias;   }
     static void setStandalone( bool standalone ) { s_standalone = standalone; }
@@ -252,6 +253,7 @@ private:
     bool terminalSizeHint,terminalSizeStartup;
     bool bidiEnabled;
     bool mouse_marks;
+    bool m_bracketedPaste; // wrap pasted text in ESC[200~ ... ESC[201~
 
     void makeImage();
 
