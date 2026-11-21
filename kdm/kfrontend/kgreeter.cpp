@@ -283,14 +283,27 @@ KGreeter::insertUsers()
 	struct passwd *ps;
 
 	// XXX remove seteuid-voodoo when we run as nobody
+	// Read the users' face files as nobody, with only nobody's group:
+	// the supplementary groups of root would still apply otherwise.
 	if (!(ps = getpwnam( "nobody" )))
 		return;
-        if (setegid( ps->pw_gid )) 
-                return;
-        if (seteuid( ps->pw_uid )) {
-                setegid(0);
-                return;
-        }
+	int ngroups = getgroups( 0, 0 );
+	if (ngroups < 0)
+		return;
+	QMemArray<gid_t> groups( ngroups + 1 );
+	if ((ngroups = getgroups( ngroups, groups.data() )) < 0)
+		return;
+	if (setgroups( 1, &ps->pw_gid ))
+		return;
+	if (setegid( ps->pw_gid )) {
+		setgroups( ngroups, groups.data() );
+		return;
+	}
+	if (seteuid( ps->pw_uid )) {
+		setegid( 0 );
+		setgroups( ngroups, groups.data() );
+		return;
+	}
 
 	QImage default_pix;
 	if (userView) {
@@ -357,7 +370,8 @@ KGreeter::insertUsers()
 
 	// XXX remove seteuid-voodoo when we run as nobody
 	seteuid( 0 );
-        setegid( 0 );
+	setegid( 0 );
+	setgroups( ngroups, groups.data() );
 }
 
 void
