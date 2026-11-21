@@ -179,6 +179,7 @@ class Overview : public QObject
         double progress; // current eased value
         double title_start; // titles fade in after the zoom-out
         double title_alpha;
+        double desktop_dim; // the desktop window is drawn dimmed (this frame)
 
         Window overlay;
         bool own_overlay; // created by us (no Composite)

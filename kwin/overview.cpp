@@ -401,10 +401,107 @@ class OverviewRenderer
         Picture snapshot_picture;
         QPixmap filter_pixmap;
         Picture filter_picture;
+        // anti-aliased rounded rectangles drawn from cached masks: the corners
+        // of a rectangle with this radius (Picture full), its middle column
+        // and row (col, row, padded): no polygons in every frame (glamor
+        // rasterizes those on the CPU and uploads the mask each time)
+        struct RoundMask
+            {
+            RoundMask() : ri( 0 ), full_pixmap( None ), full( None ), col_pixmap( None ), col( None ),
+                row_pixmap( None ), row( None ) {}
+            int ri; // the corner cells, ceil( radius ) + 1
+            Pixmap full_pixmap;
+            Picture full;
+            Pixmap col_pixmap;
+            Picture col;
+            Pixmap row_pixmap;
+            Picture row;
+            };
+        QMap< int, RoundMask > round_masks; // by radius * 2
         QFont font;
         int title_height;
         QColor highlight;
     };
+
+
+/*
+ An anti-aliased rounded rectangle at any subpixel position from cached
+ masks, in nine cells that cover each pixel once: the corners sampled
+ (translated, bilinear) from a small mask of a rounded rectangle with that
+ radius, the edges from its middle column and row (padded along the edge),
+ the middle filled.  hollow leaves the middle out (under an opaque
+ window).  Tiny rectangles are polygons.
+*/
+static void fillRounded( Display* dpy, OverviewRenderer* r, Picture dst, const RectF& rect, double radius,
+    const QColor& c, double alpha, bool hollow = false )
+    {
+    if( alpha <= 1.0 / 512 || rect.w <= 0 || rect.h <= 0 )
+        return;
+    radius = QMIN( radius, QMIN( rect.w, rect.h ) / 2 );
+    const int key = (int) floor( radius * 2 + 0.5 );
+    radius = key / 2.0;
+    const int ri = (int) ceil( radius ) + 1;
+    const int x0 = (int) floor( rect.x );
+    const int y0 = (int) floor( rect.y );
+    const int x1 = (int) ceil( rect.x + rect.w );
+    const int y1 = (int) ceil( rect.y + rect.h );
+    if( x1 - x0 < 4 || y1 - y0 < 4 )
+        {
+        roundedRect( dpy, dst, rect, radius, c, alpha );
+        return;
+        }
+    if( !r->round_masks.contains( key ))
+        { // the rounded rectangle at 2,2 with the size 2 * ri, in a transparent margin
+        OverviewRenderer::RoundMask m;
+        m.ri = ri;
+        const int n = 2 * ri + 4;
+        XRenderPictFormat* a8 = XRenderFindStandardFormat( dpy, PictStandardA8 );
+        Window root = DefaultRootWindow( dpy );
+        XRenderPictureAttributes pa;
+        pa.repeat = RepeatPad;
+        m.full_pixmap = XCreatePixmap( dpy, root, n, n, 8 );
+        m.full = XRenderCreatePicture( dpy, m.full_pixmap, a8, CPRepeat, &pa );
+        m.col_pixmap = XCreatePixmap( dpy, root, 1, n, 8 );
+        m.col = XRenderCreatePicture( dpy, m.col_pixmap, a8, CPRepeat, &pa );
+        m.row_pixmap = XCreatePixmap( dpy, root, n, 1, 8 );
+        m.row = XRenderCreatePicture( dpy, m.row_pixmap, a8, CPRepeat, &pa );
+        XRenderColor clear = { 0, 0, 0, 0 };
+        XRenderFillRectangle( dpy, PictOpSrc, m.full, &clear, 0, 0, n, n );
+        roundedRect( dpy, m.full, RectF( 2, 2, 2 * ri, 2 * ri ), radius, Qt::white, 1.0 );
+        XRenderComposite( dpy, PictOpSrc, m.full, None, m.col, 2 + ri, 0, 0, 0, 0, 0, 1, n );
+        XRenderComposite( dpy, PictOpSrc, m.full, None, m.row, 0, 2 + ri, 0, 0, 0, 0, n, 1 );
+        XRenderSetPictureFilter( dpy, m.full, FilterBilinear, NULL, 0 );
+        XRenderSetPictureFilter( dpy, m.col, FilterBilinear, NULL, 0 );
+        XRenderSetPictureFilter( dpy, m.row, FilterBilinear, NULL, 0 );
+        r->round_masks[ key ] = m;
+        }
+    const OverviewRenderer::RoundMask& m = r->round_masks[ key ];
+    // where a pixel of the cells samples the mask: x + tx
+    const double tx[ 3 ] = { 2 - rect.x, 0, 2 + 2 * ri - ( rect.x + rect.w ) };
+    const double ty[ 3 ] = { 2 - rect.y, 0, 2 + 2 * ri - ( rect.y + rect.h ) };
+    // (no middle when the corners meet: a pill, a circle)
+    const int xm = ( x0 + x1 ) / 2;
+    const int ym = ( y0 + y1 ) / 2;
+    const int cx[ 4 ] = { x0, QMIN( x0 + ri, xm ), QMAX( x1 - ri, xm ), x1 };
+    const int cy[ 4 ] = { y0, QMIN( y0 + ri, ym ), QMAX( y1 - ri, ym ), y1 };
+    Picture src = solidPicture( dpy, c, alpha );
+    for( int j = 0;
+         j < 3;
+         ++j )
+        for( int i = 0;
+             i < 3;
+             ++i )
+            {
+            Picture mask = i == 1 ? ( j == 1 ? None : m.col ) : ( j == 1 ? m.row : m.full );
+            if(( i == 1 && j == 1 && hollow ) || cx[ i + 1 ] <= cx[ i ] || cy[ j + 1 ] <= cy[ j ] )
+                continue;
+            if( mask != None )
+                setTransform( dpy, mask, 1, 1, tx[ i ], ty[ j ] );
+            XRenderComposite( dpy, PictOpOver, src, mask, dst, 0, 0, cx[ i ], cy[ j ],
+                cx[ i ], cy[ j ], cx[ i + 1 ] - cx[ i ], cy[ j + 1 ] - cy[ j ] );
+            }
+    XRenderFreePicture( dpy, src );
+    }
 
 Overview::Overview( Workspace* w )
     : ws( w ),
@@ -431,6 +528,7 @@ Overview::Overview( Workspace* w )
       progress( 0 ),
       title_start( 0 ),
       title_alpha( 0 ),
+      desktop_dim( 0 ),
       overlay( None ),
       own_overlay( false ),
       cursor( None ),
@@ -1321,6 +1419,17 @@ void Overview::cleanup()
         XFreePixmap( dpy, r->snapshot );
     if( r->filter_picture != None )
         XRenderFreePicture( dpy, r->filter_picture );
+    for( QMap< int, OverviewRenderer::RoundMask >::ConstIterator it = r->round_masks.begin();
+         it != r->round_masks.end();
+         ++it )
+        {
+        XRenderFreePicture( dpy, (*it).full );
+        XRenderFreePicture( dpy, (*it).col );
+        XRenderFreePicture( dpy, (*it).row );
+        XFreePixmap( dpy, (*it).full_pixmap );
+        XFreePixmap( dpy, (*it).col_pixmap );
+        XFreePixmap( dpy, (*it).row_pixmap );
+        }
     if( r->gc != NULL )
         XFreeGC( dpy, r->gc );
     if( own_overlay )
@@ -2193,6 +2302,21 @@ void Overview::renderFrame()
             XRenderFillRectangle( dpy, PictOpSrc, dst, &black, 0, 0, r->width, r->height );
         }
     const double dim = progress * ( composite ? DimAlpha : 0.75 );
+    // a desktop window covering the screen is drawn dimmed, no full screen
+    // blend for the dimming
+    desktop_dim = 0;
+    OverviewItem* first = items.first();
+    if( composite && dim > 1.0 / 512 && first != NULL && first->kind == OverviewItem::Desktop
+        && first->geom == QRect( 0, 0, r->width, r->height ) && !first->shaped && !first->alpha_format
+        && first->mip_picture[ 0 ] != None )
+        {
+        desktop_dim = dim;
+        for( OverviewItem* item = items.next();
+             item != NULL;
+             item = items.next())
+            if( item->kind == OverviewItem::Desktop )
+                desktop_dim = 0;
+        }
 
     // the windows, bottom first (the dragged one last)
     bool dimmed = false;
@@ -2225,7 +2349,7 @@ void Overview::renderFrame()
             int h = item->title_pixmap.height();
             int x = (int) floor( item->cur.cx() - w / 2.0 + 0.5 );
             int y = (int) floor( item->cur.y + item->cur.h + TitleGap + 0.5 );
-            roundedRect( dpy, dst, RectF( x, y, w, h ), h / 2.0, QColor( 24, 24, 24 ), 0.78 * a );
+            fillRounded( dpy, r, dst, RectF( x, y, w, h ), h / 2.0, QColor( 24, 24, 24 ), 0.78 * a );
             Picture white = solidPicture( dpy, Qt::white, a );
             XRenderComposite( dpy, PictOpOver, white, item->title_picture, dst, 0, 0, 0, 0, x, y, w, h );
             XRenderFreePicture( dpy, white );
@@ -2242,7 +2366,7 @@ void Overview::renderFrame()
         int h = r->filter_pixmap.height();
         int x = area.x() + ( area.width() - w ) / 2;
         int y = area.y() + 12;
-        roundedRect( dpy, dst, RectF( x, y, w, h ), h / 2.0, QColor( 24, 24, 24 ), 0.85 );
+        fillRounded( dpy, r, dst, RectF( x, y, w, h ), h / 2.0, QColor( 24, 24, 24 ), 0.85 );
         Picture white = solidPicture( dpy, Qt::white, 1.0 );
         XRenderComposite( dpy, PictOpOver, white, r->filter_picture, dst, 0, 0, 0, 0, x, y, w, h );
         XRenderFreePicture( dpy, white );
@@ -2287,7 +2411,7 @@ void Overview::renderFrame()
 // dragged to
 void Overview::drawBackdrop( XID dst, double dim, double t )
     {
-    if( dim > 1.0 / 512 )
+    if( dim > 1.0 / 512 && desktop_dim == 0 )
         {
         XRenderColor c = renderColor( Qt::black, dim );
         XRenderFillRectangle( dpy, PictOpOver, dst, &c, 0, 0, r->width, r->height );
@@ -2296,7 +2420,7 @@ void Overview::drawBackdrop( XID dst, double dim, double t )
         {
         double a = clamp01(( t - drag_target_start ) / FadeTime );
         RectF area( layoutArea( drag_target ));
-        roundedRect( dpy, dst, RectF( area.x + 12, area.y + 12, area.w - 24, area.h - 24 ), 16,
+        fillRounded( dpy, r, dst, RectF( area.x + 12, area.y + 12, area.w - 24, area.h - 24 ), 16,
             r->highlight, 0.18 * a );
         }
     }
@@ -2309,6 +2433,8 @@ void Overview::drawItem( OverviewItem* item, XID dst )
     switch( item->kind )
         {
         case OverviewItem::Desktop:
+            alpha = 1.0 - desktop_dim;
+            break;
         case OverviewItem::Dock:
             break;
         case OverviewItem::Other:
@@ -2328,19 +2454,21 @@ void Overview::drawItem( OverviewItem* item, XID dst )
     if( alpha <= 1.0 / 512 )
         return;
     if( scaled && progress > 0.001 )
-        { // a soft shadow and the selection
+        { // a soft shadow and the selection (not below an opaque window)
         double a = QMIN( 1.0, progress ) * alpha;
-        roundedRect( dpy, dst, RectF( rect.x - 3, rect.y - 1, rect.w + 6, rect.h + 7 ), 6, Qt::black, 0.10 * a );
-        roundedRect( dpy, dst, RectF( rect.x - 1, rect.y, rect.w + 2, rect.h + 3 ), 3, Qt::black, 0.18 * a );
+        const bool hollow = composite && alpha >= 1.0 && !item->alpha_format && !item->shaped
+            && item->mip_picture[ 0 ] != None;
+        fillRounded( dpy, r, dst, RectF( rect.x - 3, rect.y - 1, rect.w + 6, rect.h + 7 ), 6, Qt::black, 0.10 * a, hollow );
+        fillRounded( dpy, r, dst, RectF( rect.x - 1, rect.y, rect.w + 2, rect.h + 3 ), 3, Qt::black, 0.18 * a, hollow );
         if( item == selected && item != dragged && title_alpha > 0 )
-            roundedRect( dpy, dst, RectF( rect.x - 8, rect.y - 8, rect.w + 16, rect.h + 16 ), 10,
-                r->highlight, 0.75 * title_alpha * alpha );
+            fillRounded( dpy, r, dst, RectF( rect.x - 8, rect.y - 8, rect.w + 16, rect.h + 16 ), 10,
+                r->highlight, 0.75 * title_alpha * alpha, hollow );
         }
     if( !composite )
         { // icons on tiles
         if( !item->in_layout )
             return;
-        roundedRect( dpy, dst, rect, 8, QColor( 64, 64, 64 ), 0.95 * alpha );
+        fillRounded( dpy, r, dst, rect, 8, QColor( 64, 64, 64 ), 0.95 * alpha );
         if( item->icon_picture != None && item->icon_w > 0 )
             {
             double size = QMIN( 64.0, QMIN( rect.w, rect.h ) * 0.6 );
@@ -2408,6 +2536,8 @@ void Overview::drawItem( OverviewItem* item, XID dst )
     // at scale 1 like the server's automatic compositing (Src, also for
     // ARGB windows), else blended (the edges are anti-aliased)
     int op = mask != None || ( item->alpha_format && !identity ) ? PictOpOver : PictOpSrc;
+    if( item->kind == OverviewItem::Desktop && desktop_dim > 0 )
+        op = PictOpSrc; // the background dimmed
     XRenderComposite( dpy, op, src, mask, dst, 0, 0, 0, 0, dx, dy, dw, dh );
     if( mask != None )
         XRenderFreePicture( dpy, mask );
