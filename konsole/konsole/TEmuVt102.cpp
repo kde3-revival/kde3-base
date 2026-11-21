@@ -240,6 +240,7 @@ void TEmuVt102::reset()
 void TEmuVt102::resetToken()
 {
   ppos = 0; argc = 0; argv[0] = 0; argv[1] = 0; argsub[0] = false;
+  csiInter = 0;
 }
 
 void TEmuVt102::addDigit(int dig)
@@ -344,6 +345,10 @@ void TEmuVt102::onRcvChar(int cc)
 
   if (getMode(MODE_Ansi)) // decide on proper action
   {
+    // Remember intermediate bytes of a CSI here: a long sequence may not
+    // fit into pbuf. ESC[!p (DECSTR) is handled by the table below.
+    if (p >= 3 && s[1] == '[' && cc >= 0x20 && cc <= 0x2f && !(p == 3 && cc == '!'))
+      csiInter = cc;
     if (lec(1,0,ESC)) {                                                       return; }
     if (lec(1,0,ESC+128)) { s[0] = ESC; onRcvChar('[');                       return; }
     if (les(2,1,GRP)) {                                                       return; }
@@ -359,7 +364,7 @@ void TEmuVt102::onRcvChar(int cc)
     if (lec(2,0,ESC)) { tau( TY_ESC(s[1]),    0,   0);       resetToken(); return; }
     if (les(3,1,SCS)) { tau( TY_ESC_CS(s[1],s[2]),    0,   0);  resetToken(); return; }
     if (lec(3,1,'#')) { tau( TY_ESC_DE(s[2]),    0,   0);       resetToken(); return; }
-    if (p >= 3 && s[1] == '[' && (s[2] == '<' || s[2] == '=' || csiHasIntermediate()))
+    if (p >= 3 && s[1] == '[' && (s[2] == '<' || s[2] == '=' || csiInter))
     { // CSI with the private markers `<' or `=' or with intermediate bytes
       if (cc >= 0x40 && cc <= 0x7e) { csiExtended(cc);          resetToken(); return; }
       if (ees(    DIG)) { addDigit(cc-'0');                                     return; }
@@ -423,15 +428,6 @@ void TEmuVt102::onRcvChar(int cc)
   }
 }
 
-bool TEmuVt102::csiHasIntermediate()
-{
-  // pbuf[2] == '!' is DECSTR (ESC[!p), handled by the normal tokenizer.
-  for (int i = (pbuf[2] == '!') ? 3 : 2; i < ppos; i++)
-    if (pbuf[i] >= 0x20 && pbuf[i] <= 0x2f)
-      return true;
-  return false;
-}
-
 /* Control sequences the table driven tokenizer cannot express: those with
    intermediate bytes (ESC[ Ps SP q, ESC[ ? Ps $ p, ...) and those with the
    private markers `<' and `='. Unknown ones are consumed silently, so
@@ -439,10 +435,7 @@ bool TEmuVt102::csiHasIntermediate()
 
 void TEmuVt102::csiExtended(int cc)
 {
-  int inter = 0; // the (last) intermediate byte
-  for (int i = 2; i < ppos-1; i++)
-    if (pbuf[i] >= 0x20 && pbuf[i] <= 0x2f)
-      inter = pbuf[i];
+  int inter = csiInter; // the (last) intermediate byte
 
   if (pbuf[2] != '<' && pbuf[2] != '=' && pbuf[2] != '?' && pbuf[2] != '>')
   {
@@ -521,7 +514,7 @@ void TEmuVt102::setCursorStyle(int ps)
 void TEmuVt102::XtermHack(bool st)
 { int i,arg = 0;
   for (i = 2; i < ppos && '0'<=pbuf[i] && pbuf[i]<='9' ; i++)
-    arg = 10*arg + (pbuf[i]-'0');
+    arg = QMIN(10*arg + (pbuf[i]-'0'), 0xffff);
   if (pbuf[i] != ';') { ReportErrorToken(); return; }
   if (arg == 8) return; // IGNORED: OSC 8 hyperlink, the text follows as usual
   QString unistr;

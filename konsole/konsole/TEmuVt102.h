@@ -110,6 +110,7 @@ private:
   void addArgument(bool sub = false);
   int argv[MAXARGS];
   bool argsub[MAXARGS]; // argv[i] is a `:' separated sub-parameter
+  int csiInter;         // last intermediate byte of the CSI, or 0
   int argc;
   void initTokenizer();
   int tbl[256];
@@ -119,7 +120,6 @@ private:
 
   void tau(int code, int p, int q);
   void XtermHack(bool st);
-  bool csiHasIntermediate();
   void csiExtended(int cc);
 
   //
