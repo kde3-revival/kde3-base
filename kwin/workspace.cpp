@@ -550,6 +550,8 @@ void Workspace::addClient( Client* c, allowed_t )
     if( c->isUtility() || c->isMenu() || c->isToolbar())
         updateToolWindows( true );
     checkNonExistentClients();
+    if( overview != NULL )
+        overview->clientAdded( c );
     }
 
 /*

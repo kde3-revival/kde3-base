@@ -132,6 +132,9 @@ const double DragSize = 256.0;
 const double DragShrinkTime = 200.0;
 // the drag starts after the pointer moved at least this far
 const int DragThreshold = 6;
+// the close button: its diameter, its center inside the top right corner
+const int CloseSize = 28;
+const int CloseInset = 4;
 
 struct RectF
     {
@@ -315,7 +318,7 @@ class OverviewItem
               in_layout( false ), screen( 0 ), matches( true ),
               fade_from( 1 ), fade_to( 1 ), fade_start( 0 ), fade( 1 ),
               title_picture( None ), icon_pixmap( None ), icon_picture( None ), seen( true ),
-              snapshot( false )
+              snapshot( false ), close_from( 0 ), close_to( 0 ), close_start( 0 ), close_fade( 0 )
             {
             for( int i = 0;
                  i < MipLevels;
@@ -356,6 +359,7 @@ class OverviewItem
         int icon_w, icon_h;
         bool seen;
         bool snapshot; // a copy of the screen, not redirected
+        double close_from, close_to, close_start, close_fade; // the close button fading
     };
 
 class OverviewRenderer
@@ -375,6 +379,8 @@ class OverviewRenderer
                 pictures[ i ] = None;
                 busy[ i ] = false;
                 }
+            close_pixmap[ 0 ] = close_pixmap[ 1 ] = None;
+            close_picture[ 0 ] = close_picture[ 1 ] = None;
             }
         int width, height;
         XRenderPictFormat* format;
@@ -418,6 +424,9 @@ class OverviewRenderer
             Picture row;
             };
         QMap< int, RoundMask > round_masks; // by radius * 2
+        // the close button, normal and hovered (ARGB, made once)
+        Pixmap close_pixmap[ 2 ];
+        Picture close_picture[ 2 ];
         QFont font;
         int title_height;
         QColor highlight;
@@ -521,6 +530,10 @@ Overview::Overview( Workspace* w )
       drag_start( 0 ),
       drag_target( -1 ),
       drag_target_start( 0 ),
+      hovered( NULL ),
+      close_hover( false ),
+      pressed_close( NULL ),
+      dialog( NULL ),
       trans_start( 0 ),
       trans_duration( 0 ),
       trans_from( 0 ),
@@ -561,6 +574,7 @@ Overview::Overview( Workspace* w )
     connect( &settle_timer, SIGNAL( timeout()), SLOT( settleTimeout()));
     connect( &corner_timer, SIGNAL( timeout()), SLOT( cornerTimeout()));
     connect( &monitors_timer, SIGNAL( timeout()), SLOT( monitorsChanged()));
+    connect( &dialog_timer, SIGNAL( timeout()), SLOT( dialogTimeout()));
     checkExtensions();
 #ifdef OVERVIEW_XI2
     if( have_monitors ) // monitors arranged anew without a new screen size
@@ -1178,7 +1192,10 @@ void Overview::show()
     stat_skipped = stat_gaps = 0;
     stat_first_frame = now();
     filter = QString::null;
-    selected = pressed = dragged = NULL;
+    selected = pressed = dragged = hovered = pressed_close = NULL;
+    close_hover = false;
+    closing.clear();
+    dialog = NULL;
     pressed_button = 0;
     press_consumed = false;
     progress = 0;
@@ -1324,7 +1341,8 @@ void Overview::hide( Client* c )
     buildItems( false );
     title_alpha = 0;
     title_start = 0;
-    pressed = NULL;
+    pressed = pressed_close = hovered = NULL;
+    close_hover = false;
     if( dragged != NULL )
         { // zooms in from where it is
         placeDragged( now());
@@ -1419,6 +1437,15 @@ void Overview::cleanup()
         XFreePixmap( dpy, r->snapshot );
     if( r->filter_picture != None )
         XRenderFreePicture( dpy, r->filter_picture );
+    for( int i = 0;
+         i < 2;
+         ++i )
+        {
+        if( r->close_picture[ i ] != None )
+            XRenderFreePicture( dpy, r->close_picture[ i ] );
+        if( r->close_pixmap[ i ] != None )
+            XFreePixmap( dpy, r->close_pixmap[ i ] );
+        }
     for( QMap< int, OverviewRenderer::RoundMask >::ConstIterator it = r->round_masks.begin();
          it != r->round_masks.end();
          ++it )
@@ -1444,7 +1471,11 @@ void Overview::cleanup()
     r = NULL;
     ungrabInput();
     state = Hidden;
-    selected = pressed = dragged = NULL;
+    selected = pressed = dragged = hovered = pressed_close = NULL;
+    close_hover = false;
+    closing.clear();
+    dialog = NULL;
+    dialog_timer.stop();
     pressed_button = 0;
     press_consumed = false;
     filter = QString::null;
@@ -1697,15 +1728,7 @@ void Overview::buildItems( bool initial )
          item = items.next())
         if( !item->seen )
             {
-            if( item == selected )
-                selected = NULL;
-            if( item == pressed )
-                pressed = NULL;
-            if( item == dragged )
-                {
-                dragged = NULL;
-                press_consumed = true;
-                }
+            forgetItem( item );
             releaseContents( item );
             delete item;
             }
@@ -1718,6 +1741,9 @@ void Overview::buildItems( bool initial )
 void Overview::clientRemoved( Client* c )
     {
     redirected.remove( c->frameId()); // the frame is destroyed
+    closing.remove( c );
+    if( dialog == c )
+        dialog = NULL;
     if( state == Hidden || r == NULL )
         return;
     OverviewItem* item = NULL;
@@ -1731,18 +1757,7 @@ void Overview::clientRemoved( Client* c )
             }
     if( item == NULL )
         return;
-    if( item == selected )
-        selected = NULL;
-    if( item == pressed )
-        pressed = NULL;
-    if( item == dragged )
-        { // closed while dragged: the release does nothing
-        dragged = NULL;
-        press_consumed = true;
-        if( grabbed )
-            XChangeActivePointerGrab( dpy, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-                cursor, CurrentTime );
-        }
+    forgetItem( item );
     bool relayout = item->in_layout;
     trapErrors( dpy );
     releaseContents( item );
@@ -1756,6 +1771,79 @@ void Overview::clientRemoved( Client* c )
             startTransition( 1.0 );
         }
     requestFrame();
+    }
+
+// no pointer to the item any more (it goes away)
+void Overview::forgetItem( OverviewItem* item )
+    {
+    if( item == selected )
+        selected = NULL;
+    if( item == pressed )
+        pressed = NULL;
+    if( item == hovered )
+        {
+        hovered = NULL;
+        close_hover = false;
+        }
+    if( item == pressed_close )
+        {
+        pressed_close = NULL;
+        press_consumed = true;
+        }
+    if( item == dragged )
+        { // closed while dragged: the release does nothing
+        dragged = NULL;
+        drag_target = -1;
+        press_consumed = true;
+        if( grabbed )
+            XChangeActivePointerGrab( dpy, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                cursor, CurrentTime );
+        }
+    }
+
+void Overview::clientAdded( Client* c )
+    {
+    if( state == Hidden || closing.isEmpty())
+        return;
+    for( QValueList< Client* >::ConstIterator it = closing.begin();
+         it != closing.end();
+         ++it )
+        if( c->transientFor() == *it || Client::belongToSameApplication( c, *it ))
+            {
+            if( debug )
+                kdWarning( 1212 ) << "overview: " << c->caption() << " appeared for " << (*it)->caption() << endl;
+            dialog = c;
+            dialog_timer.start( 0, true ); // not from within Workspace::addClient()
+            return;
+            }
+    }
+
+/*
+ Closing a window from the overview (its close button, Ctrl+W, Delete) is
+ like its titlebar close button: the application may ask first (save
+ changes?).  Such a dialog, unlike in GNOME, closes the overview at once
+ and gets activated: it is usable right away, and the overview doesn't
+ show windows that appear while it is open.  The window is gone when the
+ application closes it, and the overview is laid out anew then.
+*/
+void Overview::dialogTimeout()
+    {
+    Client* c = dialog;
+    dialog = NULL;
+    if( c != NULL && ws->hasClient( c ) && ( state == Showing || state == Shown ) && dragged == NULL
+        && c->isOnCurrentDesktop())
+        hide( c );
+    }
+
+void Overview::closeItem( OverviewItem* item )
+    {
+    if( item == NULL || item->client == NULL || !ws->hasClient( item->client ) || !item->client->isCloseable())
+        return;
+    if( debug )
+        kdWarning( 1212 ) << "overview: closing " << item->caption << endl;
+    if( !closing.contains( item->client ))
+        closing.append( item->client );
+    item->client->closeWindow();
     }
 
 //****************************************
@@ -2248,6 +2336,13 @@ void Overview::renderFrame()
             if( f >= 1 )
                 item->fade_start = 0;
             }
+        if( item->close_start > 0 )
+            {
+            double f = clamp01(( t0 - item->close_start ) / FadeTime );
+            item->close_fade = mix( item->close_from, item->close_to, f );
+            if( f >= 1 )
+                item->close_start = 0;
+            }
         }
     bool more = lin < 1.0;
     if( dragged != NULL )
@@ -2260,6 +2355,7 @@ void Overview::renderFrame()
         {
         state = Shown;
         title_start = t0;
+        updateHover();
         if( debug )
             {
             double t = t0 - stat_first_frame;
@@ -2279,7 +2375,7 @@ void Overview::renderFrame()
     for( OverviewItem* item = items.first();
          item != NULL && !more;
          item = items.next())
-        if( item->fade_start > 0 )
+        if( item->fade_start > 0 || item->close_start > 0 )
             more = true;
 
 
@@ -2355,6 +2451,12 @@ void Overview::renderFrame()
             XRenderFreePicture( dpy, white );
             }
         }
+    if( title_alpha > 1.0 / 512 && dragged == NULL )
+        for( OverviewItem* item = items.first();
+             item != NULL;
+             item = items.next())
+            if( item->in_layout && item->close_fade > 1.0 / 512 )
+                drawCloseButton( item, dst );
     if( dragged != NULL )
         drawItem( dragged, dst );
     if( r->filter_picture != None && progress > 0.5 && state != Hiding && state != Finishing )
@@ -2546,6 +2648,99 @@ void Overview::drawItem( OverviewItem* item, XID dst )
         XRenderPictureAttributes pa;
         pa.clip_mask = None;
         XRenderChangePicture( dpy, dst, CPClipMask, &pa );
+        }
+    }
+
+// the center of the close button of the thumbnail
+static QPoint closeCenter( const RectF& rect )
+    {
+    return QPoint( (int) floor( rect.x + rect.w - CloseInset + 0.5 ), (int) floor( rect.y + CloseInset + 0.5 ));
+    }
+
+// a line with the width w (a thin parallelogram, anti-aliased)
+static void thickLine( Display* dpy, Picture dst, Picture src, double x1, double y1, double x2, double y2, double w )
+    {
+    double dx = x2 - x1;
+    double dy = y2 - y1;
+    double len = sqrt( dx * dx + dy * dy );
+    double nx = -dy / len * w / 2;
+    double ny = dx / len * w / 2;
+    XPointDouble pts[ 4 ] = {{ x1 + nx, y1 + ny }, { x2 + nx, y2 + ny }, { x2 - nx, y2 - ny }, { x1 - nx, y1 - ny }};
+    XRenderCompositeDoublePoly( dpy, PictOpOver, src, dst, XRenderFindStandardFormat( dpy, PictStandardA8 ),
+        0, 0, 0, 0, pts, 4, WindingRule );
+    }
+
+void Overview::drawCloseButton( OverviewItem* item, XID dst )
+    {
+    const int size = CloseSize + 2;
+    if( r->close_picture[ 0 ] == None )
+        { // made once: a dark circle with a light rim and a white X
+        for( int i = 0;
+             i < 2;
+             ++i )
+            {
+            r->close_pixmap[ i ] = XCreatePixmap( dpy, root, size, size, 32 );
+            r->close_picture[ i ] = XRenderCreatePicture( dpy, r->close_pixmap[ i ],
+                XRenderFindStandardFormat( dpy, PictStandardARGB32 ), 0, NULL );
+            XRenderColor clear = { 0, 0, 0, 0 };
+            XRenderFillRectangle( dpy, PictOpSrc, r->close_picture[ i ], &clear, 0, 0, size, size );
+            const double c = size / 2.0;
+            roundedRect( dpy, r->close_picture[ i ], RectF( 1, 1, CloseSize, CloseSize ), CloseSize / 2.0,
+                Qt::white, 0.35 );
+            roundedRect( dpy, r->close_picture[ i ], RectF( 2, 2, CloseSize - 2, CloseSize - 2 ), CloseSize / 2.0 - 1,
+                i == 0 ? QColor( 40, 40, 40 ) : QColor( 96, 96, 96 ), 1.0 );
+            Picture white = solidPicture( dpy, Qt::white, 1.0 );
+            const double arm = CloseSize * 0.18;
+            thickLine( dpy, r->close_picture[ i ], white, c - arm, c - arm, c + arm, c + arm, 2.2 );
+            thickLine( dpy, r->close_picture[ i ], white, c - arm, c + arm, c + arm, c - arm, 2.2 );
+            XRenderFreePicture( dpy, white );
+            }
+        }
+    const QPoint center = closeCenter( item->cur );
+    const double a = item->close_fade * title_alpha * item->fade;
+    if( a <= 1.0 / 512 )
+        return;
+    Picture mask = a < 1.0 ? solidPicture( dpy, Qt::black, a ) : None;
+    XRenderComposite( dpy, PictOpOver, r->close_picture[ item == hovered && close_hover ? 1 : 0 ], mask, dst,
+        0, 0, 0, 0, center.x() - size / 2, center.y() - size / 2, size, size );
+    if( mask != None )
+        XRenderFreePicture( dpy, mask );
+    }
+
+bool Overview::closeHit( const OverviewItem* item, const QPoint& p ) const
+    {
+    if( item == NULL || item->close_to < 1 )
+        return false;
+    QPoint d = p - closeCenter( RectF( item->slot ));
+    return d.x() * d.x() + d.y() * d.y() <= ( CloseSize / 2 + 2 ) * ( CloseSize / 2 + 2 );
+    }
+
+// the thumbnail under the pointer gets its close button
+void Overview::setHover( OverviewItem* item, bool on_close )
+    {
+    const double t = now();
+    if( item != hovered )
+        {
+        if( hovered != NULL )
+            {
+            hovered->close_from = hovered->close_fade;
+            hovered->close_to = 0;
+            hovered->close_start = t;
+            }
+        hovered = item;
+        if( item != NULL && item->client != NULL && ws->hasClient( item->client ) && item->client->isCloseable())
+            {
+            item->close_from = item->close_fade;
+            item->close_to = 1;
+            item->close_start = t;
+            }
+        requestFrame();
+        }
+    on_close = on_close && hovered != NULL && hovered->close_to >= 1;
+    if( on_close != close_hover )
+        {
+        close_hover = on_close;
+        requestFrame();
         }
     }
 
@@ -2817,6 +3012,18 @@ bool Overview::handleKey( XKeyEvent* e )
             else
                 hide();
             return true;
+        case XK_Delete:
+        case XK_KP_Delete:
+            closeItem( selected );
+            return true;
+        case XK_w:
+        case XK_W:
+            if( e->state & ControlMask )
+                {
+                closeItem( selected );
+                return true;
+                }
+            break;
         case XK_Return:
         case XK_KP_Enter:
             if( selected == NULL || !selected->matches )
@@ -2949,7 +3156,16 @@ bool Overview::handleButton( XButtonEvent* e )
         super_alone = false; // Super+click
         if( e->button == Button1 && pressed_button == 0 )
             {
-            pressed = itemAt( p );
+            if( hovered != NULL && dragged == NULL && closeHit( hovered, p ))
+                {
+                pressed_close = hovered;
+                pressed = NULL;
+                }
+            else
+                {
+                pressed_close = NULL;
+                pressed = itemAt( p );
+                }
             pressed_button = e->button;
             press_pos = p;
             press_consumed = false;
@@ -2962,7 +3178,15 @@ bool Overview::handleButton( XButtonEvent* e )
     if( press_consumed )
         { // the drag was cancelled, the window closed meanwhile
         press_consumed = false;
-        pressed = NULL;
+        pressed = pressed_close = NULL;
+        return true;
+        }
+    if( pressed_close != NULL )
+        { // released on the close button it was pressed on
+        OverviewItem* item = pressed_close;
+        pressed_close = NULL;
+        if( closeHit( item, p ))
+            closeItem( item );
         return true;
         }
     if( dragged != NULL )
@@ -3027,8 +3251,26 @@ void Overview::handleMotion( const QPoint& p )
             }
         }
     OverviewItem* item = itemAt( p );
+    if( hovered != NULL && closeHit( hovered, p ))
+        item = hovered; // the button sticks out of the thumbnail
+    setHover( state == Shown ? item : NULL, item != NULL && closeHit( item, p ));
     if( item != NULL )
         select( item );
+    }
+
+// the close button where the pointer is (it didn't move, the layout did)
+void Overview::updateHover()
+    {
+    Window root_return, child;
+    int rx, ry, wx, wy;
+    unsigned int mask;
+    if( dragged == NULL && state == Shown
+        && XQueryPointer( dpy, root, &root_return, &child, &rx, &ry, &wx, &wy, &mask ))
+        {
+        QPoint p( rx, ry );
+        OverviewItem* item = itemAt( p );
+        setHover( item, item != NULL && closeHit( item, p ));
+        }
     }
 
 /*
@@ -3045,6 +3287,7 @@ void Overview::startDrag( const QPoint& p )
     OverviewItem* item = pressed;
     if( item == NULL || !item->in_layout || item->client == NULL )
         return;
+    setHover( NULL, false );
     dragged = item;
     drag_pos = p;
     drag_fx = item->cur.w > 0 ? clamp01(( press_pos.x() - item->cur.x ) / item->cur.w ) : 0.5;
@@ -3134,6 +3377,7 @@ void Overview::endDrag( bool drop, const QPoint& p )
         updateTitles();
         }
     startTransition( 1.0 );
+    updateHover();
     }
 
 //****************************************
@@ -3380,6 +3624,8 @@ bool Overview::x11Event( XEvent* ) { return false; }
 void Overview::reconfigure() {}
 void Overview::setShortcut( const KShortcut& ) {}
 void Overview::clientRemoved( Client* ) {}
+void Overview::clientAdded( Client* ) {}
+void Overview::dialogTimeout() {}
 void Overview::abort() {}
 void Overview::frameTimeout() {}
 void Overview::settleTimeout() {}

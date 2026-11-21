@@ -65,6 +65,8 @@ class Overview : public QObject
         void reconfigure();
         void setShortcut( const KShortcut& cut );
         void clientRemoved( Client* c );
+        // a new window was managed (a dialog asking before closing?)
+        void clientAdded( Client* c );
         // the desktop was switched behind our back, the screen gets locked...:
         // leave at once, without animation (may be called from anything the
         // overview itself calls, e.g. activateClient())
@@ -86,6 +88,7 @@ class Overview : public QObject
         void cornerTimeout();
         void presentWatchdog();
         void monitorsChanged();
+        void dialogTimeout();
 
     private:
         enum State { Hidden, Settling, Showing, Shown, Hiding, Finishing };
@@ -139,6 +142,12 @@ class Overview : public QObject
         int dropTarget( const QPoint& p ) const;
         QRect layoutArea( int screen ) const;
         void drawItem( OverviewItem* item, XID dst );
+        void drawCloseButton( OverviewItem* item, XID dst );
+        bool closeHit( const OverviewItem* item, const QPoint& p ) const;
+        void setHover( OverviewItem* item, bool on_close );
+        void updateHover();
+        void closeItem( OverviewItem* item );
+        void forgetItem( OverviewItem* item );
         void drawBackdrop( XID dst, double dim, double t );
         bool handleDamage( XEvent* e );
         bool handlePresent( XEvent* e );
@@ -170,6 +179,15 @@ class Overview : public QObject
         double drag_start;
         int drag_target; // the monitor under the pointer (-1 none or the same)
         double drag_target_start;
+        // the close button: shown on the thumbnail under the pointer
+        OverviewItem* hovered;
+        bool close_hover; // the pointer on the button
+        OverviewItem* pressed_close;
+        // windows asked to close: a dialog of theirs (save changes?) closes
+        // the overview and gets activated
+        QValueList< Client* > closing;
+        Client* dialog;
+        QTimer dialog_timer;
         QString filter;
 
         // the zoom transition: progress 0 = real screen, 1 = overview
