@@ -7,24 +7,6 @@
 # because we still need to do some cleanup.
 trap 'echo GOT SIGHUP' HUP
 
-# Check if a KDE session already is running
-if kcheckrunning >/dev/null 2>&1; then
-	echo "KDE seems to be already running on this display."
-	xmessage -geometry 500x100 "KDE seems to be already running on this display." > /dev/null 2>/dev/null
-	exit 1
-fi
-
-# Set the background to plain grey.
-# The standard X background is nasty, causing moire effects and exploding
-# people's heads. We use colours from the standard KDE palette for those with
-# palettised displays.
-if test -z "$XDM_MANAGED" || echo "$XDM_MANAGED" | grep ",auto" > /dev/null; then
-  xsetroot -solid "#000000"
-fi
-
-# we have to unset this for Darwin since it will screw up KDE's dynamic-loading
-unset DYLD_FORCE_FLAT_NAMESPACE
-
 # in case we have been started with full pathname spec without being in PATH
 bindir=`echo "$0" | sed -n 's,^\(/.*\)/[^/][^/]*$,\1,p'`
 if [ -n "$bindir" ]; then
@@ -33,6 +15,23 @@ if [ -n "$bindir" ]; then
     *) PATH=$bindir:$PATH; export PATH;;
   esac
 fi
+
+# Check if a KDE session already is running
+if kcheckrunning >/dev/null 2>&1; then
+	echo "KDE seems to be already running on this display."
+	xmessage -geometry 500x100 "KDE seems to be already running on this display." > /dev/null 2>/dev/null
+	exit 1
+fi
+
+# Set the background to plain black.
+# The standard X background is nasty, causing moire effects and exploding
+# people's heads.
+if test -z "$XDM_MANAGED" || echo "$XDM_MANAGED" | grep ",auto" > /dev/null; then
+  kstartupx --black-root
+fi
+
+# we have to unset this for Darwin since it will screw up KDE's dynamic-loading
+unset DYLD_FORCE_FLAT_NAMESPACE
 
 # Boot sequence:
 #
@@ -190,7 +189,7 @@ usr_fdir=$HOME/.fonts
 # especially necessary on slow machines, where starting KDE takes one or two
 # minutes until anything appears on the screen.
 #
-xsetroot -cursor_name left_ptr
+kstartupx --root-cursor
 
 # Get Ghostscript to look into user's KDE fonts dir for additional Fontmap
 if test -n "$GS_LIB" ; then
@@ -247,6 +246,7 @@ fi
 #   For KDE_FULL_SESSION property:
 #     xprop -root | grep "^KDE_FULL_SESSION" >/dev/null 2>/dev/null
 #     if test $? -eq 0; then ... whatever
+#   (startkde itself sets and removes the property with kstartupx)
 #
 # Additionally there is (since KDE 3.5.7) $KDE_SESSION_UID with the uid
 # of the user running the KDE session. It should be rarely needed (e.g.
@@ -254,7 +254,7 @@ fi
 #
 KDE_FULL_SESSION=true
 export KDE_FULL_SESSION
-xprop -root -f KDE_FULL_SESSION 8t -set KDE_FULL_SESSION true
+kstartupx --set-full-session
 KDE_SESSION_UID=$UID
 export KDE_SESSION_UID
 
@@ -317,7 +317,7 @@ for prefix in `echo "$exepath" | sed -n -e 's,/bin[^/]*/,/shutdown/,p'`; do
 done
 
 unset KDE_FULL_SESSION
-xprop -root -remove KDE_FULL_SESSION
+kstartupx --remove-full-session
 unset KDE_SESSION_UID
 
 echo 'startkde: Done.'  1>&2
