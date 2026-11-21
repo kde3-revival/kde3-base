@@ -81,6 +81,10 @@ class Effects : public QObject
         // c is being closed or withdrawn, its frame still exists
         void windowClosing( Client* c );
         void clientRemoved( Client* c );
+        // the contents kept for the restore of the minimized c (the overview
+        // shows them); the pixmap stays ours and may be freed later: make a
+        // Picture of it at once (it keeps the contents), don't free it
+        bool retainedContents( Client* c, Pixmap* pixmap, QSize* size, int* depth, Visual** visual ) const;
 
     private slots:
         void frameTimeout();

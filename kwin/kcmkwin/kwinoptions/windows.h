@@ -244,6 +244,7 @@ private:
   KIntNumInput* overviewCornerDelay;
   KIntNumInput* overviewAnimationTime;
   QCheckBox* overviewSuperKey;
+  QCheckBox* overviewShowMinimized;
 };
 
 class KProcess;

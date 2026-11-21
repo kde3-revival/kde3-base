@@ -311,6 +311,7 @@ class Options : public KDecorationOptions
         bool overviewKeepRedirected;
         bool overviewSuperKey; // Super pressed and released alone toggles it
         bool overviewHotCornerRipple; // ripples from the corner when it fires
+        bool overviewShowMinimized; // minimized windows in the overview too
 
         // window animations ([Effects])
         bool effectsEnabled; // off: no window animations at all (reduced motion)

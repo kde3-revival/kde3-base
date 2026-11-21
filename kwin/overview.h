@@ -32,12 +32,14 @@ class OverviewRenderer;
 namespace Compositing
 {
 class Presenter;
+struct RectF;
 }
 
 /*
  The window overview: all windows of the current desktop zoom out into
  a grid (per screen), the user picks one with the mouse or the keyboard
- and the windows zoom back in, the picked one on top.
+ and the windows zoom back in, the picked one on top.  Minimized windows
+ (ShowMinimized) fade in among them, picking one restores it.
 
  The overview is drawn into the Composite overlay window from the named
  pixmaps of the (temporarily, automatically) redirected top-level
@@ -119,8 +121,11 @@ class Overview : public QObject
 
         void buildItems( bool initial );
         OverviewItem* createItem( Window w, const XWindowAttributes& attr );
+        OverviewItem* createMinimizedItem( Client* c );
+        void makeLive( OverviewItem* item );
         bool bindContents( OverviewItem* item, bool can_copy );
         void releaseContents( OverviewItem* item );
+        void releasePictures( OverviewItem* item );
         void clearItems();
         void computeLayout();
         void layoutScreen( const QRect& area, QPtrList< OverviewItem >& list );
@@ -152,6 +157,8 @@ class Overview : public QObject
         QRect layoutArea( int screen ) const;
         void drawItem( OverviewItem* item, XID dst );
         void drawCloseButton( OverviewItem* item, XID dst );
+        void drawMinimizedBadge( OverviewItem* item, XID dst );
+        void drawPlaceholder( OverviewItem* item, XID dst, const Compositing::RectF& rect, double alpha );
         bool closeHit( const OverviewItem* item, const QPoint& p ) const;
         void setHover( OverviewItem* item, bool on_close );
         void updateHover();
@@ -200,6 +207,9 @@ class Overview : public QObject
         // windows asked to close: a dialog of theirs (save changes?) closes
         // the overview and gets activated
         QValueList< Client* > closing;
+        // the minimized windows when the zoom-in started: those restored
+        // along with the picked one are shown when they have painted
+        QValueList< Client* > was_minimized;
         Client* dialog;
         QTimer dialog_timer;
         QString filter;

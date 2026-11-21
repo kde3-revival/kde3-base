@@ -58,6 +58,9 @@
   <entry key="SuperKey" type="Bool" >
    <default>true</default>
   </entry>
+  <entry key="ShowMinimized" type="Bool" >
+   <default>true</default>
+  </entry>
  </group>
  <group name="Style" >
   <entry key="ButtonsOnLeft" type="String" />

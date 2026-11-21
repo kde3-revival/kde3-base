@@ -45,6 +45,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <kstringhandler.h>
 #include <kkeynative.h>
 #include <kdebug.h>
+#include <kwin.h>
 
 #include "workspace.h"
 #include "client.h"
@@ -135,6 +136,17 @@ const double RippleSize = 52.0;
 const struct { double delay, duration, scale0, scale1, opacity; } Ripples[ 3 ] =
     {{ 0, 500, 0.25, 1.5, 1.0 }, { 30, 600, 0.0, 1.25, 0.7 }, { 210, 600, 0.0, 1.0, 0.3 }};
 const double RippleTime = 810.0;
+// minimized windows: darkened by this much, at rest this much smaller
+// (they fade in there while the others zoom out), the icon of those
+// without contents at most this large
+const double MinimizedDim = 0.30;
+const double MinimizedRest = 0.85;
+const int PlaceholderIcon = 96;
+// a window restored from the overview shows its live contents after it
+// has painted and then stayed quiet for this long; the zoom-in waits for
+// that at most this long after its end (else the kept ones stay)
+const double RestoreQuiet = 40.0;
+const double RestoreWait = 200.0;
 
 // the mip level that is downscaled by at most a half
 int mipLevel( double scale )
@@ -233,7 +245,9 @@ class OverviewItem
               in_layout( false ), screen( 0 ), matches( true ),
               fade_from( 1 ), fade_to( 1 ), fade_start( 0 ), fade( 1 ),
               title_picture( None ), icon_pixmap( None ), icon_picture( None ), seen( true ),
-              snapshot( false ), close_from( 0 ), close_to( 0 ), close_start( 0 ), close_fade( 0 )
+              snapshot( false ), close_from( 0 ), close_to( 0 ), close_start( 0 ), close_fade( 0 ),
+              minimized( false ), kept( false ), placeholder( false ), restored( false ),
+              pending_live( false ), painted( 0 )
             {
             for( int i = 0;
                  i < MipLevels;
@@ -275,6 +289,20 @@ class OverviewItem
         bool seen;
         bool snapshot; // a copy of the screen, not redirected
         double close_from, close_to, close_start, close_fade; // the close button fading
+        // a minimized window (not on the screen, its frame unmapped): shown
+        // with the contents the window animations kept when it was
+        // minimized (kept: mip level 0 is a picture of their pixmap, which
+        // isn't ours) or as a card with its icon (placeholder)
+        bool minimized;
+        bool kept;
+        bool placeholder;
+        // was minimized, restored while the overview zooms in
+        bool restored;
+        // waits for its live contents: shows the kept ones (or the card, or
+        // nothing for one mapped meanwhile) until it has painted; painted is
+        // the time of the last damage then
+        bool pending_live;
+        double painted;
     };
 
 class OverviewRenderer
@@ -286,6 +314,8 @@ class OverviewRenderer
             {
             close_pixmap[ 0 ] = close_pixmap[ 1 ] = None;
             close_picture[ 0 ] = close_picture[ 1 ] = None;
+            badge_pixmap = None;
+            badge_picture = None;
             }
         int width, height;
         XRenderPictFormat* format;
@@ -313,10 +343,17 @@ class OverviewRenderer
         // the close button, normal and hovered (ARGB, made once)
         Pixmap close_pixmap[ 2 ];
         Picture close_picture[ 2 ];
+        // the badge of minimized windows (ARGB, made once)
+        Pixmap badge_pixmap;
+        Picture badge_picture;
         QFont font;
         int title_height;
         QColor highlight;
     };
+
+static RectF restRect( const OverviewItem* item );
+static void drawIcon( Display* dpy, OverviewItem* item, Picture dst, const RectF& rect, double max_size,
+    double fraction, double alpha );
 
 
 /*
@@ -1177,6 +1214,10 @@ void Overview::show()
         { // reverse a running zoom-in (the activated window stays activated)
         if( state == Finishing || r == NULL )
             return; // too late, the windows are being given back
+        for( OverviewItem* item = items.first();
+             item != NULL;
+             item = items.next())
+            item->restored = false; // a normal window now
         state = Showing;
         computeLayout();
         updateTitles();
@@ -1277,13 +1318,13 @@ void Overview::show()
     computeLayout();
     updateTitles();
 
-    // frame 0: everything where it is
+    // frame 0: everything where it is (the minimized windows invisible)
     trans_from = trans_to = progress = 0;
     trans_duration = 0;
     for( OverviewItem* item = items.first();
          item != NULL;
          item = items.next())
-        item->from = item->to = item->cur = RectF( item->geom );
+        item->from = item->to = item->cur = restRect( item );
     state = Settling;
     renderFrame();
     if( own_overlay )
@@ -1313,7 +1354,7 @@ void Overview::settleTimeout()
                  item != NULL;
                  item = items.next())
                 if( item->in_layout && item->mip_picture[ 0 ] != None )
-                    updateMips( item, mipLevel( double( item->slot.width()) / item->geom.width()));
+                    updateMips( item, mipLevel( double( item->slot.width()) / item->mip_w[ 0 ] ));
             state = Showing;
             stat_first_frame = t = now();
             frame_count = 0;
@@ -1339,6 +1380,14 @@ void Overview::hide( Client* c )
     if( state == Hidden || state == Hiding || state == Finishing )
         return;
     settle_timer.stop();
+    // (restored along with c, see buildItems())
+    was_minimized.clear();
+    const ClientList& clients = ws->stackingOrder();
+    for( ClientList::ConstIterator it = clients.begin();
+         it != clients.end();
+         ++it )
+        if( (*it)->isMinimized())
+            was_minimized.append( *it );
     if( c != NULL && ws->hasClient( c ))
         {
         if( !c->isOnCurrentDesktop())
@@ -1449,6 +1498,10 @@ void Overview::cleanup()
         if( r->close_pixmap[ i ] != None )
             XFreePixmap( dpy, r->close_pixmap[ i ] );
         }
+    if( r->badge_picture != None )
+        XRenderFreePicture( dpy, r->badge_picture );
+    if( r->badge_pixmap != None )
+        XFreePixmap( dpy, r->badge_pixmap );
     for( QMap< int, OverviewRenderer::RoundMask >::ConstIterator it = r->round_masks.begin();
          it != r->round_masks.end();
          ++it )
@@ -1477,6 +1530,7 @@ void Overview::cleanup()
     selected = pressed = dragged = hovered = pressed_close = NULL;
     close_hover = false;
     closing.clear();
+    was_minimized.clear();
     dialog = NULL;
     dialog_timer.stop();
     pressed_button = 0;
@@ -1506,6 +1560,58 @@ static bool inOverview( const Client* c )
     {
     return c->isOnCurrentDesktop() && c->isShown( true ) && !c->isSpecialWindow()
         && ( c->isNormalWindow() || c->isDialog());
+    }
+
+/*
+ The minimized windows shown (ShowMinimized): those the taskbar shows, i.e.
+ not skipping the taskbar or the pager; a dialog by the rule of its main
+ window, and not when that is minimized too (it is restored along with
+ it, like the taskbar shows only the main window).
+*/
+static bool minimizedInOverview( const Client* c )
+    {
+    if( !c->isMinimized() || !c->isOnCurrentDesktop() || c->isSpecialWindow() || c->isTopMenu()
+        || !( c->isNormalWindow() || c->isDialog()))
+        return false;
+    if( c->isTransient())
+        {
+        ClientList mains = c->mainClients();
+        if( !mains.isEmpty())
+            {
+            bool shown = false;
+            for( ClientList::ConstIterator it = mains.begin();
+                 it != mains.end();
+                 ++it )
+                {
+                if( (*it)->isMinimized())
+                    return false;
+                if( !(*it)->skipTaskbar() && !(*it)->skipPager())
+                    shown = true;
+                }
+            return shown;
+            }
+        }
+    return !c->skipTaskbar() && !c->skipPager();
+    }
+
+// where an item is at the real screen (progress 0): a minimized window
+// smaller in its slot (invisible there)
+static RectF restRect( const OverviewItem* item )
+    {
+    if( !item->minimized )
+        return RectF( item->geom );
+    const RectF s( item->slot );
+    return RectF( s.cx() - s.w * MinimizedRest / 2, s.cy() - s.h * MinimizedRest / 2,
+        s.w * MinimizedRest, s.h * MinimizedRest );
+    }
+
+// a large icon for the card of a minimized window without contents
+static QPixmap largeIcon( Client* c )
+    {
+    QPixmap pm = KWin::icon( c->window(), PlaceholderIcon, PlaceholderIcon, true, KWin::NETWM | KWin::WMHints );
+    if( pm.isNull())
+        pm = c->icon();
+    return pm;
     }
 
 OverviewItem* Overview::createItem( Window w, const XWindowAttributes& attr )
@@ -1547,12 +1653,89 @@ OverviewItem* Overview::createItem( Window w, const XWindowAttributes& attr )
     return item;
     }
 
+/*
+ A minimized window: its frame is not mapped (and isn't mapped for this),
+ its contents are those the window animations kept when it was minimized
+ (Effects::retainedContents()), else it is a card with its icon (minimized
+ before KWin started, the kept contents dropped for the memory limit, the
+ animations off).  Its size is that of the frame, i.e. the last one.
+*/
+OverviewItem* Overview::createMinimizedItem( Client* c )
+    {
+    XWindowAttributes attr;
+    if( !XGetWindowAttributes( dpy, c->frameId(), &attr ) || attr.width <= 0 || attr.height <= 0 )
+        return NULL;
+    OverviewItem* item = createItem( c->frameId(), attr );
+    item->client = c;
+    item->kind = OverviewItem::Managed;
+    item->in_layout = true;
+    item->minimized = true;
+#ifdef OVERVIEW_COMPOSITE
+    Pixmap pixmap;
+    QSize size;
+    int depth;
+    Visual* visual;
+    if( composite && ws->windowEffects() != NULL
+        && ws->windowEffects()->retainedContents( c, &pixmap, &size, &depth, &visual ))
+        {
+        XRenderPictFormat* format = XRenderFindVisualFormat( dpy, visual );
+        if( format != NULL )
+            { // (the picture keeps the contents when Effects frees the pixmap)
+            item->format = format;
+            item->depth = depth;
+            item->alpha_format = format->type == PictTypeDirect && format->direct.alphaMask != 0;
+            item->mip_picture[ 0 ] = XRenderCreatePicture( dpy, pixmap, format, 0, NULL );
+            item->mip_w[ 0 ] = size.width();
+            item->mip_h[ 0 ] = size.height();
+            item->kept = true;
+            }
+        }
+#endif
+    if( composite && !item->kept )
+        {
+        item->placeholder = true;
+        QPixmap icon = largeIcon( c );
+        item->icon_picture = argbPicture( dpy, icon, &item->icon_pixmap );
+        item->icon_w = icon.width();
+        item->icon_h = icon.height();
+        if( item->icon_picture != None )
+            XRenderSetPictureFilter( dpy, item->icon_picture, FilterBilinear, NULL, 0 );
+        }
+    if( debug )
+        kdWarning( 1212 ) << "overview: minimized " << c->caption() << ( item->kept ? " (kept contents)" : "" ) << endl;
+    return item;
+    }
+
+// a window restored meanwhile has painted: its live contents from now on
+void Overview::makeLive( OverviewItem* item )
+    {
+    item->pending_live = false;
+    if( !item->kept && !item->placeholder )
+        return; // (they are already, it was waited for them to be painted)
+    if( debug )
+        kdWarning( 1212 ) << "overview: live contents of " << item->caption << endl;
+    trapErrors( dpy );
+    releasePictures( item );
+    item->kept = item->placeholder = false;
+    XWindowAttributes attr;
+    if( XGetWindowAttributes( dpy, item->id, &attr ) && attr.map_state == IsViewable )
+        {
+        item->depth = attr.depth;
+        item->format = XRenderFindVisualFormat( dpy, attr.visual );
+        item->alpha_format = item->format != NULL && item->format->type == PictTypeDirect
+            && item->format->direct.alphaMask != 0;
+        bindContents( item, false );
+        }
+    untrapErrors( dpy );
+    }
+
 // the contents of the window: its redirected pixmap, or a copy of the screen
 // (only while the screen still shows the real windows); false when neither
 bool Overview::bindContents( OverviewItem* item, bool can_copy )
     {
 #ifdef OVERVIEW_COMPOSITE
-    if( !composite || item->format == NULL || item->mip_picture[ 0 ] != None )
+    if( !composite || item->format == NULL || item->mip_picture[ 0 ] != None
+        || item->kept || item->placeholder )
         return true;
     // redirected by us, by the temporary redirection or by a compositing manager
     bool named = false;
@@ -1608,20 +1791,7 @@ bool Overview::bindContents( OverviewItem* item, bool can_copy )
 
 void Overview::releaseContents( OverviewItem* item )
     {
-    for( int i = 0;
-         i < MipLevels;
-         ++i )
-        {
-        if( item->mip_picture[ i ] != None )
-            XRenderFreePicture( dpy, item->mip_picture[ i ] );
-        if( item->mip_pixmap[ i ] != None )
-            XFreePixmap( dpy, item->mip_pixmap[ i ] );
-        item->mip_picture[ i ] = None;
-        item->mip_pixmap[ i ] = None;
-        }
-    if( item->pixmap != None )
-        XFreePixmap( dpy, item->pixmap );
-    item->pixmap = None;
+    releasePictures( item );
 #ifdef OVERVIEW_COMPOSITE
     if( item->damage != None )
         XDamageDestroy( dpy, item->damage );
@@ -1636,6 +1806,32 @@ void Overview::releaseContents( OverviewItem* item )
     if( item->icon_pixmap != None )
         XFreePixmap( dpy, item->icon_pixmap );
     item->icon_pixmap = None;
+    }
+
+// the contents (a kept pixmap of the window animations is not ours)
+void Overview::releasePictures( OverviewItem* item )
+    {
+    for( int i = 0;
+         i < MipLevels;
+         ++i )
+        {
+        if( item->mip_picture[ i ] != None )
+            XRenderFreePicture( dpy, item->mip_picture[ i ] );
+        if( item->mip_pixmap[ i ] != None )
+            XFreePixmap( dpy, item->mip_pixmap[ i ] );
+        item->mip_picture[ i ] = None;
+        item->mip_pixmap[ i ] = None;
+        }
+    if( item->pixmap != None )
+        XFreePixmap( dpy, item->pixmap );
+    item->pixmap = None;
+    for( int i = 0;
+         i < MipLevels;
+         ++i )
+        {
+        item->mip_dirty[ i ] = true;
+        item->mip_w[ i ] = item->mip_h[ i ] = 0;
+        }
     }
 
 void Overview::clearItems()
@@ -1682,10 +1878,24 @@ void Overview::buildItems( bool initial )
                     break;
                     }
             const bool existing = item != NULL;
+            if( item != NULL && item->minimized )
+                { // restored (picked in the overview, or by itself): zooms in
+                  // to its place with the kept contents until it has painted
+                item->minimized = false;
+                item->restored = true;
+                item->pending_live = true;
+                item->painted = 0;
+#ifdef OVERVIEW_COMPOSITE
+                if( composite && item->damage == None )
+                    item->damage = XDamageCreate( dpy, item->id, XDamageReportNonEmpty );
+#endif
+                if( debug )
+                    kdWarning( 1212 ) << "overview: restored " << item->caption << endl;
+                }
             if( item != NULL )
                 {
                 QRect geom( attr.x, attr.y, attr.width + 2 * attr.border_width, attr.height + 2 * attr.border_width );
-                if( geom.size() != item->geom.size() && !item->snapshot )
+                if( geom.size() != item->geom.size() && !item->snapshot && !item->kept && !item->placeholder )
                     { // the pixmap is stale after a resize
                     releaseContents( item );
                     OverviewItem* fresh = createItem( w, attr );
@@ -1712,6 +1922,9 @@ void Overview::buildItems( bool initial )
                     item->kind = OverviewItem::Other;
                 item->in_layout = item->kind == OverviewItem::Managed;
                 item->from = item->to = item->cur = RectF( item->geom );
+                // restored along with the picked window: not drawn until painted
+                if( !initial && item->client != NULL && was_minimized.contains( item->client ))
+                    item->pending_live = true;
                 }
             // the screen shows the overview after the first frame: no copies then
             if( !bindContents( item, initial ))
@@ -1729,6 +1942,46 @@ void Overview::buildItems( bool initial )
             }
         if( children != NULL )
             XFree( children );
+        }
+    // the minimized windows (not mapped), above the desktop below the others
+    QPtrList< OverviewItem > minimized;
+    if( initial && options->overviewShowMinimized )
+        {
+        const ClientList& clients = ws->stackingOrder();
+        for( ClientList::ConstIterator it = clients.begin();
+             it != clients.end();
+             ++it )
+            if( minimizedInOverview( *it ))
+                {
+                OverviewItem* item = createMinimizedItem( *it );
+                if( item != NULL )
+                    minimized.append( item );
+                }
+        }
+    else
+        {
+        for( OverviewItem* item = items.first();
+             item != NULL;
+             item = items.next())
+            if( item->minimized && !item->seen && item->client != NULL && ws->hasClient( item->client )
+                && item->client->isMinimized() && item->client->isOnCurrentDesktop())
+                {
+                item->geom = item->client->geometry(); // (moved to another monitor)
+                item->seen = true;
+                minimized.append( item );
+                }
+        }
+    if( !minimized.isEmpty())
+        {
+        int pos = 0;
+        for( OverviewItem* item = list.first();
+             item != NULL && item->kind == OverviewItem::Desktop;
+             item = list.next())
+            ++pos;
+        for( OverviewItem* item = minimized.first();
+             item != NULL;
+             item = minimized.next())
+            list.insert( pos++, item );
         }
     // windows that are gone
     items.setAutoDelete( false );
@@ -2222,7 +2475,7 @@ void Overview::startTransition( double target )
         if( item->in_layout && target > 0.5 )
             item->to = RectF( item->slot );
         else
-            item->to = RectF( item->geom );
+            item->to = restRect( item );
         }
     requestFrame();
     }
@@ -2338,10 +2591,24 @@ void Overview::renderFrame()
     double lin = trans_duration > 0 ? clamp01(( t0 - trans_start ) / trans_duration ) : 1.0;
     double e = easeOutQuad( lin );
     progress = mix( trans_from, trans_to, e );
+    // the restored windows that have painted (and stopped, or the zoom-in
+    // can't wait longer) show their live contents
+    const double restore_deadline = trans_start + trans_duration + RestoreWait;
+    bool pending = false;
+    bool pending_painted = false;
     for( OverviewItem* item = items.first();
          item != NULL;
          item = items.next())
         {
+        if( item->pending_live && item->painted > 0 && ( t_start - item->painted >= RestoreQuiet
+            || state != Hiding || t0 >= restore_deadline ))
+            makeLive( item );
+        if( item->pending_live )
+            {
+            pending = true;
+            if( item->painted > 0 )
+                pending_painted = true; // (live soon: a frame then)
+            }
         item->cur = mix( item->from, item->to, e );
         if( item->fade_start > 0 )
             {
@@ -2359,6 +2626,9 @@ void Overview::renderFrame()
             }
         }
     bool more = lin < 1.0;
+    // the last frame of the zoom-in shows the restored windows painted
+    if( pending && ( pending_painted || t0 < restore_deadline ) && state == Hiding )
+        more = true;
     if( dragged != NULL )
         {
         placeDragged( t0 );
@@ -2465,6 +2735,12 @@ void Overview::renderFrame()
             XRenderFreePicture( dpy, white );
             }
         }
+    if( title_alpha > 1.0 / 512 )
+        for( OverviewItem* item = items.first();
+             item != NULL;
+             item = items.next())
+            if( item->in_layout && item->minimized && item != dragged )
+                drawMinimizedBadge( item, dst );
     if( title_alpha > 1.0 / 512 && dragged == NULL )
         for( OverviewItem* item = items.first();
              item != NULL;
@@ -2568,6 +2844,8 @@ void Overview::drawItem( OverviewItem* item, XID dst )
                 {
                 rect = item->cur;
                 alpha = item->fade;
+                if( item->minimized )
+                    alpha *= clamp01( progress ); // fades in at its place
                 scaled = true;
                 }
             else
@@ -2576,6 +2854,11 @@ void Overview::drawItem( OverviewItem* item, XID dst )
         }
     if( alpha <= 1.0 / 512 )
         return;
+    if( item->pending_live && !item->kept && !item->placeholder )
+        return; // mapped meanwhile (restored along), not painted yet
+    // minimized windows darkened (until restored at the end of the zoom-in)
+    const double dim = item->minimized || ( item->restored && state == Hiding )
+        ? MinimizedDim * clamp01( progress ) : 0.0;
     if( scaled && progress > 0.001 )
         { // a soft shadow and the selection (not below an opaque window)
         double a = QMIN( 1.0, progress ) * alpha;
@@ -2591,25 +2874,19 @@ void Overview::drawItem( OverviewItem* item, XID dst )
         { // icons on tiles
         if( !item->in_layout )
             return;
-        fillRounded( dpy, r, dst, rect, 8, QColor( 64, 64, 64 ), 0.95 * alpha );
-        if( item->icon_picture != None && item->icon_w > 0 )
-            {
-            double size = QMIN( 64.0, QMIN( rect.w, rect.h ) * 0.6 );
-            double s = size / QMAX( item->icon_w, item->icon_h );
-            double iw = item->icon_w * s;
-            double ih = item->icon_h * s;
-            int x = (int) floor( rect.cx() - iw / 2 );
-            int y = (int) floor( rect.cy() - ih / 2 );
-            setTransform( dpy, item->icon_picture, 1 / s, 1 / s, 0, 0 );
-            XRenderComposite( dpy, PictOpOver, item->icon_picture, None, dst, 0, 0, 0, 0, x, y,
-                (int) ceil( iw ), (int) ceil( ih ));
-            }
+        fillRounded( dpy, r, dst, rect, 8, QColor( 64, 64, 64 ).dark( 100 + int( dim * 100 )), 0.95 * alpha );
+        drawIcon( dpy, item, dst, rect, 64.0, 0.6, alpha );
+        return;
+        }
+    if( item->placeholder )
+        {
+        drawPlaceholder( item, dst, rect, alpha );
         return;
         }
     if( item->mip_picture[ 0 ] == None )
         return;
     // the source: the mip level that is downscaled at most by half
-    int level = mipLevel( rect.w / item->geom.width());
+    int level = mipLevel( rect.w / item->mip_w[ 0 ] );
     updateMips( item, level );
     Picture src = item->mip_picture[ level ];
     const double sw = item->mip_w[ level ];
@@ -2664,12 +2941,80 @@ void Overview::drawItem( OverviewItem* item, XID dst )
     XRenderComposite( dpy, op, src, mask, dst, 0, 0, 0, 0, dx, dy, dw, dh );
     if( mask != None )
         XRenderFreePicture( dpy, mask );
+    if( dim * alpha > 1.0 / 512 )
+        { // (inside the shape; the edge pixels a little darker while moving)
+        XRenderColor c = renderColor( Qt::black, dim * alpha );
+        XRenderFillRectangle( dpy, PictOpOver, dst, &c, dx, dy, dw, dh );
+        }
     if( item->shaped )
         {
         XRenderPictureAttributes pa;
         pa.clip_mask = None;
         XRenderChangePicture( dpy, dst, CPClipMask, &pa );
         }
+    }
+
+// the icon of the item centered in rect, at most max_size large and
+// fraction of the rectangle
+static void drawIcon( Display* dpy, OverviewItem* item, Picture dst, const RectF& rect, double max_size,
+    double fraction, double alpha )
+    {
+    if( item->icon_picture == None || item->icon_w <= 0 || item->icon_h <= 0 )
+        return;
+    double size = QMIN( max_size, QMIN( rect.w, rect.h ) * fraction );
+    if( size < 1 )
+        return;
+    double s = size / QMAX( item->icon_w, item->icon_h );
+    double iw = item->icon_w * s;
+    double ih = item->icon_h * s;
+    int x = (int) floor( rect.cx() - iw / 2 );
+    int y = (int) floor( rect.cy() - ih / 2 );
+    setTransform( dpy, item->icon_picture, 1 / s, 1 / s, 0, 0 );
+    Picture mask = alpha < 1.0 ? solidPicture( dpy, Qt::black, alpha ) : None;
+    XRenderComposite( dpy, PictOpOver, item->icon_picture, mask, dst, 0, 0, 0, 0, x, y,
+        (int) ceil( iw ), (int) ceil( ih ));
+    if( mask != None )
+        XRenderFreePicture( dpy, mask );
+    }
+
+// a minimized window without contents: a card with its icon (its title
+// below it like for all others)
+void Overview::drawPlaceholder( OverviewItem* item, XID dst, const RectF& rect, double alpha )
+    {
+    fillRounded( dpy, r, dst, rect, 10, QColor( 58, 58, 62 ), alpha );
+    fillRounded( dpy, r, dst, RectF( rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2 ), 9,
+        QColor( 255, 255, 255 ), 0.04 * alpha );
+    drawIcon( dpy, item, dst, rect, PlaceholderIcon, 0.45, alpha );
+    }
+
+// the badge of a minimized window: in the top left corner, like the close
+// button in the top right one
+void Overview::drawMinimizedBadge( OverviewItem* item, XID dst )
+    {
+    const int size = CloseSize + 2;
+    if( r->badge_picture == None )
+        { // made once: a dark circle with a light rim and a white bar
+        r->badge_pixmap = XCreatePixmap( dpy, root, size, size, 32 );
+        r->badge_picture = XRenderCreatePicture( dpy, r->badge_pixmap,
+            XRenderFindStandardFormat( dpy, PictStandardARGB32 ), 0, NULL );
+        XRenderColor clear = { 0, 0, 0, 0 };
+        XRenderFillRectangle( dpy, PictOpSrc, r->badge_picture, &clear, 0, 0, size, size );
+        roundedRect( dpy, r->badge_picture, RectF( 1, 1, CloseSize, CloseSize ), CloseSize / 2.0, Qt::white, 0.35 );
+        roundedRect( dpy, r->badge_picture, RectF( 2, 2, CloseSize - 2, CloseSize - 2 ), CloseSize / 2.0 - 1,
+            QColor( 40, 40, 40 ), 1.0 );
+        const double c = size / 2.0;
+        const double arm = CloseSize * 0.2;
+        roundedRect( dpy, r->badge_picture, RectF( c - arm, c + arm * 0.35, 2 * arm, 2.4 ), 1.2, Qt::white, 1.0 );
+        }
+    const double a = title_alpha * item->fade;
+    if( a <= 1.0 / 512 )
+        return;
+    const QPoint center( (int) floor( item->cur.x + CloseInset + 0.5 ), (int) floor( item->cur.y + CloseInset + 0.5 ));
+    Picture mask = a < 1.0 ? solidPicture( dpy, Qt::black, a ) : None;
+    XRenderComposite( dpy, PictOpOver, r->badge_picture, mask, dst,
+        0, 0, 0, 0, center.x() - size / 2, center.y() - size / 2, size, size );
+    if( mask != None )
+        XRenderFreePicture( dpy, mask );
     }
 
 // the center of the close button of the thumbnail
@@ -2824,6 +3169,8 @@ bool Overview::handleDamage( XEvent* e )
         if( item->damage == de->damage )
             {
             XDamageSubtract( dpy, de->damage, None, None );
+            if( item->pending_live )
+                item->painted = now();
             for( int i = 1;
                  i < MipLevels;
                  ++i )

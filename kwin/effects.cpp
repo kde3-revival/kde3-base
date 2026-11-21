@@ -640,6 +640,18 @@ void Effects::retain( Client* c, Pixmap pixmap, const QSize& size, int depth, Vi
         }
     }
 
+bool Effects::retainedContents( Client* c, Pixmap* pixmap, QSize* size, int* depth, Visual** visual ) const
+    {
+    QMap< Client*, Retained >::ConstIterator it = retained.find( c );
+    if( it == retained.end())
+        return false;
+    *pixmap = (*it).pixmap;
+    *size = (*it).size;
+    *depth = (*it).depth;
+    *visual = (*it).visual;
+    return true;
+    }
+
 void Effects::dropRetained( Client* c )
     {
     QMap< Client*, Retained >::Iterator it = retained.find( c );
@@ -2323,6 +2335,7 @@ void Effects::maximizeEnd( Client* ) {}
 void Effects::windowOpening( Client* ) {}
 void Effects::windowClosing( Client* ) {}
 void Effects::clientRemoved( Client* ) {}
+bool Effects::retainedContents( Client*, Pixmap*, QSize*, int*, Visual** ) const { return false; }
 void Effects::frameTimeout() {}
 void Effects::pollTimeout() {}
 void Effects::presentCompleted( bool, int ) {}

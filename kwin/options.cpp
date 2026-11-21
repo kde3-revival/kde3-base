@@ -199,6 +199,7 @@ unsigned long Options::updateSettings()
     overviewKeepRedirected = config->readBoolEntry( "KeepRedirected", true );
     overviewSuperKey = config->readBoolEntry( "SuperKey", true );
     overviewHotCornerRipple = config->readBoolEntry( "HotCornerRipple", true );
+    overviewShowMinimized = config->readBoolEntry( "ShowMinimized", true );
 
     // the window animations; the old minimize animation's keys when not set
     config->setGroup( "Effects" );
