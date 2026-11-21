@@ -96,14 +96,21 @@ VolumeApplet::~VolumeApplet()
 {
 }
 
+// As wide (or high, on a vertical panel) as the icon with a small margin,
+// like a system tray icon, not a square as large as the panel.
+static int appletExtent(int panelSize)
+{
+    return QMIN(panelSize, 22 + 6);
+}
+
 int VolumeApplet::widthForHeight(int height) const
 {
-    return height;
+    return appletExtent(height);
 }
 
 int VolumeApplet::heightForWidth(int width) const
 {
-    return width;
+    return appletExtent(width);
 }
 
 void VolumeApplet::resizeEvent(QResizeEvent *)

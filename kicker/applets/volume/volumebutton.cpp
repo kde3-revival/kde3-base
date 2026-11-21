@@ -64,14 +64,10 @@ void VolumeButton::generateIcons()
         return;
     }
 
-    // Keep the icon at the size it is drawn at where it fits (panels of
-    // the usual small sizes), scale it down when it does not, and up
-    // only on large panels, leaving a pixel around it.
-    int size = QMIN(width(), height()) - 2;
-    if (size >= IconSize && size < IconSize + IconSize / 2)
-    {
-        size = IconSize;
-    }
+    // The icon belongs with the system tray icons, which stay 22 pixels
+    // on any panel: draw it at that size, smaller only on panels too
+    // small for it, leaving a pixel around it.
+    int size = QMIN(QMIN(width(), height()) - 2, IconSize);
     size = QMAX(size, 8);
 
     QImage image = m_image;
