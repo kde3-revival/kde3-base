@@ -42,13 +42,21 @@ public:
 };
 
 // runs plan: disable, screen size, enable, primary; stops at the first
-// failure (error set, returns false)
-bool executePlan( PlanExecutor &ex, const Plan &plan, QString *error = 0 );
+// failure (error set, returns false), or with bestEffort goes on with
+// the other requests
+bool executePlan( PlanExecutor &ex, const Plan &plan, QString *error = 0,
+		  bool bestEffort = false );
 
 // applies layout to the X server with the server grabbed (like xrandr);
-// on failure the previous configuration is restored. Returns false and
-// sets error when the layout cannot be applied.
+// on failure the previous configuration is restored as far as possible
+// (if even that fails, error says so). Returns false and sets error
+// when the layout cannot be applied.
 bool applyLayout( Display *dpy, const Layout &layout, QString *error = 0 );
+
+// installs an X error handler that ignores errors, for a program that
+// queries outputs which may disappear meanwhile (MST hubs) and would
+// otherwise be ended by Xlib's default handler
+void ignoreXErrors();
 
 } // namespace KRandR
 

@@ -99,6 +99,9 @@ int main( int argc, char **argv )
 	fprintf( stderr, "krandrstartup: cannot open the display\n" );
 	return 1;
     }
+    // an output that disappears while it is queried (an MST hub) must
+    // not end the program
+    ignoreXErrors();
     ScreenState state;
     if ( !queryState( dpy, state ) ) {
 	XCloseDisplay( dpy );

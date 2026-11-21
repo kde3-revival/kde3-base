@@ -55,6 +55,8 @@ private:
     // the current monitor's size changed: keep its neighbours next to it
     void sizeChanged( int bx, int by, int bw, int bh );
     bool confirm();
+    // save() did not save: keep Apply available
+    void stillChanged();
     const KRandR::Output *currentOutput() const;
 
     bool m_available;

@@ -170,7 +170,11 @@ const Output *DisplayModule::currentOutput() const
 
 void DisplayModule::load()
 {
-    m_available = queryState( qt_xdisplay(), m_state, true );
+    // probing the outputs is slow (and may blink some monitors): only
+    // the first time; afterwards the server reports hotplugs itself
+    static bool probed = false;
+    m_available = queryState( qt_xdisplay(), m_state, !probed );
+    probed = true;
     m_layout = m_available ? currentLayout( m_state ) : Layout();
     m_available = m_available && !m_layout.isEmpty();
 
@@ -218,6 +222,13 @@ void DisplayModule::load()
 	QTimer::singleShot( 0, this, SLOT( markUnsaved() ) );
     else
 	emit changed( false );
+}
+
+void DisplayModule::stillChanged()
+{
+    // the caller of save() marks the module unchanged afterwards: say
+    // it again later
+    QTimer::singleShot( 0, this, SLOT( markUnsaved() ) );
 }
 
 void DisplayModule::markUnsaved()
@@ -312,7 +323,7 @@ void DisplayModule::updateControls()
 	    continue;
 	m_rotations.append( rotationValues[i] );
 	m_rotation->insertItem( rotationName( rotationValues[i] ) );
-	if ( s.rotation == rotationValues[i] )
+	if ( ( s.rotation & RotationMask ) == rotationValues[i] )
 	    m_rotation->setCurrentItem( m_rotation->count() - 1 );
     }
     m_resolution->setEnabled( s.enabled );
@@ -469,7 +480,7 @@ void DisplayModule::rotationChanged( int index )
 	return;
     OutputSetting &s = m_layout[m_current];
     QRect before = MonitorCanvas::monitorRect( s );
-    s.rotation = m_rotations[index];
+    s.rotation = m_rotations[index] | ( s.rotation & ReflectMask );
     sizeChanged( before.x(), before.y(), before.width(), before.height() );
 }
 
@@ -519,6 +530,7 @@ void DisplayModule::save()
     QString error;
     if ( !validateLayout( layout, &error ) ) {
 	KMessageBox::sorry( this, error );
+	stillChanged();
 	return;
     }
 
@@ -526,6 +538,7 @@ void DisplayModule::save()
     ScreenState now;
     if ( !queryState( dpy, now ) ) {
 	KMessageBox::sorry( this, i18n( "Could not read the display configuration." ) );
+	stillChanged();
 	return;
     }
     if ( now.connectedSetKey() != m_state.connectedSetKey() ) {
@@ -537,6 +550,7 @@ void DisplayModule::save()
     Plan plan = makePlan( now, layout );
     if ( !plan.error.isEmpty() ) {
 	KMessageBox::sorry( this, plan.error );
+	stillChanged();
 	return;
     }
 
@@ -553,7 +567,9 @@ void DisplayModule::save()
 	}
 	keep = confirm();
 	if ( !keep )
-	    applyLayout( dpy, before );
+	    if ( !applyLayout( dpy, before, &error ) )
+		KMessageBox::sorry( this, i18n( "The previous configuration could not be "
+						"restored: %1" ).arg( error ) );
     }
     if ( keep ) {
 	ProfileStore store( &config );

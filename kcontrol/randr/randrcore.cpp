@@ -303,7 +303,7 @@ Layout currentLayout( const ScreenState &state )
 	    s.rate = m->rate;
 	    s.x = c->x;
 	    s.y = c->y;
-	    s.rotation = c->rotation & 0xf;
+	    s.rotation = c->rotation & ( RotationMask | ReflectMask );
 	} else {
 	    const Mode *p = preferredMode( state, o );
 	    if ( p ) {
@@ -363,25 +363,52 @@ Layout defaultLayout( const ScreenState &state )
 
     Layout l;
     int x = 0;
+    int crtcs = state.crtcs.count();
     for ( QValueList<Output>::ConstIterator it = order.begin(); it != order.end(); ++it ) {
-	const Mode *m = preferredMode( state, *it );
-	if ( !m )
-	    continue;
 	OutputSetting s;
 	s.key = (*it).key;
 	s.name = (*it).name;
 	s.model = (*it).model;
-	s.enabled = true;
+	// what is on keeps its mode and rotation (a refresh rate or
+	// portrait orientation chosen by hand)
+	const Crtc *c = (*it).crtc ? state.crtc( (*it).crtc ) : 0;
+	const Mode *m = c && c->mode ? state.mode( c->mode ) : 0;
+	if ( m ) {
+	    s.rotation = c->rotation & ( RotationMask | ReflectMask );
+	} else {
+	    m = preferredMode( state, *it );
+	    s.rotation = Rotate0;
+	}
+	if ( !m )
+	    continue;
 	s.width = m->width;
 	s.height = m->height;
 	s.rate = m->rate;
-	s.x = x;
-	s.y = 0;
-	s.rotation = Rotate0;
-	s.primary = havePrimary ? (*it).id == primary : l.isEmpty();
-	x += m->width;
+	// more monitors than CRTCs: the last ones stay off
+	s.enabled = ( crtcs-- > 0 );
+	if ( s.enabled ) {
+	    int w, h;
+	    settingSize( s, w, h );
+	    s.x = x;
+	    s.y = 0;
+	    x += w;
+	}
+	s.primary = false;
 	l.append( s );
     }
+    // the primary output if it stays on, else the first one
+    bool primarySet = false;
+    if ( havePrimary )
+	for ( Layout::Iterator it = l.begin(); it != l.end(); ++it )
+	    if ( (*it).enabled && state.outputByKey( (*it).key ) &&
+		 state.outputByKey( (*it).key )->id == primary )
+		primarySet = (*it).primary = true;
+    if ( !primarySet )
+	for ( Layout::Iterator it = l.begin(); it != l.end(); ++it )
+	    if ( (*it).enabled ) {
+		(*it).primary = true;
+		break;
+	    }
     return l;
 }
 
@@ -648,10 +675,11 @@ Plan makePlan( const ScreenState &state, const Layout &layout )
 	    p.error = i18n( "The output %1 has no usable mode." ).arg( o->name );
 	    return p;
 	}
-	w.rotation = s.rotation & 0xf;
+	w.rotation = s.rotation & RotationMask;
 	if ( w.rotation != Rotate0 && w.rotation != Rotate90 &&
 	     w.rotation != Rotate180 && w.rotation != Rotate270 )
 	    w.rotation = Rotate0;
+	w.rotation |= s.rotation & ReflectMask;
 	w.w = rotated( w.rotation ) ? w.mode->height : w.mode->width;
 	w.h = rotated( w.rotation ) ? w.mode->width : w.mode->height;
 	w.x = s.x;
@@ -692,7 +720,8 @@ Plan makePlan( const ScreenState &state, const Layout &layout )
     for ( QValueList<Want>::Iterator it = wants.begin(); it != wants.end(); ++it ) {
 	const Output *o = (*it).output;
 	const Crtc *c = o->crtc ? state.crtc( o->crtc ) : 0;
-	if ( c && o->crtcs.contains( c->id ) && ( c->rotations & (*it).rotation ) &&
+	if ( c && o->crtcs.contains( c->id ) &&
+	     ( c->rotations & (*it).rotation ) == (*it).rotation &&
 	     !crtcTaken( wants, c->id ) )
 	    (*it).crtc = c->id;
     }
@@ -703,7 +732,8 @@ Plan makePlan( const ScreenState &state, const Layout &layout )
 	    const Output *o = (*it).output;
 	    for ( QValueList<XID>::ConstIterator ci = o->crtcs.begin(); ci != o->crtcs.end(); ++ci ) {
 		const Crtc *c = state.crtc( *ci );
-		if ( !c || crtcTaken( wants, c->id ) || !( c->rotations & (*it).rotation ) )
+		if ( !c || crtcTaken( wants, c->id ) ||
+		     ( c->rotations & (*it).rotation ) != (*it).rotation )
 		    continue;
 		// pass 0: only CRTCs that are off and not wanted by an
 		// output that has it now
@@ -769,8 +799,8 @@ Plan makePlan( const ScreenState &state, const Layout &layout )
 	QValueList<XID> outs;
 	outs.append( w.output->id );
 	if ( c && c->mode == w.mode->id && c->x == w.x && c->y == w.y &&
-	     ( c->rotation & 0xf ) == w.rotation && c->outputs == outs &&
-	     !disabled.contains( c->id ) )
+	     ( c->rotation & ( RotationMask | ReflectMask ) ) == w.rotation &&
+	     c->outputs == outs && !c->transformed && !disabled.contains( c->id ) )
 	    continue;       // unchanged
 	CrtcOp op;
 	op.crtc = w.crtc;
@@ -778,11 +808,14 @@ Plan makePlan( const ScreenState &state, const Layout &layout )
 	op.y = w.y;
 	op.mode = w.mode->id;
 	op.rotation = w.rotation;
+	op.resetTransform = c && c->transformed;
 	op.outputs = outs;
 	p.enable.append( op );
     }
 
-    if ( primary && primary != currentPrimary( state ) ) {
+    // a layout without a primary monitor (the state before an undo)
+    // has none
+    if ( primary != currentPrimary( state ) ) {
 	p.primary = primary;
 	p.setPrimary = true;
     }
@@ -891,6 +924,11 @@ Layout ProfileStore::profile( const QString &setKey ) const
 	    s.y = pos[1].toInt();
 	}
 	s.rotation = rotationFromString( m_config->readEntry( k + ":Rotation", "0" ) );
+	QString reflect = m_config->readEntry( k + ":Reflect" );
+	if ( reflect.contains( 'x' ) )
+	    s.rotation |= ReflectX;
+	if ( reflect.contains( 'y' ) )
+	    s.rotation |= ReflectY;
 	s.primary = m_config->readBoolEntry( k + ":Primary", false );
 	l.append( s );
     }
@@ -914,7 +952,14 @@ void ProfileStore::saveProfile( const QString &setKey, const Layout &layout )
 	m_config->writeEntry( k + ":Mode", QString( "%1x%2" ).arg( s.width ).arg( s.height ) );
 	m_config->writeEntry( k + ":Rate", QString::number( s.rate, 'f', 2 ) );
 	m_config->writeEntry( k + ":Position", QString( "%1,%2" ).arg( s.x ).arg( s.y ) );
-	m_config->writeEntry( k + ":Rotation", rotationString( s.rotation ) );
+	m_config->writeEntry( k + ":Rotation", rotationString( s.rotation & RotationMask ) );
+	QString reflect;
+	if ( s.rotation & ReflectX )
+	    reflect += 'x';
+	if ( s.rotation & ReflectY )
+	    reflect += 'y';
+	if ( !reflect.isEmpty() )
+	    m_config->writeEntry( k + ":Reflect", reflect );
 	m_config->writeEntry( k + ":Primary", s.primary );
     }
     m_config->writeEntry( "Outputs", keys );

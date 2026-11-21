@@ -62,6 +62,11 @@ static QByteArray outputProperty( Display *dpy, RROutput output, const char *nam
 
 static bool queryState( Display *dpy, ScreenState &state, XRRScreenResources *res )
 {
+    // transforms and panning: RandR 1.3
+    int major = 0, minor = 0;
+    XRRQueryVersion( dpy, &major, &minor );
+    bool v13 = major > 1 || ( major == 1 && minor >= 3 );
+
     Window root = DefaultRootWindow( dpy );
     state = ScreenState();
     state.timestamp = res->configTimestamp;
@@ -147,6 +152,23 @@ static bool queryState( Display *dpy, ScreenState &state, XRRScreenResources *re
 	c.mode = ci->mode;
 	c.rotation = ci->rotation;
 	c.rotations = ci->rotations;
+	// a scaling transform (xrandr --scale) stays with the CRTC, also
+	// when it is switched off; so does panning
+	XRRCrtcTransformAttributes *attr = 0;
+	if ( v13 && XRRGetCrtcTransform( dpy, res->crtcs[i], &attr ) && attr ) {
+	    const XTransform &t = attr->currentTransform;
+	    for ( int r = 0; r < 3; ++r )
+		for ( int k = 0; k < 3; ++k )
+		    if ( t.matrix[r][k] != ( r == k ? XDoubleToFixed( 1 ) : 0 ) )
+			c.transformed = true;
+	    XFree( attr );
+	}
+	XRRPanning *pan = v13 ? XRRGetPanning( dpy, res, res->crtcs[i] ) : 0;
+	if ( pan ) {
+	    if ( pan->width || pan->height || pan->track_width || pan->track_height )
+		c.transformed = true;
+	    XRRFreePanning( pan );
+	}
 	for ( int j = 0; j < ci->noutput; ++j )
 	    c.outputs.append( ci->outputs[j] );
 	for ( int j = 0; j < ci->npossible; ++j )
@@ -179,38 +201,47 @@ bool queryState( Display *dpy, ScreenState &state, bool probe )
     return ok;
 }
 
-bool executePlan( PlanExecutor &ex, const Plan &plan, QString *error )
+bool executePlan( PlanExecutor &ex, const Plan &plan, QString *error, bool bestEffort )
 {
     if ( !plan.error.isEmpty() ) {
 	if ( error )
 	    *error = plan.error;
 	return false;
     }
+    bool ok = true;
+    QString err;
     for ( QValueList<CrtcOp>::ConstIterator it = plan.disable.begin(); it != plan.disable.end(); ++it ) {
 	if ( !ex.setCrtc( *it ) ) {
-	    if ( error )
-		*error = i18n( "Could not switch off a display controller." );
-	    return false;
+	    if ( ok )
+		err = i18n( "Could not switch off a display controller." );
+	    ok = false;
+	    if ( !bestEffort )
+		break;
 	}
     }
-    if ( plan.resize && !ex.setScreenSize( plan.width, plan.height, plan.mmWidth, plan.mmHeight ) ) {
-	if ( error )
-	    *error = i18n( "Could not set the screen size to %1x%2." ).arg( plan.width ).arg( plan.height );
-	return false;
+    if ( ( ok || bestEffort ) && plan.resize &&
+	 !ex.setScreenSize( plan.width, plan.height, plan.mmWidth, plan.mmHeight ) ) {
+	if ( ok )
+	    err = i18n( "Could not set the screen size to %1x%2." )
+		.arg( plan.width ).arg( plan.height );
+	ok = false;
     }
-    for ( QValueList<CrtcOp>::ConstIterator it = plan.enable.begin(); it != plan.enable.end(); ++it ) {
+    for ( QValueList<CrtcOp>::ConstIterator it = plan.enable.begin();
+	  ( ok || bestEffort ) && it != plan.enable.end(); ++it ) {
 	if ( !ex.setCrtc( *it ) ) {
-	    if ( error )
-		*error = i18n( "Could not configure a display controller." );
-	    return false;
+	    if ( ok )
+		err = i18n( "Could not configure a display controller." );
+	    ok = false;
 	}
     }
-    if ( plan.setPrimary && !ex.setPrimary( plan.primary ) ) {
-	if ( error )
-	    *error = i18n( "Could not set the primary monitor." );
-	return false;
+    if ( ( ok || bestEffort ) && plan.setPrimary && !ex.setPrimary( plan.primary ) ) {
+	if ( ok )
+	    err = i18n( "Could not set the primary monitor." );
+	ok = false;
     }
-    return true;
+    if ( !ok && error )
+	*error = err;
+    return ok;
 }
 
 // --- X11 ---------------------------------------------------------------------
@@ -223,6 +254,11 @@ static int trapErrors( Display *, XErrorEvent * )
     return 0;
 }
 
+void ignoreXErrors()
+{
+    XSetErrorHandler( trapErrors );
+}
+
 namespace {
 class X11Executor : public PlanExecutor
 {
@@ -231,6 +267,25 @@ public:
 	: m_dpy( dpy ), m_res( res ) {}
 
     bool setCrtc( const CrtcOp &op ) {
+	if ( op.resetTransform ) {
+	    // the identity, no filter, no panning
+	    XTransform t;
+	    for ( int r = 0; r < 3; ++r )
+		for ( int k = 0; k < 3; ++k )
+		    t.matrix[r][k] = ( r == k ) ? XDoubleToFixed( 1 ) : 0;
+	    XRRSetCrtcTransform( m_dpy, op.crtc, &t, (char *) "nearest", 0, 0 );
+	    XRRPanning *pan = XRRGetPanning( m_dpy, m_res, op.crtc );
+	    if ( pan ) {
+		if ( pan->width || pan->height || pan->track_width || pan->track_height ) {
+		    XRRPanning none = *pan;
+		    none.left = none.top = none.width = none.height = 0;
+		    none.track_left = none.track_top = none.track_width = none.track_height = 0;
+		    none.border_left = none.border_top = none.border_right = none.border_bottom = 0;
+		    XRRSetPanning( m_dpy, m_res, op.crtc, &none );
+		}
+		XRRFreePanning( pan );
+	    }
+	}
 	RROutput outs[16];
 	int n = 0;
 	for ( QValueList<XID>::ConstIterator it = op.outputs.begin();
@@ -292,7 +347,9 @@ bool applyLayout( Display *dpy, const Layout &layout, QString *error )
 	    ScreenState now;
 	    if ( res && queryState( dpy, now, res ) ) {
 		X11Executor undo( dpy, res );
-		executePlan( undo, makePlan( now, currentLayout( before ) ) );
+		if ( !executePlan( undo, makePlan( now, currentLayout( before ) ), 0, true ) )
+		    err = i18n( "%1 The previous configuration could not be restored "
+				"completely either." ).arg( err );
 	    }
 	}
     }

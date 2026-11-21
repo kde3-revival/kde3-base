@@ -29,8 +29,11 @@ namespace KRandR {
 
 typedef unsigned long XID;
 
-// rotation in degrees counter-clockwise (RandR's RR_Rotate_*)
-enum { Rotate0 = 1, Rotate90 = 2, Rotate180 = 4, Rotate270 = 8 };
+// rotation in degrees counter-clockwise and reflection (RandR's
+// RR_Rotate_*, RR_Reflect_*)
+enum { Rotate0 = 1, Rotate90 = 2, Rotate180 = 4, Rotate270 = 8,
+       ReflectX = 16, ReflectY = 32,
+       RotationMask = 0x0f, ReflectMask = 0x30 };
 
 struct Mode
 {
@@ -70,7 +73,7 @@ struct Output
 struct Crtc
 {
     Crtc() : id( 0 ), x( 0 ), y( 0 ), mode( 0 ), rotation( Rotate0 ),
-	     rotations( Rotate0 ), width( 0 ), height( 0 ) {}
+	     rotations( Rotate0 ), width( 0 ), height( 0 ), transformed( false ) {}
     XID id;
     int x;
     int y;
@@ -79,6 +82,8 @@ struct Crtc
     int rotations;          // supported
     int width;              // rotated size
     int height;
+    bool transformed;       // a scaling transform or panning (xrandr
+			    // --scale/--panning), which survives a mode set
     QValueList<XID> outputs;
     QValueList<XID> possible;
 };
@@ -121,7 +126,7 @@ struct OutputSetting
     double rate;        // 0: highest for that size
     int x;
     int y;
-    int rotation;
+    int rotation;       // with the reflection bits
     bool primary;
 
     bool operator==( const OutputSetting &o ) const;
@@ -171,10 +176,11 @@ void settingSize( const OutputSetting &s, int &w, int &h );
 // the layout the server has now (connected outputs only)
 Layout currentLayout( const ScreenState &state );
 
-// all connected outputs at their preferred mode, left to right: those
-// enabled now in their current left-to-right order, then the others
-// (internal panel first, then by connector); the primary output stays
-// primary if connected, else the first one is primary
+// all connected outputs side by side, left to right: those enabled now
+// in their current left-to-right order with their current mode and
+// rotation, then the others at their preferred mode (internal panel
+// first, then by connector), as many as there are CRTCs for; the
+// primary output stays primary if connected, else the first one is
 Layout defaultLayout( const ScreenState &state );
 
 // moves the layout so that its top left corner is 0,0
@@ -207,11 +213,13 @@ bool validateLayout( const Layout &layout, QString *error = 0 );
 
 struct CrtcOp
 {
-    CrtcOp() : crtc( 0 ), x( 0 ), y( 0 ), mode( 0 ), rotation( Rotate0 ) {}
+    CrtcOp() : crtc( 0 ), x( 0 ), y( 0 ), mode( 0 ), rotation( Rotate0 ),
+	       resetTransform( false ) {}
     XID crtc;
     int x, y;
     XID mode;           // 0: disable
-    int rotation;
+    int rotation;       // with the reflection bits
+    bool resetTransform;// identity transform and no panning first
     QValueList<XID> outputs;
 };
 

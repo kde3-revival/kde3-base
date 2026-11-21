@@ -7,6 +7,7 @@ kde3_add_library(randrcore STATIC
   LINK
     KDE3::kdecore
     ${X11_Xrandr_LIB}
+    ${X11_Xext_LIB}
     ${X11_X11_LIB}
 )
 

@@ -18,6 +18,7 @@
 #include <kdedmodule.h>
 
 class QSocketNotifier;
+namespace KRandR { struct ScreenState; }
 typedef struct _XDisplay Display;
 
 class RandRDaemon : public KDEDModule
@@ -41,11 +42,17 @@ private slots:
     void outputsChanged();
 
 private:
+    bool query( KRandR::ScreenState &state );
+    bool apply( const KRandR::ScreenState &state );
+    bool monitorsAsleep();
+
     Display *m_dpy;
     int m_eventBase;
+    unsigned long m_edidAtom;
     QSocketNotifier *m_notifier;
     QTimer m_settle;
     QString m_lastSet;
+    bool m_wasAsleep;
 };
 
 #endif

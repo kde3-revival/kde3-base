@@ -537,6 +537,62 @@ static void testValidate()
     CHECK( !validateLayout( l ) );
 }
 
+static void testReviewCases()
+{
+    // reflection survives currentLayout -> plan, and a profile
+    Fake f;
+    f.addCrtc( Rotate0 | Rotate90 | Rotate180 | Rotate270 | ReflectX | ReflectY );
+    f.addCrtc();
+    f.addOutput( "DP-1", "A", true, modes( "1920x1080@60", "1280x1024@60" ) );
+    f.addOutput( "DP-2", "B", true, modes( "1920x1080@60", "1280x1024@75", "1280x1024@60" ) );
+    f.enable( "DP-1", 1920, 1080, 0, 0 );
+    f.crtc( f.out( "DP-1" )->crtc )->rotation = Rotate0 | ReflectX;
+    Layout cur = currentLayout( f.s );
+    CHECK_EQ( cur[0].rotation, Rotate0 | ReflectX );
+    CHECK( makePlan( f.s, cur ).isEmpty() );
+    {
+	KTempFile tmp;
+	tmp.setAutoDelete( true );
+	tmp.close();
+	KSimpleConfig cfg( tmp.name() );
+	ProfileStore store( &cfg );
+	store.saveProfile( "A+B", cur );
+	CHECK_EQ( store.profile( "A+B" )[0].rotation, Rotate0 | ReflectX );
+    }
+
+    // a scaling transform left by xrandr: the CRTC is set again even if
+    // nothing else changes, with the transform reset
+    f.crtc( f.out( "DP-1" )->crtc )->transformed = true;
+    Plan p = makePlan( f.s, cur );
+    CHECK( p.enable.count() == 1 && p.enable.first().resetTransform );
+
+    // no primary in the layout (an undo to a state without one): none
+    f.out( "DP-1" )->primary = true;
+    Layout noPrimary = cur;
+    noPrimary[0].primary = false;
+    p = makePlan( f.s, noPrimary );
+    CHECK( p.setPrimary && p.primary == 0 );
+
+    // the default keeps the mode and rotation of what is on
+    f.crtc( f.out( "DP-1" )->crtc )->transformed = false;
+    Layout custom;
+    custom << setting( f, "DP-1", 1920, 1080, 0, 0, true, Rotate90 );
+    apply( f, custom, "portrait" );
+    Layout d = defaultLayout( f.s );
+    CHECK( d[0].name == "DP-1" && d[0].rotation == Rotate90 && d[0].width == 1920 );
+    CHECK( d[1].name == "DP-2" && d[1].x == 1080 && d[1].enabled );
+    apply( f, d, "default keeps portrait" );
+
+    // more monitors than CRTCs: the default leaves the last ones off
+    Fake g;
+    g.addCrtc();
+    g.addOutput( "DP-1", "A", true, modes( "1920x1080@60" ) );
+    g.addOutput( "DP-2", "B", true, modes( "1920x1080@60" ) );
+    Layout two = defaultLayout( g.s );
+    CHECK( two.count() == 2 && two[0].enabled && !two[1].enabled && two[0].primary );
+    apply( g, two, "too few CRTCs" );
+}
+
 static Layout row( int n, int w, int h )
 {
     Layout l;
@@ -701,6 +757,7 @@ int main( int argc, char **argv )
     testModes();
     testValidate();
     testEditing();
+    testReviewCases();
     testProfiles();
 
     printf( "=== %d failure(s)\n", failures );
