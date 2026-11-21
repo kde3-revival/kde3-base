@@ -656,6 +656,10 @@ void Overview::createCorners()
             if( g2.contains( outx ) || g2.contains( outy ))
                 real = false;
             }
+        if( debug )
+            kdWarning( 1212 ) << "overview: screen " << i << " " << g.x() << "," << g.y() << " "
+                << g.width() << "x" << g.height() << ( i == desktop->primaryScreen() ? " primary" : "" )
+                << ", corner " << p.x() << "," << p.y() << ( real ? "" : " (not a real corner)" ) << endl;
         if( !real || corner_points.contains( p ))
             continue;
         XSetWindowAttributes attr;
@@ -675,6 +679,7 @@ void Overview::createCorners()
 void Overview::updateCorners()
     {
     const ClientList& clients = ws->stackingOrder();
+    bool mapped_now = false;
     QValueList< bool >::Iterator mapped = corner_mapped.begin();
     QValueList< QPoint >::ConstIterator p = corner_points.begin();
     for( QValueList< Window >::ConstIterator it = corners.begin();
@@ -694,8 +699,22 @@ void Overview::updateCorners()
         if( covered && *mapped )
             XUnmapWindow( dpy, *it );
         else if( !covered && !*mapped )
+            {
             XMapWindow( dpy, *it );
+            mapped_now = true;
+            }
         *mapped = !covered;
+        }
+    // a corner mapped below the pointer is entered without the pointer
+    // moving there: it must leave first
+    if( mapped_now )
+        {
+        Window root_return, child;
+        int rx, ry, wx, wy;
+        unsigned int mask;
+        if( XQueryPointer( dpy, root, &root_return, &child, &rx, &ry, &wx, &wy, &mask )
+            && cornerHit( QPoint( rx, ry )))
+            corner_armed = false;
         }
     }
 
@@ -758,6 +777,10 @@ void Overview::cornerTimeout()
     unsigned int mask;
     if( !XQueryPointer( dpy, root, &root_return, &child, &rx, &ry, &wx, &wy, &mask ))
         return;
+    if( debug )
+        kdWarning( 1212 ) << "overview: corner delay over, pointer " << rx << "," << ry << " hit "
+            << cornerHit( QPoint( rx, ry )) << " allowed " << cornerAllowed( QPoint( rx, ry ), mask )
+            << " state " << state << endl;
     if( cornerHit( QPoint( rx, ry )) && cornerAllowed( QPoint( rx, ry ), mask ) && state == Hidden )
         {
         corner_armed = false;
@@ -818,7 +841,11 @@ void Overview::show()
         return;
         }
     if( state != Hidden || blocked())
+        {
+        if( debug )
+            kdWarning( 1212 ) << "overview: not shown, state " << state << " blocked " << blocked() << endl;
         return;
+        }
     if( !grabInput())
         {
         kdWarning( 1212 ) << "overview: cannot grab the keyboard or the pointer" << endl;
@@ -2515,13 +2542,23 @@ bool Overview::x11Event( XEvent* e )
     {
     if(( e->type == EnterNotify || e->type == LeaveNotify ) && corners.contains( e->xcrossing.window ))
         {
+        QPoint p( e->xcrossing.x_root, e->xcrossing.y_root );
+        if( debug )
+            kdWarning( 1212 ) << "overview: corner " << ( e->type == EnterNotify ? "enter " : "leave " )
+                << p.x() << "," << p.y() << " mode " << e->xcrossing.mode << " state " << state
+                << " armed " << corner_armed << " allowed " << cornerAllowed( p, e->xcrossing.state ) << endl;
         if( e->type == LeaveNotify )
             {
             corner_timer.stop();
-            corner_armed = true;
+            // not when a grab starts (ours, the overview opening: the
+            // pointer is still in the corner, and a real mouse pushed into
+            // it keeps sending motion events there, which would close the
+            // overview at once), nor while the overview is shown (then
+            // handleMotion() re-arms it when the pointer is away)
+            if( e->xcrossing.mode == NotifyNormal && state == Hidden )
+                corner_armed = true;
             return true;
             }
-        QPoint p( e->xcrossing.x_root, e->xcrossing.y_root );
         if( state != Hidden || !corner_armed || e->xcrossing.mode != NotifyNormal
             || !cornerAllowed( p, e->xcrossing.state ))
             return true;
@@ -2538,6 +2575,9 @@ bool Overview::x11Event( XEvent* e )
         {
         corner_timer.stop();
         QPoint p( e->xbutton.x_root, e->xbutton.y_root );
+        if( debug )
+            kdWarning( 1212 ) << "overview: corner click " << p.x() << "," << p.y() << " state " << state
+                << " allowed " << cornerAllowed( p, 0 ) << endl;
         if( state == Hidden && cornerAllowed( p, 0 ))
             {
             corner_armed = false;
