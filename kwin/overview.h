@@ -133,6 +133,13 @@ class Overview : public QObject
         bool superKey( XKeyEvent* e );
         bool superAlone( int keycode );
         void handleMotion( const QPoint& p );
+        void startDrag( const QPoint& p );
+        void endDrag( bool drop, const QPoint& p );
+        void placeDragged( double t );
+        int dropTarget( const QPoint& p ) const;
+        QRect layoutArea( int screen ) const;
+        void drawItem( OverviewItem* item, XID dst );
+        void drawBackdrop( XID dst, double dim, double t );
         bool handleDamage( XEvent* e );
         bool handlePresent( XEvent* e );
 
@@ -149,6 +156,20 @@ class Overview : public QObject
         OverviewItem* selected;
         OverviewItem* pressed;
         int pressed_button;
+        QPoint press_pos;
+        // the press ended otherwise (Escape, the window closed, the drag
+        // cancelled): its release does nothing
+        bool press_consumed;
+        // dragging a thumbnail to another monitor: it follows the pointer
+        // (grabbed at drag_fx, drag_fy of its size), shrinking to at most
+        // DragSize; nothing is done to the window until the drop
+        OverviewItem* dragged;
+        QPoint drag_pos;
+        double drag_fx, drag_fy;
+        double drag_w, drag_h;
+        double drag_start;
+        int drag_target; // the monitor under the pointer (-1 none or the same)
+        double drag_target_start;
         QString filter;
 
         // the zoom transition: progress 0 = real screen, 1 = overview

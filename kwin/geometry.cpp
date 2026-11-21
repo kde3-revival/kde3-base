@@ -20,6 +20,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "workspace.h"
 
 #include <kapplication.h>
+#include <qdesktopwidget.h>
 #include <kglobal.h>
 #include <qpainter.h>
 #include <kwin.h>
@@ -970,6 +971,113 @@ void Client::checkWorkspacePosition()
             setGeometry( final_geom );
         //    updateWorkareaDiffs(); done already by setGeometry()
         }
+    }
+
+// the work area of a monitor (the whole monitor without struts)
+static QRect monitorArea( const Workspace* ws, int screen, int desktop )
+    {
+    QRect sg = QApplication::desktop()->screenGeometry( screen );
+    QRect area = ws->clientArea( MaximizeArea, sg.center(), desktop ).intersect( sg );
+    return area.isValid() ? area : sg;
+    }
+
+// the same position relative to the center of the area, scaled
+static QRect mapToArea( const QRect& g, const QRect& from, const QRect& to )
+    {
+    QPoint c = g.center() - from.center();
+    c = QPoint( c.x() * to.width() / QMAX( 1, from.width()), c.y() * to.height() / QMAX( 1, from.height()));
+    QRect r( QPoint( 0, 0 ), g.size());
+    r.moveCenter( c + to.center());
+    return r;
+    }
+
+/*!
+  Moves the window from monitor \a from to monitor \a to (the window
+  overview): the same position relative to the work area, no larger than
+  the new work area, inside it if it was inside the old one; maximized and
+  full screen windows fill the new monitor, their restore geometries move
+  along.  Its direct transients on the old monitor go along.  The client
+  sees one geometry change (only a synthetic ConfigureNotify when the size
+  stays).  False when the window may not be moved.
+ */
+bool Client::sendToScreen( int from, int to )
+    {
+    QDesktopWidget* dw = QApplication::desktop();
+    if( from == to || from < 0 || to < 0 || from >= dw->numScreens() || to >= dw->numScreens())
+        return false;
+    if( !motif_may_move || rules()->checkPosition( invalidPoint ) != invalidPoint
+        || ( isSpecialWindow() && !isSplash() && !isToolbar()))
+        return false;
+    const QRect old_area = monitorArea( workspace(), from, desktop());
+    const QRect new_area = monitorArea( workspace(), to, desktop());
+    const QRect g = geometry();
+    QRect geom;
+    if( isFullScreen())
+        {
+        if( !geom_fs_restore.isNull())
+            geom_fs_restore = mapToArea( geom_fs_restore, old_area, new_area );
+        geom = workspace()->clientArea( FullScreenArea, dw->screenGeometry( to ).center(), desktop());
+        }
+    else if( maximizeMode() != MaximizeRestore )
+        {
+        if( geom_restore.isValid())
+            geom_restore = mapToArea( geom_restore, old_area, new_area );
+        const QRect moved = mapToArea( g, old_area, new_area );
+        const QRect max_area = workspace()->clientArea( MaximizeArea, dw->screenGeometry( to ).center(), desktop());
+        switch( maximizeMode())
+            {
+            case MaximizeVertical:
+                geom = QRect( QPoint( moved.x(), max_area.top()),
+                    adjustedSize( QSize( g.width(), max_area.height()), SizemodeFixedH ));
+                break;
+            case MaximizeHorizontal:
+                geom = QRect( QPoint( max_area.left(), moved.y()),
+                    adjustedSize( QSize( max_area.width(), g.height()), SizemodeFixedW ));
+                break;
+            default:
+                geom = QRect( max_area.topLeft(), adjustedSize( max_area.size(), SizemodeMax ));
+                break;
+            }
+        }
+    else
+        {
+        geom = mapToArea( g, old_area, new_area );
+        if( !isShade() && isResizable()
+            && ( geom.width() > new_area.width() || geom.height() > new_area.height()))
+            {
+            QSize s = adjustedSize( QSize( QMIN( geom.width(), new_area.width()),
+                QMIN( geom.height(), new_area.height())), SizemodeMax );
+            QPoint c = geom.center();
+            geom.setSize( s );
+            geom.moveCenter( c );
+            }
+        // inside the work area before (or nothing visible now): inside it
+        // again (the top left corner first)
+        if( old_area.contains( g ) || !geom.intersects( new_area ))
+            {
+            if( geom.right() > new_area.right())
+                geom.moveRight( new_area.right());
+            if( geom.bottom() > new_area.bottom())
+                geom.moveBottom( new_area.bottom());
+            if( geom.left() < new_area.left())
+                geom.moveLeft( new_area.left());
+            if( geom.top() < new_area.top())
+                geom.moveTop( new_area.top());
+            }
+        }
+    if( geom.size() == g.size())
+        move( geom.topLeft());
+    else
+        setGeometry( geom );
+    // the dialogs of the window (not those of the whole group)
+    ClientList trans = transients();
+    for( ClientList::ConstIterator it = trans.begin();
+         it != trans.end();
+         ++it )
+        if( (*it)->transientFor() == this && (*it)->isOnCurrentDesktop()
+            && dw->screenNumber( (*it)->geometry().center()) == from )
+            (*it)->sendToScreen( from, to );
+    return true;
     }
 
 // Try to be smart about keeping the clients visible.

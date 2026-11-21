@@ -127,6 +127,11 @@ const int CornerStrip = 32;
 const int Spacing = 28;
 const int TitleGap = 10;
 const int MipLevels = 4; // 1, 1/2, 1/4, 1/8
+// a dragged thumbnail shrinks to at most this size (like GNOME), in this time
+const double DragSize = 256.0;
+const double DragShrinkTime = 200.0;
+// the drag starts after the pointer moved at least this far
+const int DragThreshold = 6;
 
 struct RectF
     {
@@ -398,6 +403,7 @@ class OverviewRenderer
         Picture filter_picture;
         QFont font;
         int title_height;
+        QColor highlight;
     };
 
 Overview::Overview( Workspace* w )
@@ -409,6 +415,15 @@ Overview::Overview( Workspace* w )
       selected( NULL ),
       pressed( NULL ),
       pressed_button( 0 ),
+      press_consumed( false ),
+      dragged( NULL ),
+      drag_fx( 0 ),
+      drag_fy( 0 ),
+      drag_w( 0 ),
+      drag_h( 0 ),
+      drag_start( 0 ),
+      drag_target( -1 ),
+      drag_target_start( 0 ),
       trans_start( 0 ),
       trans_duration( 0 ),
       trans_from( 0 ),
@@ -1065,7 +1080,9 @@ void Overview::show()
     stat_skipped = stat_gaps = 0;
     stat_first_frame = now();
     filter = QString::null;
-    selected = pressed = NULL;
+    selected = pressed = dragged = NULL;
+    pressed_button = 0;
+    press_consumed = false;
     progress = 0;
     title_alpha = 0;
 
@@ -1075,6 +1092,7 @@ void Overview::show()
     r->format = XRenderFindVisualFormat( dpy, DefaultVisual( dpy, DefaultScreen( dpy )));
     r->font = KGlobalSettings::generalFont();
     r->title_height = QFontMetrics( r->font ).height() + 8;
+    r->highlight = KGlobalSettings::highlightColor();
 
 #ifdef OVERVIEW_COMPOSITE
     if( composite )
@@ -1209,6 +1227,16 @@ void Overview::hide( Client* c )
     title_alpha = 0;
     title_start = 0;
     pressed = NULL;
+    if( dragged != NULL )
+        { // zooms in from where it is
+        placeDragged( now());
+        dragged = NULL;
+        drag_target = -1;
+        press_consumed = true;
+        if( grabbed )
+            XChangeActivePointerGrab( dpy, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                cursor, CurrentTime );
+        }
     // the filtered out windows come back while zooming in
     const double t = now();
     for( OverviewItem* item = items.first();
@@ -1307,7 +1335,9 @@ void Overview::cleanup()
     r = NULL;
     ungrabInput();
     state = Hidden;
-    selected = pressed = NULL;
+    selected = pressed = dragged = NULL;
+    pressed_button = 0;
+    press_consumed = false;
     filter = QString::null;
     frame_wanted = false;
     // don't open again right away if the pointer is still in the corner
@@ -1562,6 +1592,11 @@ void Overview::buildItems( bool initial )
                 selected = NULL;
             if( item == pressed )
                 pressed = NULL;
+            if( item == dragged )
+                {
+                dragged = NULL;
+                press_consumed = true;
+                }
             releaseContents( item );
             delete item;
             }
@@ -1591,6 +1626,14 @@ void Overview::clientRemoved( Client* c )
         selected = NULL;
     if( item == pressed )
         pressed = NULL;
+    if( item == dragged )
+        { // closed while dragged: the release does nothing
+        dragged = NULL;
+        press_consumed = true;
+        if( grabbed )
+            XChangeActivePointerGrab( dpy, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                cursor, CurrentTime );
+        }
     bool relayout = item->in_layout;
     trapErrors( dpy );
     releaseContents( item );
@@ -1649,15 +1692,28 @@ void Overview::computeLayout()
          i < screens;
          ++i )
         {
-        QRect sg = desktop->screenGeometry( i );
-        QRect area = ws->clientArea( PlacementArea, sg.center(), ws->currentDesktop()).intersect( sg );
-        if( !area.isValid())
-            area = sg;
+        QRect area = layoutArea( i );
         int mx = QMAX( 32, area.width() * 4 / 100 );
         int my = QMAX( 32, area.height() * 5 / 100 );
         area.addCoords( mx, my, -mx, -my );
         layoutScreen( area, per_screen[ i ] );
         }
+    if( debug )
+        for( OverviewItem* item = items.first();
+             item != NULL;
+             item = items.next())
+            if( item->in_layout )
+                kdWarning( 1212 ) << "overview: slot " << ( item->client != NULL ? item->client->caption() : QString::null )
+                    << " " << item->slot.x() << "," << item->slot.y() << " " << item->slot.width() << "x"
+                    << item->slot.height() << " monitor " << item->screen << endl;
+    }
+
+// the work area of a monitor
+QRect Overview::layoutArea( int screen ) const
+    {
+    QRect sg = QApplication::desktop()->screenGeometry( screen );
+    QRect area = ws->clientArea( PlacementArea, sg.center(), ws->currentDesktop()).intersect( sg );
+    return area.isValid() ? area : sg;
     }
 
 static bool lessY( OverviewItem* a, OverviewItem* b )
@@ -2085,6 +2141,12 @@ void Overview::renderFrame()
             }
         }
     bool more = lin < 1.0;
+    if( dragged != NULL )
+        {
+        placeDragged( t0 );
+        if( t0 - drag_start < DragShrinkTime )
+            more = true;
+        }
     if( state == Showing && !more )
         {
         state = Shown;
@@ -2131,9 +2193,8 @@ void Overview::renderFrame()
             XRenderFillRectangle( dpy, PictOpSrc, dst, &black, 0, 0, r->width, r->height );
         }
     const double dim = progress * ( composite ? DimAlpha : 0.75 );
-    QColor highlight = KGlobalSettings::highlightColor();
 
-    // the windows, bottom first
+    // the windows, bottom first (the dragged one last)
     bool dimmed = false;
     for( OverviewItem* item = items.first();
          item != NULL;
@@ -2141,133 +2202,14 @@ void Overview::renderFrame()
         {
         if( !dimmed && item->kind != OverviewItem::Desktop )
             {
-            if( dim > 1.0 / 512 )
-                {
-                XRenderColor c = renderColor( Qt::black, dim );
-                XRenderFillRectangle( dpy, PictOpOver, dst, &c, 0, 0, r->width, r->height );
-                }
+            drawBackdrop( dst, dim, t0 );
             dimmed = true;
             }
-        double alpha = 1.0;
-        RectF rect( item->geom );
-        bool scaled = false;
-        switch( item->kind )
-            {
-            case OverviewItem::Desktop:
-            case OverviewItem::Dock:
-                break;
-            case OverviewItem::Other:
-                alpha = 1.0 - progress;
-                break;
-            case OverviewItem::Managed:
-                if( item->in_layout )
-                    {
-                    rect = item->cur;
-                    alpha = item->fade;
-                    scaled = true;
-                    }
-                else
-                    alpha = 1.0 - progress;
-                break;
-            }
-        if( alpha <= 1.0 / 512 )
-            continue;
-        if( scaled && progress > 0.001 )
-            { // a soft shadow and the selection
-            double a = QMIN( 1.0, progress ) * alpha;
-            roundedRect( dpy, dst, RectF( rect.x - 3, rect.y - 1, rect.w + 6, rect.h + 7 ), 6, Qt::black, 0.10 * a );
-            roundedRect( dpy, dst, RectF( rect.x - 1, rect.y, rect.w + 2, rect.h + 3 ), 3, Qt::black, 0.18 * a );
-            if( item == selected && title_alpha > 0 )
-                roundedRect( dpy, dst, RectF( rect.x - 8, rect.y - 8, rect.w + 16, rect.h + 16 ), 10,
-                    highlight, 0.75 * title_alpha * alpha );
-            }
-        if( !composite )
-            { // icons on tiles
-            if( !item->in_layout )
-                continue;
-            roundedRect( dpy, dst, rect, 8, QColor( 64, 64, 64 ), 0.95 * alpha );
-            if( item->icon_picture != None && item->icon_w > 0 )
-                {
-                double size = QMIN( 64.0, QMIN( rect.w, rect.h ) * 0.6 );
-                double s = size / QMAX( item->icon_w, item->icon_h );
-                double iw = item->icon_w * s;
-                double ih = item->icon_h * s;
-                int x = (int) floor( rect.cx() - iw / 2 );
-                int y = (int) floor( rect.cy() - ih / 2 );
-                setTransform( dpy, item->icon_picture, 1 / s, 1 / s, 0, 0 );
-                XRenderComposite( dpy, PictOpOver, item->icon_picture, None, dst, 0, 0, 0, 0, x, y,
-                    (int) ceil( iw ), (int) ceil( ih ));
-                }
-            continue;
-            }
-        if( item->mip_picture[ 0 ] == None )
-            continue;
-        // the source: the mip level that is downscaled at most by half
-        int level = mipLevel( rect.w / item->geom.width());
-        updateMips( item, level );
-        Picture src = item->mip_picture[ level ];
-        const double sw = item->mip_w[ level ];
-        const double sh = item->mip_h[ level ];
-        const double sx = rect.w / sw;
-        const double sy = rect.h / sh;
-        const int dx = (int) floor( rect.x );
-        const int dy = (int) floor( rect.y );
-        const int dw = (int) ceil( rect.x + rect.w ) - dx;
-        const int dh = (int) ceil( rect.y + rect.h ) - dy;
-        const bool identity = level == 0 && fabs( sx - 1 ) < 1e-9 && fabs( sy - 1 ) < 1e-9
-            && rect.x == dx && rect.y == dy;
-        if( identity )
-            {
-            setTransform( dpy, src, 1, 1, 0, 0 );
-            XRenderSetPictureFilter( dpy, src, FilterNearest, NULL, 0 );
-            }
-        else
-            {
-            setTransform( dpy, src, 1 / sx, 1 / sy, ( dx - rect.x ) / sx, ( dy - rect.y ) / sy );
-            XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
-            }
-        if( item->shaped )
-            {
-            QValueVector< XRectangle > clip( item->shape.size());
-            const double fx = rect.w / item->geom.width();
-            const double fy = rect.h / item->geom.height();
-            for( unsigned int i = 0;
-                 i < item->shape.size();
-                 ++i )
-                {
-                const XRectangle& sr = item->shape[ i ];
-                int x1 = (int) floor( rect.x + sr.x * fx + 0.5 );
-                int y1 = (int) floor( rect.y + sr.y * fy + 0.5 );
-                int x2 = (int) floor( rect.x + ( sr.x + sr.width ) * fx + 0.5 );
-                int y2 = (int) floor( rect.y + ( sr.y + sr.height ) * fy + 0.5 );
-                clip[ i ].x = x1;
-                clip[ i ].y = y1;
-                clip[ i ].width = QMAX( 0, x2 - x1 );
-                clip[ i ].height = QMAX( 0, y2 - y1 );
-                }
-            XRenderSetPictureClipRectangles( dpy, dst, 0, 0, &clip[ 0 ], clip.size());
-            }
-        Picture mask = None;
-        if( alpha < 1.0 )
-            mask = solidPicture( dpy, Qt::black, alpha );
-        // at scale 1 like the server's automatic compositing (Src, also for
-        // ARGB windows), else blended (the edges are anti-aliased)
-        int op = mask != None || ( item->alpha_format && !identity ) ? PictOpOver : PictOpSrc;
-        XRenderComposite( dpy, op, src, mask, dst, 0, 0, 0, 0, dx, dy, dw, dh );
-        if( mask != None )
-            XRenderFreePicture( dpy, mask );
-        if( item->shaped )
-            {
-            XRenderPictureAttributes pa;
-            pa.clip_mask = None;
-            XRenderChangePicture( dpy, dst, CPClipMask, &pa );
-            }
+        if( item != dragged )
+            drawItem( item, dst );
         }
-    if( !dimmed && dim > 1.0 / 512 )
-        {
-        XRenderColor c = renderColor( Qt::black, dim );
-        XRenderFillRectangle( dpy, PictOpOver, dst, &c, 0, 0, r->width, r->height );
-        }
+    if( !dimmed )
+        drawBackdrop( dst, dim, t0 );
 
     // the titles
     if( title_alpha > 1.0 / 512 )
@@ -2276,7 +2218,7 @@ void Overview::renderFrame()
              item != NULL;
              item = items.next())
             {
-            if( !item->in_layout || item->title_picture == None )
+            if( !item->in_layout || item->title_picture == None || item == dragged )
                 continue;
             double a = title_alpha * item->fade;
             int w = item->title_pixmap.width();
@@ -2289,6 +2231,8 @@ void Overview::renderFrame()
             XRenderFreePicture( dpy, white );
             }
         }
+    if( dragged != NULL )
+        drawItem( dragged, dst );
     if( r->filter_picture != None && progress > 0.5 && state != Hiding && state != Finishing )
         {
         QDesktopWidget* desktop = QApplication::desktop();
@@ -2337,6 +2281,142 @@ void Overview::renderFrame()
         }
     if( more )
         frame_wanted = true;
+    }
+
+// the dimmed background over the desktop, the monitor a thumbnail is
+// dragged to
+void Overview::drawBackdrop( XID dst, double dim, double t )
+    {
+    if( dim > 1.0 / 512 )
+        {
+        XRenderColor c = renderColor( Qt::black, dim );
+        XRenderFillRectangle( dpy, PictOpOver, dst, &c, 0, 0, r->width, r->height );
+        }
+    if( dragged != NULL && drag_target >= 0 )
+        {
+        double a = clamp01(( t - drag_target_start ) / FadeTime );
+        RectF area( layoutArea( drag_target ));
+        roundedRect( dpy, dst, RectF( area.x + 12, area.y + 12, area.w - 24, area.h - 24 ), 16,
+            r->highlight, 0.18 * a );
+        }
+    }
+
+void Overview::drawItem( OverviewItem* item, XID dst )
+    {
+    double alpha = 1.0;
+    RectF rect( item->geom );
+    bool scaled = false;
+    switch( item->kind )
+        {
+        case OverviewItem::Desktop:
+        case OverviewItem::Dock:
+            break;
+        case OverviewItem::Other:
+            alpha = 1.0 - progress;
+            break;
+        case OverviewItem::Managed:
+            if( item->in_layout )
+                {
+                rect = item->cur;
+                alpha = item->fade;
+                scaled = true;
+                }
+            else
+                alpha = 1.0 - progress;
+            break;
+        }
+    if( alpha <= 1.0 / 512 )
+        return;
+    if( scaled && progress > 0.001 )
+        { // a soft shadow and the selection
+        double a = QMIN( 1.0, progress ) * alpha;
+        roundedRect( dpy, dst, RectF( rect.x - 3, rect.y - 1, rect.w + 6, rect.h + 7 ), 6, Qt::black, 0.10 * a );
+        roundedRect( dpy, dst, RectF( rect.x - 1, rect.y, rect.w + 2, rect.h + 3 ), 3, Qt::black, 0.18 * a );
+        if( item == selected && item != dragged && title_alpha > 0 )
+            roundedRect( dpy, dst, RectF( rect.x - 8, rect.y - 8, rect.w + 16, rect.h + 16 ), 10,
+                r->highlight, 0.75 * title_alpha * alpha );
+        }
+    if( !composite )
+        { // icons on tiles
+        if( !item->in_layout )
+            return;
+        roundedRect( dpy, dst, rect, 8, QColor( 64, 64, 64 ), 0.95 * alpha );
+        if( item->icon_picture != None && item->icon_w > 0 )
+            {
+            double size = QMIN( 64.0, QMIN( rect.w, rect.h ) * 0.6 );
+            double s = size / QMAX( item->icon_w, item->icon_h );
+            double iw = item->icon_w * s;
+            double ih = item->icon_h * s;
+            int x = (int) floor( rect.cx() - iw / 2 );
+            int y = (int) floor( rect.cy() - ih / 2 );
+            setTransform( dpy, item->icon_picture, 1 / s, 1 / s, 0, 0 );
+            XRenderComposite( dpy, PictOpOver, item->icon_picture, None, dst, 0, 0, 0, 0, x, y,
+                (int) ceil( iw ), (int) ceil( ih ));
+            }
+        return;
+        }
+    if( item->mip_picture[ 0 ] == None )
+        return;
+    // the source: the mip level that is downscaled at most by half
+    int level = mipLevel( rect.w / item->geom.width());
+    updateMips( item, level );
+    Picture src = item->mip_picture[ level ];
+    const double sw = item->mip_w[ level ];
+    const double sh = item->mip_h[ level ];
+    const double sx = rect.w / sw;
+    const double sy = rect.h / sh;
+    const int dx = (int) floor( rect.x );
+    const int dy = (int) floor( rect.y );
+    const int dw = (int) ceil( rect.x + rect.w ) - dx;
+    const int dh = (int) ceil( rect.y + rect.h ) - dy;
+    const bool identity = level == 0 && fabs( sx - 1 ) < 1e-9 && fabs( sy - 1 ) < 1e-9
+        && rect.x == dx && rect.y == dy;
+    if( identity )
+        {
+        setTransform( dpy, src, 1, 1, 0, 0 );
+        XRenderSetPictureFilter( dpy, src, FilterNearest, NULL, 0 );
+        }
+    else
+        {
+        setTransform( dpy, src, 1 / sx, 1 / sy, ( dx - rect.x ) / sx, ( dy - rect.y ) / sy );
+        XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
+        }
+    if( item->shaped )
+        {
+        QValueVector< XRectangle > clip( item->shape.size());
+        const double fx = rect.w / item->geom.width();
+        const double fy = rect.h / item->geom.height();
+        for( unsigned int i = 0;
+             i < item->shape.size();
+             ++i )
+            {
+            const XRectangle& sr = item->shape[ i ];
+            int x1 = (int) floor( rect.x + sr.x * fx + 0.5 );
+            int y1 = (int) floor( rect.y + sr.y * fy + 0.5 );
+            int x2 = (int) floor( rect.x + ( sr.x + sr.width ) * fx + 0.5 );
+            int y2 = (int) floor( rect.y + ( sr.y + sr.height ) * fy + 0.5 );
+            clip[ i ].x = x1;
+            clip[ i ].y = y1;
+            clip[ i ].width = QMAX( 0, x2 - x1 );
+            clip[ i ].height = QMAX( 0, y2 - y1 );
+            }
+        XRenderSetPictureClipRectangles( dpy, dst, 0, 0, &clip[ 0 ], clip.size());
+        }
+    Picture mask = None;
+    if( alpha < 1.0 )
+        mask = solidPicture( dpy, Qt::black, alpha );
+    // at scale 1 like the server's automatic compositing (Src, also for
+    // ARGB windows), else blended (the edges are anti-aliased)
+    int op = mask != None || ( item->alpha_format && !identity ) ? PictOpOver : PictOpSrc;
+    XRenderComposite( dpy, op, src, mask, dst, 0, 0, 0, 0, dx, dy, dw, dh );
+    if( mask != None )
+        XRenderFreePicture( dpy, mask );
+    if( item->shaped )
+        {
+        XRenderPictureAttributes pa;
+        pa.clip_mask = None;
+        XRenderChangePicture( dpy, dst, CPClipMask, &pa );
+        }
     }
 
 void Overview::present()
@@ -2456,7 +2536,7 @@ bool Overview::handlePresent( XEvent* e )
                     ++stat_skipped;
                 else
                     {
-                    if( r->stat_msc != 0 && ce->msc > r->stat_msc + 1 && ( state == Showing || state == Hiding ))
+                    if( r->stat_msc != 0 && ce->msc > r->stat_msc + 1 && ( state == Showing || state == Hiding || dragged != NULL ))
                         stat_gaps += ce->msc - r->stat_msc - 1;
                     r->stat_msc = ce->msc;
                     }
@@ -2586,6 +2666,12 @@ bool Overview::handleKey( XKeyEvent* e )
         }
     if( state == Hiding || state == Finishing )
         return true;
+    if( dragged != NULL )
+        { // only Escape, it cancels the drag (the button is still pressed)
+        if( XLookupKeysym( e, 0 ) == XK_Escape )
+            endDrag( false, drag_pos );
+        return true;
+        }
     char buf[ 32 ];
     KeySym sym = NoSymbol;
     int len = XLookupString( e, buf, sizeof( buf ) - 1, &sym, NULL );
@@ -2735,12 +2821,26 @@ bool Overview::handleButton( XButtonEvent* e )
             {
             pressed = itemAt( p );
             pressed_button = e->button;
+            press_pos = p;
+            press_consumed = false;
             }
         return true;
         }
     if( e->button != Button1 || pressed_button != (int) e->button )
         return true;
     pressed_button = 0;
+    if( press_consumed )
+        { // the drag was cancelled, the window closed meanwhile
+        press_consumed = false;
+        pressed = NULL;
+        return true;
+        }
+    if( dragged != NULL )
+        {
+        pressed = NULL;
+        endDrag( true, p );
+        return true;
+        }
     OverviewItem* item = itemAt( p );
     if( item == pressed )
         hide( item != NULL ? item->client : NULL );
@@ -2752,6 +2852,26 @@ void Overview::handleMotion( const QPoint& p )
     {
     if( state == Hiding || state == Finishing )
         return;
+    if( dragged != NULL )
+        {
+        drag_pos = p;
+        int target = dropTarget( p );
+        if( target != drag_target )
+            {
+            drag_target = target;
+            drag_target_start = now();
+            }
+        if( cornerHit( p ))
+            corner_armed = false; // a drop there doesn't close it
+        requestFrame();
+        return;
+        }
+    if( pressed != NULL && pressed_button == Button1 && !press_consumed && state == Shown
+        && ( p - press_pos ).manhattanLength() >= QMAX( DragThreshold, KGlobalSettings::dndEventDelay()))
+        {
+        startDrag( p );
+        return;
+        }
     // the hot corner again closes it, after the pointer left it
     if( !corners.isEmpty())
         {
@@ -2779,6 +2899,111 @@ void Overview::handleMotion( const QPoint& p )
     OverviewItem* item = itemAt( p );
     if( item != NULL )
         select( item );
+    }
+
+/*
+ Dragging a thumbnail to another monitor, like GNOME: it follows the
+ pointer, shrinking, above everything; the monitor under the pointer is
+ highlighted.  Nothing happens to the window until the drop (no
+ configure, no expose: the overview only draws its pixmap elsewhere).
+ Dropped on another monitor the window moves there once
+ (Client::sendToScreen()) and both monitors are laid out anew, animated;
+ dropped on its own monitor, or Escape, it flies back to its place.
+*/
+void Overview::startDrag( const QPoint& p )
+    {
+    OverviewItem* item = pressed;
+    if( item == NULL || !item->in_layout || item->client == NULL )
+        return;
+    dragged = item;
+    drag_pos = p;
+    drag_fx = item->cur.w > 0 ? clamp01(( press_pos.x() - item->cur.x ) / item->cur.w ) : 0.5;
+    drag_fy = item->cur.h > 0 ? clamp01(( press_pos.y() - item->cur.y ) / item->cur.h ) : 0.5;
+    drag_w = item->cur.w;
+    drag_h = item->cur.h;
+    drag_start = now();
+    drag_target = dropTarget( p );
+    drag_target_start = drag_start;
+    if( grabbed )
+        XChangeActivePointerGrab( dpy, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+            QCursor( Qt::SizeAllCursor ).handle(), CurrentTime );
+    stat_first_frame = drag_start;
+    frame_count = 0;
+    stat_render = stat_max_render = 0;
+    stat_skipped = stat_gaps = 0;
+    if( r != NULL )
+        r->stat_msc = 0;
+    if( debug )
+        kdWarning( 1212 ) << "overview: dragging " << item->caption << " from monitor " << item->screen << endl;
+    requestFrame();
+    }
+
+// the dragged thumbnail at time t
+void Overview::placeDragged( double t )
+    {
+    const double full = QMIN( 1.0, DragSize / QMAX( 1.0, QMAX( drag_w, drag_h )));
+    const double s = mix( 1.0, full, easeOutQuad( clamp01(( t - drag_start ) / DragShrinkTime )));
+    const double w = drag_w * s;
+    const double h = drag_h * s;
+    dragged->cur = dragged->from = dragged->to = RectF( drag_pos.x() - drag_fx * w, drag_pos.y() - drag_fy * h, w, h );
+    }
+
+// the monitor a thumbnail dropped at p goes to; -1 for its own one
+int Overview::dropTarget( const QPoint& p ) const
+    {
+    QDesktopWidget* desktop = QApplication::desktop();
+    if( dragged == NULL || desktop->numScreens() < 2 )
+        return -1;
+    int screen = -1;
+    for( int i = 0;
+         i < desktop->numScreens();
+         ++i )
+        if( desktop->screenGeometry( i ).contains( p ))
+            {
+            screen = i;
+            break;
+            }
+    return screen == dragged->screen ? -1 : screen;
+    }
+
+void Overview::endDrag( bool drop, const QPoint& p )
+    {
+    OverviewItem* item = dragged;
+    if( item == NULL )
+        return;
+    if( debug )
+        {
+        double t = now() - stat_first_frame;
+        kdWarning( 1212 ) << "overview: drag " << frame_count << " frames in " << t << " ms, "
+            << ( frame_count > 1 ? frame_count * 1000.0 / t : 0 ) << " fps, render avg "
+            << ( frame_count ? stat_render / frame_count : 0 ) << " max " << stat_max_render << " ms, skipped "
+            << stat_skipped << " missed refreshes " << stat_gaps << endl;
+        }
+    placeDragged( now()); // flies from where it is seen
+    const int target = drop ? dropTarget( p ) : -1;
+    dragged = NULL;
+    if( !drop )
+        press_consumed = true; // the button is still pressed
+    if( grabbed )
+        XChangeActivePointerGrab( dpy, ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+            cursor, CurrentTime );
+    drag_target = -1;
+    bool moved = false;
+    if( target >= 0 && item->client != NULL && ws->hasClient( item->client ))
+        {
+        if( debug )
+            kdWarning( 1212 ) << "overview: " << item->caption << " to monitor " << target << endl;
+        moved = item->client->sendToScreen( item->screen, target );
+        if( state == Hidden || r == NULL )
+            return; // aborted meanwhile
+        }
+    if( moved )
+        { // the new geometries (also of the dialogs that went along)
+        buildItems( false );
+        computeLayout();
+        updateTitles();
+        }
+    startTransition( 1.0 );
     }
 
 //****************************************
