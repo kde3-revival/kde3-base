@@ -21,6 +21,7 @@
 #include <qtooltip.h>
 
 #include <kglobal.h>
+#include <kglobalaccel.h>
 #include <kiconloader.h>
 #include <klocale.h>
 #include <kpopupmenu.h>
@@ -34,7 +35,7 @@
 #include "volumepopup.h"
 #include "volumeapplet.h"
 
-// The volume step of the mouse wheel, in percent.
+// The volume step of the mouse wheel and the volume keys, in percent.
 static const int WheelStep = 5;
 
 // The mixer: PulseAudio Volume Control.
@@ -42,6 +43,7 @@ static const char MixerCommand[] = "pavucontrol";
 
 QPtrList<VolumeApplet> VolumeApplet::s_applets;
 VolumeOSD *VolumeApplet::s_osd = 0;
+VolumeApplet *VolumeApplet::s_keyOwner = 0;
 
 extern "C"
 {
@@ -55,7 +57,8 @@ extern "C"
 VolumeApplet::VolumeApplet(const QString &configFile, Type type, int actions,
                            QWidget *parent, const char *name)
     : KPanelApplet(configFile, type, actions, parent, name),
-      m_haveMixer(false)
+      m_haveMixer(false),
+      m_keys(0)
 {
     setBackgroundOrigin(AncestorOrigin);
 
@@ -96,11 +99,29 @@ VolumeApplet::VolumeApplet(const QString &configFile, Type type, int actions,
     updateState();
 
     s_applets.append(this);
+    if (!s_keyOwner)
+    {
+        takeKeys();
+    }
 }
 
 VolumeApplet::~VolumeApplet()
 {
     s_applets.removeRef(this);
+
+    if (s_keyOwner == this)
+    {
+        // Ungrab them before another applet grabs them again.
+        m_keys->setEnabled(false);
+        delete m_keys;
+        m_keys = 0;
+        s_keyOwner = 0;
+
+        if (!s_applets.isEmpty())
+        {
+            s_applets.first()->takeKeys();
+        }
+    }
 
     // With the last applet: the library may be unloaded after it.
     if (s_applets.isEmpty())
@@ -205,6 +226,28 @@ void VolumeApplet::togglePopup()
     m_popup->show();
 }
 
+// The volume keys, handled by one applet of the process, so that a
+// press changes the volume once with two panels holding the applet.  An
+// applet in another process (an applet proxy) finds them grabbed and
+// goes without: KGlobalAccel ignores the failure.
+void VolumeApplet::takeKeys()
+{
+    s_keyOwner = this;
+
+    m_keys = new KGlobalAccel(this);
+    m_keys->insert("Increase volume", i18n("Increase Volume"),
+                   QString::null, Key_VolumeUp, Key_VolumeUp,
+                   this, SLOT(increaseVolume()));
+    m_keys->insert("Decrease volume", i18n("Decrease Volume"),
+                   QString::null, Key_VolumeDown, Key_VolumeDown,
+                   this, SLOT(decreaseVolume()));
+    m_keys->insert("Toggle mute", i18n("Toggle Mute"),
+                   QString::null, Key_VolumeMute, Key_VolumeMute,
+                   this, SLOT(toggleMute()));
+    m_keys->readSettings();
+    m_keys->updateConnections();
+}
+
 void VolumeApplet::showOSD()
 {
     // Nothing to show without a device.
@@ -221,7 +264,8 @@ void VolumeApplet::showOSD()
     s_osd->showVolume(volume, m_pulse->isMuted());
 }
 
-// The panel button's middle button and the menu: shown on the screen.
+// The panel button's middle button, the menu and the mute key: shown on
+// the screen.
 // The popup's switch calls setMuted() and shows nothing more.
 void VolumeApplet::toggleMute()
 {
@@ -253,6 +297,16 @@ void VolumeApplet::changeVolume(int steps)
     target = QMAX(target, 0);
     m_pulse->setVolume(target);
     showOSD();
+}
+
+void VolumeApplet::increaseVolume()
+{
+    changeVolume(1);
+}
+
+void VolumeApplet::decreaseVolume()
+{
+    changeVolume(-1);
 }
 
 void VolumeApplet::showMenu(const QPoint &pos)

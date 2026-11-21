@@ -27,6 +27,7 @@
 #include <kpanelapplet.h>
 
 class QPopupMenu;
+class KGlobalAccel;
 class KPopupMenu;
 class PulseVolume;
 class VolumeButton;
@@ -37,9 +38,10 @@ class VolumePopup;
  * A panel button for the volume of the default PulseAudio sink: the
  * left button opens a slider, the wheel changes the volume, the middle
  * button mutes, the right button has a menu for choosing the output
- * device and starting the mixer (pavucontrol).  The changes made with
- * the wheel and the mute switches outside the popup are shown on the
- * screen.
+ * device and starting the mixer (pavucontrol).  The volume keys of the
+ * keyboard work as the wheel and the middle button.  The changes made
+ * with them, the wheel and the mute switches outside the popup are
+ * shown on the screen.
  */
 class VolumeApplet : public KPanelApplet
 {
@@ -63,6 +65,8 @@ private slots:
     void setVolume(int percent);
     void setMuted(bool muted);
     void changeVolume(int steps);
+    void increaseVolume();
+    void decreaseVolume();
     void showMenu(const QPoint &pos);
     void menuAboutToShow();
     void deviceMenuAboutToShow();
@@ -72,6 +76,7 @@ private slots:
 private:
     void checkMixer();
     void showOSD();
+    void takeKeys();
 
     PulseVolume *m_pulse;
     VolumeButton *m_button;
@@ -85,10 +90,13 @@ private:
     QString m_iconName;
     QString m_tip;
     bool m_haveMixer;
+    KGlobalAccel *m_keys;
 
-    // The applets of this process, which share one on-screen display.
+    // The applets of this process, which share one on-screen display,
+    // and the one of them handling the volume keys.
     static QPtrList<VolumeApplet> s_applets;
     static VolumeOSD *s_osd;
+    static VolumeApplet *s_keyOwner;
 };
 
 #endif
