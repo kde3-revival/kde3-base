@@ -18,6 +18,8 @@ License. See the file "COPYING" for the exact licensing terms.
 
 #include <klocale.h>
 
+#include <math.h>
+
 namespace KWinInternal
 {
 
@@ -155,24 +157,33 @@ void Renderer::fillMasked( const RectF& r, const QColor& c, double alpha, Textur
 
 void Renderer::drawNineSlice( Texture* const tiles[ 8 ], const QRect& outer, const QColor& c, double alpha )
     {
-    // the corner sizes from the corner tiles
-    const int left = tiles[ 0 ]->width();
-    const int top = tiles[ 0 ]->height();
-    const int right = tiles[ 2 ]->width();
-    const int bottom = tiles[ 6 ]->height();
-    const int x0 = outer.x();
-    const int y0 = outer.y();
-    const int x1 = outer.x() + outer.width();
-    const int y1 = outer.y() + outer.height();
+    drawNineSlice( tiles, RectF( outer ), 1.0, 1.0, c, alpha );
+    }
+
+void Renderer::drawNineSlice( Texture* const tiles[ 8 ], const RectF& outer, double sx, double sy, const QColor& c,
+    double alpha )
+    {
+    if( outer.w <= 0 || outer.h <= 0 || sx <= 0 || sy <= 0 )
+        return;
+    // the corner sizes from the corner tiles, scaled
+    const double left = tiles[ 0 ]->width() * sx;
+    const double top = tiles[ 0 ]->height() * sy;
+    const double right = tiles[ 2 ]->width() * sx;
+    const double bottom = tiles[ 6 ]->height() * sy;
+    const double x0 = outer.x;
+    const double y0 = outer.y;
+    const double x1 = outer.x + outer.w;
+    const double y1 = outer.y + outer.h;
     // too small for the corners: they would overlap (and double the alpha)
-    const int xm = x0 + QMIN( left, QMAX( 0, ( outer.width() * left ) / QMAX( 1, left + right )));
-    const int ym = y0 + QMIN( top, QMAX( 0, ( outer.height() * top ) / QMAX( 1, top + bottom )));
-    const int xr = QMAX( xm, x1 - right );
-    const int yb = QMAX( ym, y1 - bottom );
+    const double xm = x0 + QMIN( left, outer.w * left / ( left + right ));
+    const double ym = y0 + QMIN( top, outer.h * top / ( top + bottom ));
+    const double xr = QMAX( xm, x1 - right );
+    const double yb = QMAX( ym, y1 - bottom );
+    const bool exact = sx == 1 && sy == 1 && x0 == floor( x0 ) && y0 == floor( y0 );
     struct Cell
         {
         int tile;
-        int x, y, w, h; // destination
+        double x, y, w, h; // destination
         bool stretch_x, stretch_y;
         bool from_right, from_bottom; // a cut corner shows its outer part
         } cells[ 8 ] =
@@ -194,16 +205,13 @@ void Renderer::drawNineSlice( Texture* const tiles[ 8 ], const QRect& outer, con
         if( cell.w <= 0 || cell.h <= 0 )
             continue;
         Texture* t = tiles[ cell.tile ];
-        RectF src;
-        if( cell.stretch_x )
-            src = RectF( 0, cell.from_bottom ? t->height() - cell.h : 0, t->width(), cell.h );
-        else if( cell.stretch_y )
-            src = RectF( cell.from_right ? t->width() - cell.w : 0, 0, cell.w, t->height());
-        else
-            src = RectF( cell.from_right ? t->width() - cell.w : 0, cell.from_bottom ? t->height() - cell.h : 0,
-                cell.w, cell.h );
+        // the cell in tile pixels (the edges stretched along their edge)
+        const double tw = cell.stretch_x ? t->width() : cell.w / sx;
+        const double th = cell.stretch_y ? t->height() : cell.h / sy;
+        RectF src( cell.from_right && !cell.stretch_x ? t->width() - tw : 0,
+            cell.from_bottom && !cell.stretch_y ? t->height() - th : 0, tw, th );
         fillMasked( RectF( cell.x, cell.y, cell.w, cell.h ), c, alpha, t, src,
-            ( cell.stretch_x || cell.stretch_y ) ? BilinearFilter : NearestFilter );
+            ( cell.stretch_x || cell.stretch_y || !exact ) ? BilinearFilter : NearestFilter );
         }
     }
 

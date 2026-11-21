@@ -134,6 +134,7 @@ class GLTexture : public Texture
         Pixmap pixmap; // a present buffer's
         struct gbm_bo* bo;
         int filter; // the texture parameters set last (-1 unknown)
+        bool tiled; // GL_REPEAT
     };
 
 class GlesPrivate
@@ -170,7 +171,28 @@ class GlesPrivate
         GLTexture* target;
         QRegion clip;
         bool clipped;
-        QMemArray< GLfloat > vertices;
+        // the batch of draws with the same state (see flush())
+        struct BatchState
+            {
+            BatchState() : tex( NULL ), mask( NULL ), filter( 0 ), mask_filter( 0 ), repeat( 0 ), mask_repeat( 0 ),
+                blend( 0 ), opacity( 1 ) { color[ 0 ] = color[ 1 ] = color[ 2 ] = color[ 3 ] = 0; }
+            bool operator==( const BatchState& o ) const
+                {
+                return tex == o.tex && mask == o.mask && filter == o.filter && mask_filter == o.mask_filter
+                    && repeat == o.repeat && mask_repeat == o.mask_repeat && blend == o.blend && opacity == o.opacity
+                    && color[ 0 ] == o.color[ 0 ] && color[ 1 ] == o.color[ 1 ] && color[ 2 ] == o.color[ 2 ]
+                    && color[ 3 ] == o.color[ 3 ];
+                }
+            GLTexture* tex;
+            GLTexture* mask;
+            int filter, mask_filter, repeat, mask_repeat, blend;
+            float opacity;
+            float color[ 4 ];
+            };
+        BatchState state;
+        QMemArray< GLfloat > batch;
+        void flush();
+        void setWrap( GLTexture* t, bool tile );
         bool importDmaBuf( GLTexture* t, const DmaBuf& buf );
         bool makeFramebuffer( GLTexture* t );
         void setFilter( GLTexture* t, Filter f );
@@ -213,7 +235,7 @@ GlesPrivate::~GlesPrivate()
 
 GLTexture::GLTexture( GlesPrivate* p, int w, int h, bool alpha, bool alpha_only )
     : Texture( w, h, alpha, alpha_only ), priv( p ), tex( 0 ), fbo( 0 ), image( EGL_NO_IMAGE_KHR ),
-      pixmap( None ), bo( NULL ), filter( -1 )
+      pixmap( None ), bo( NULL ), filter( -1 ), tiled( false )
     {
     glGenTextures( 1, &tex );
     glBindTexture( GL_TEXTURE_2D, tex );
@@ -223,6 +245,7 @@ GLTexture::GLTexture( GlesPrivate* p, int w, int h, bool alpha, bool alpha_only 
 
 GLTexture::~GLTexture()
     {
+    priv->flush(); // (it may be in the batch)
     if( priv->target == this )
         priv->target = NULL;
     if( fbo != 0 )
@@ -782,6 +805,7 @@ Texture* GlesRenderer::createOffscreen( int w, int h, bool alpha )
     {
     if( w <= 0 || h <= 0 || d->lost )
         return NULL;
+    d->flush();
     GLTexture* t = new GLTexture( d, w, h, alpha, false );
     glBindTexture( GL_TEXTURE_2D, t->tex );
     glTexStorage2D( GL_TEXTURE_2D, 1, GL_RGBA8, w, h );
@@ -808,6 +832,7 @@ Texture* GlesRenderer::createPresentBuffer( Window window, int w, int h, Pixmap*
     {
     if( d->lost )
         return NULL;
+    d->flush();
     const int depth = DefaultDepth( dpy, DefaultScreen( dpy ));
     if( depth == 24 && ( d->dri3_major > 1 || d->dri3_minor >= 2 ) && getenv( "KWIN_COMPOSITOR_X_BUFFERS" ) == NULL )
         {
@@ -942,6 +967,7 @@ void GlesRenderer::acquireClientBuffers()
 
 SyncPoint GlesRenderer::finish()
     {
+    d->flush();
     glFlush();
     d->checkLost();
     return SyncPoint();
@@ -950,6 +976,7 @@ SyncPoint GlesRenderer::finish()
 bool GlesRenderer::setTarget( Texture* target )
     {
     GLTexture* t = static_cast< GLTexture* >( target );
+    d->flush();
     d->clipped = false;
     d->clip = QRegion();
     if( t == NULL || d->lost || !d->makeFramebuffer( t ))
@@ -977,17 +1004,117 @@ void GlesRenderer::clearClip()
     d->clipped = false;
     }
 
+/*
+ Draws are batched: consecutive ones with the same state (textures,
+ filters, edge modes, blending, opacity, colour) go into one vertex
+ buffer and one draw call (the genie's strips, the shadows' cells).  Any
+ other GL work first flushes the batch.
+*/
+void GlesPrivate::flush()
+    {
+    if( batch.size() == 0 )
+        return;
+    const BatchState& st = state;
+    if( st.tex != NULL )
+        {
+        setFilter( st.tex, (Filter) st.filter );
+        setWrap( st.tex, st.repeat == TileRepeat );
+        glActiveTexture( GL_TEXTURE0 );
+        glBindTexture( GL_TEXTURE_2D, st.tex->tex );
+        glUniform1i( u_use_tex, 1 );
+        glUniform1i( u_tex_opaque, st.tex->hasAlpha() ? 0 : 1 );
+        glUniform2f( u_tex_size, st.tex->width(), st.tex->height());
+        glUniform1i( u_tex_edge, st.repeat == NoRepeat ? ( st.filter == BilinearFilter ? 2 : 1 ) : 0 );
+        }
+    else
+        {
+        glUniform1i( u_use_tex, 0 );
+        glUniform4f( u_color, st.color[ 0 ], st.color[ 1 ], st.color[ 2 ], st.color[ 3 ] );
+        glUniform2f( u_tex_size, 1, 1 );
+        glUniform1i( u_tex_edge, 0 );
+        }
+    if( st.mask != NULL )
+        {
+        setFilter( st.mask, (Filter) st.mask_filter );
+        setWrap( st.mask, st.mask_repeat == TileRepeat );
+        glActiveTexture( GL_TEXTURE1 );
+        glBindTexture( GL_TEXTURE_2D, st.mask->tex );
+        glActiveTexture( GL_TEXTURE0 );
+        glUniform1i( u_use_mask, 1 );
+        glUniform2f( u_mask_size, st.mask->width(), st.mask->height());
+        glUniform1i( u_mask_edge, st.mask_repeat == NoRepeat ? ( st.mask_filter == BilinearFilter ? 2 : 1 ) : 0 );
+        }
+    else
+        {
+        glUniform1i( u_use_mask, 0 );
+        glUniform2f( u_mask_size, 1, 1 );
+        glUniform1i( u_mask_edge, 0 );
+        }
+    glUniform1f( u_opacity, st.opacity );
+    switch( st.blend )
+        {
+        case BlendSource:
+            glDisable( GL_BLEND );
+            break;
+        case BlendAdd:
+            glEnable( GL_BLEND );
+            glBlendFunc( GL_ONE, GL_ONE );
+            break;
+        default:
+            glEnable( GL_BLEND );
+            glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
+            break;
+        }
+    glBufferData( GL_ARRAY_BUFFER, batch.size() * sizeof( GLfloat ), batch.data(), GL_STREAM_DRAW );
+    glDrawArrays( GL_TRIANGLES, 0, batch.size() / 6 );
+    batch.resize( 0 );
+    state.tex = state.mask = NULL;
+    }
+
+void GlesPrivate::setWrap( GLTexture* t, bool tile )
+    {
+    if( t->tiled == tile )
+        return;
+    t->tiled = tile;
+    glBindTexture( GL_TEXTURE_2D, t->tex );
+    const GLint mode = tile ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, mode );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, mode );
+    }
+
 void GlesRenderer::draw( const Draw& dr )
     {
     if( d->target == NULL || d->lost || dr.dst.w <= 0 || dr.dst.h <= 0 )
         return;
     if( dr.texture != NULL && ( dr.src.w <= 0 || dr.src.h <= 0 ))
         return;
+    RectF dst = dr.dst;
+    RectF src = dr.src;
+    RectF msrc = dr.mask_src;
+    const double tsx = dr.texture != NULL ? dr.src.w / dr.dst.w : 0;
+    const double tsy = dr.texture != NULL ? dr.src.h / dr.dst.h : 0;
+    const double msx = dr.mask != NULL ? dr.mask_src.w / dr.dst.w : 0;
+    const double msy = dr.mask != NULL ? dr.mask_src.h / dr.dst.h : 0;
+    // a scaled texture with a transparent edge covers the pixels around its
+    // fractional edges partly (XRender draws all pixels of the box, the
+    // texture fading out at its edge): drawn over the whole pixels, the
+    // shader fades the outside (GL would leave out pixels whose centre
+    // isn't inside)
+    if(( dr.texture != NULL && dr.repeat == NoRepeat && dr.filter == BilinearFilter )
+        || ( dr.mask != NULL && dr.mask_repeat == NoRepeat && dr.mask_filter == BilinearFilter ))
+        {
+        const QRect b = dst.bounds();
+        dst = RectF( b.x(), b.y(), b.width(), b.height());
+        src = RectF( dr.src.x + ( dst.x - dr.dst.x ) * tsx, dr.src.y + ( dst.y - dr.dst.y ) * tsy,
+            dst.w * tsx, dst.h * tsy );
+        msrc = RectF( dr.mask_src.x + ( dst.x - dr.dst.x ) * msx, dr.mask_src.y + ( dst.y - dr.dst.y ) * msy,
+            dst.w * msx, dst.h * msy );
+        }
     // the pieces of dst inside the clip
-    const double dx0 = QMAX( 0.0, dr.dst.x );
-    const double dy0 = QMAX( 0.0, dr.dst.y );
-    const double dx1 = QMIN( (double) d->target->width(), dr.dst.x + dr.dst.w );
-    const double dy1 = QMIN( (double) d->target->height(), dr.dst.y + dr.dst.h );
+    const double dx0 = QMAX( 0.0, dst.x );
+    const double dy0 = QMAX( 0.0, dst.y );
+    const double dx1 = QMIN( (double) d->target->width(), dst.x + dst.w );
+    const double dy1 = QMIN( (double) d->target->height(), dst.y + dst.h );
     if( dx1 <= dx0 || dy1 <= dy0 )
         return;
     QMemArray< QRect > rects;
@@ -997,14 +1124,28 @@ void GlesRenderer::draw( const Draw& dr )
         if( rects.isEmpty())
             return;
         }
+    // the batch: the same state appends
+    GlesPrivate::BatchState st;
+    st.tex = static_cast< GLTexture* >( dr.texture );
+    st.mask = static_cast< GLTexture* >( dr.mask );
+    st.filter = dr.filter;
+    st.mask_filter = dr.mask_filter;
+    st.repeat = dr.repeat;
+    st.mask_repeat = dr.mask_repeat;
+    st.blend = dr.blend;
+    st.opacity = Compositing::clamp01( dr.opacity );
+    const double a = Compositing::clamp01( dr.color_alpha );
+    st.color[ 0 ] = dr.texture == NULL ? dr.color.red() / 255.0 * a : 0;
+    st.color[ 1 ] = dr.texture == NULL ? dr.color.green() / 255.0 * a : 0;
+    st.color[ 2 ] = dr.texture == NULL ? dr.color.blue() / 255.0 * a : 0;
+    st.color[ 3 ] = dr.texture == NULL ? a : 0;
+    if( d->batch.size() > 0 && !( st == d->state ))
+        d->flush();
+    d->state = st;
     const int count = d->clipped ? rects.size() : 1;
-    if( (int) d->vertices.size() < count * 36 )
-        d->vertices.resize( count * 36 );
-    GLfloat* v = d->vertices.data();
-    const double tsx = dr.texture != NULL ? dr.src.w / dr.dst.w : 0;
-    const double tsy = dr.texture != NULL ? dr.src.h / dr.dst.h : 0;
-    const double msx = dr.mask != NULL ? dr.mask_src.w / dr.dst.w : 0;
-    const double msy = dr.mask != NULL ? dr.mask_src.h / dr.dst.h : 0;
+    const unsigned int base = d->batch.size();
+    d->batch.resize( base + count * 36 );
+    GLfloat* v = d->batch.data() + base;
     int n = 0;
     for( int i = 0;
          i < count;
@@ -1031,70 +1172,14 @@ void GlesRenderer::draw( const Draw& dr )
             const double y = ys[ corners[ c ][ 1 ]];
             *v++ = x;
             *v++ = y;
-            *v++ = dr.src.x + ( x - dr.dst.x ) * tsx;
-            *v++ = dr.src.y + ( y - dr.dst.y ) * tsy;
-            *v++ = dr.mask_src.x + ( x - dr.dst.x ) * msx;
-            *v++ = dr.mask_src.y + ( y - dr.dst.y ) * msy;
+            *v++ = src.x + ( x - dst.x ) * tsx;
+            *v++ = src.y + ( y - dst.y ) * tsy;
+            *v++ = msrc.x + ( x - dst.x ) * msx;
+            *v++ = msrc.y + ( y - dst.y ) * msy;
             }
         n += 6;
         }
-    if( n == 0 )
-        return;
-    double opacity = dr.opacity;
-    if( dr.texture != NULL )
-        {
-        GLTexture* t = static_cast< GLTexture* >( dr.texture );
-        d->setFilter( t, dr.filter );
-        glActiveTexture( GL_TEXTURE0 );
-        glBindTexture( GL_TEXTURE_2D, t->tex );
-        glUniform1i( d->u_use_tex, 1 );
-        glUniform1i( d->u_tex_opaque, t->hasAlpha() ? 0 : 1 );
-        glUniform2f( d->u_tex_size, t->width(), t->height());
-        glUniform1i( d->u_tex_edge, dr.repeat == NoRepeat ? ( dr.filter == BilinearFilter ? 2 : 1 ) : 0 );
-        }
-    else
-        {
-        const double a = Compositing::clamp01( dr.color_alpha );
-        glUniform1i( d->u_use_tex, 0 );
-        glUniform4f( d->u_color, dr.color.red() / 255.0 * a, dr.color.green() / 255.0 * a,
-            dr.color.blue() / 255.0 * a, a );
-        glUniform2f( d->u_tex_size, 1, 1 );
-        glUniform1i( d->u_tex_edge, 0 );
-        }
-    if( dr.mask != NULL )
-        {
-        GLTexture* m = static_cast< GLTexture* >( dr.mask );
-        d->setFilter( m, dr.mask_filter );
-        glActiveTexture( GL_TEXTURE1 );
-        glBindTexture( GL_TEXTURE_2D, m->tex );
-        glActiveTexture( GL_TEXTURE0 );
-        glUniform1i( d->u_use_mask, 1 );
-        glUniform2f( d->u_mask_size, m->width(), m->height());
-        glUniform1i( d->u_mask_edge, dr.mask_repeat == NoRepeat ? ( dr.mask_filter == BilinearFilter ? 2 : 1 ) : 0 );
-        }
-    else
-        {
-        glUniform1i( d->u_use_mask, 0 );
-        glUniform2f( d->u_mask_size, 1, 1 );
-        glUniform1i( d->u_mask_edge, 0 );
-        }
-    glUniform1f( d->u_opacity, Compositing::clamp01( opacity ));
-    switch( dr.blend )
-        {
-        case BlendSource:
-            glDisable( GL_BLEND );
-            break;
-        case BlendAdd:
-            glEnable( GL_BLEND );
-            glBlendFunc( GL_ONE, GL_ONE );
-            break;
-        case BlendOver:
-            glEnable( GL_BLEND );
-            glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
-            break;
-        }
-    glBufferData( GL_ARRAY_BUFFER, n * 6 * sizeof( GLfloat ), d->vertices.data(), GL_STREAM_DRAW );
-    glDrawArrays( GL_TRIANGLES, 0, n );
+    d->batch.resize( base + n * 6 );
     }
 
 } // namespace Render

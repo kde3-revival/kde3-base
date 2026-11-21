@@ -58,8 +58,9 @@ using Compositing::RectF;
 
 enum Filter { NearestFilter, BilinearFilter };
 // NoRepeat: transparent outside the texture (soft edges when scaled with
-// bilinear filtering); PadRepeat: the edge pixels extend
-enum Repeat { NoRepeat, PadRepeat };
+// bilinear filtering); PadRepeat: the edge pixels extend; TileRepeat: the
+// texture tiled (the root background)
+enum Repeat { NoRepeat, PadRepeat, TileRepeat };
 enum Blend { BlendOver, BlendSource, BlendAdd };
 
 class Texture
@@ -184,6 +185,9 @@ class Renderer
          is the rectangle the tiles cover.
         */
         void drawNineSlice( Texture* const tiles[ 8 ], const QRect& outer, const QColor& c, double alpha );
+        // the same scaled (a window drawn scaled: the corners scaled by sx, sy)
+        void drawNineSlice( Texture* const tiles[ 8 ], const RectF& outer, double sx, double sy, const QColor& c,
+            double alpha );
 
     protected:
         Renderer( Display* dpy );

@@ -85,7 +85,7 @@ void XRTexture::setRepeat( Repeat r )
         return;
     repeat = r;
     XRenderPictureAttributes pa;
-    pa.repeat = r == PadRepeat ? RepeatPad : RepeatNone;
+    pa.repeat = r == PadRepeat ? RepeatPad : r == TileRepeat ? RepeatNormal : RepeatNone;
     XRenderChangePicture( dpy, picture, CPRepeat, &pa );
     }
 
