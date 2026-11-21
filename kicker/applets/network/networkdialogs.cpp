@@ -48,10 +48,13 @@ static QCheckBox *showSwitch(QWidget *parent, QLineEdit *edit, QObject *receiver
 
 PasswordDialog::PasswordDialog(const QString &ssid, const QString &error, bool sae,
                                QWidget *parent, const char *name)
-    : KDialogBase(parent, name, false, i18n("Wi-Fi Password"), Ok | Cancel, Ok),
+    : KDialogBase(parent, name, false, QString::null, Ok | Cancel, Ok),
       m_ssid(ssid),
       m_sae(sae)
 {
+    // not "... - KDE Panel"
+    setPlainCaption(i18n("Wi-Fi Password"));
+
     QWidget *page = new QWidget(this);
     setMainWidget(page);
 
@@ -133,9 +136,10 @@ void PasswordDialog::showPassword(bool on)
 }
 
 HiddenNetworkDialog::HiddenNetworkDialog(QWidget *parent, const char *name)
-    : KDialogBase(parent, name, false, i18n("Connect to a Hidden Network"),
-                  Ok | Cancel, Ok)
+    : KDialogBase(parent, name, false, QString::null, Ok | Cancel, Ok)
 {
+    setPlainCaption(i18n("Connect to a Hidden Network"));
+
     setButtonOK(KGuiItem(i18n("C&onnect"), "connect_creating"));
 
     QWidget *page = new QWidget(this);
