@@ -40,6 +40,12 @@
             0, WIN+Qt::Key_Minus, slotWindowMinimize() );
 	DEF2( "Window Shade", I18N_NOOP("Shade Window"),
             0, WIN+Qt::Key_Underscore, slotWindowShade() );
+	// Meta+Up/Meta+Down like GNOME (Meta+Down only restores, a window that
+	// isn't maximized stays), also in the 3 modifier key scheme
+	DEF2( "Window Maximize No Toggle", I18N_NOOP("Maximize Window (No Toggle)"),
+            WIN+int(Qt::Key_Up), WIN+int(Qt::Key_Up), slotWindowMaximizeNoToggle() );
+	DEF2( "Window Restore", I18N_NOOP("Restore Maximized Window"),
+            WIN+int(Qt::Key_Down), WIN+int(Qt::Key_Down), slotWindowRestore() );
 	DEF2( "Window Move", I18N_NOOP("Move Window"),
             0, 0, slotWindowMove() );
 	DEF2( "Window Resize", I18N_NOOP("Resize Window"),

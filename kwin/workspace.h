@@ -322,6 +322,8 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void slotWindowMaximize();
         void slotWindowMaximizeVertical();
         void slotWindowMaximizeHorizontal();
+        void slotWindowMaximizeNoToggle();
+        void slotWindowRestore();
         void slotWindowMinimize();
         void slotWindowShade();
         void slotWindowRaise();

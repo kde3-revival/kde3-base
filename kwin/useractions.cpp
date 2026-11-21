@@ -880,6 +880,28 @@ void Workspace::slotWindowMaximize()
     }
 
 /*!
+  Maximizes the popup client, also when maximized in one direction; a
+  maximized one stays (GNOME's Super+Up)
+ */
+void Workspace::slotWindowMaximizeNoToggle()
+    {
+    Client* c = active_popup_client ? active_popup_client : active_client;
+    if( c && c->maximizeMode() != Client::MaximizeFull )
+        c->maximize( Client::MaximizeFull );
+    }
+
+/*!
+  Restores the popup client when maximized (also in one direction only);
+  else nothing (GNOME's Super+Down, which doesn't minimize either)
+ */
+void Workspace::slotWindowRestore()
+    {
+    Client* c = active_popup_client ? active_popup_client : active_client;
+    if( c && c->maximizeMode() != Client::MaximizeRestore )
+        c->maximize( Client::MaximizeRestore );
+    }
+
+/*!
   Maximizes the popup client vertically
  */
 void Workspace::slotWindowMaximizeVertical()
