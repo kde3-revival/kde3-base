@@ -21,6 +21,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ******************************************************************/
 
+#include <qguardedptr.h>
 #include <qcursor.h>
 #include <qfile.h>
 #include <qfontmetrics.h>
@@ -946,7 +947,15 @@ void PanelPopupButton::slotExecMenu()
     m_pressedDuringPopup = false;
     KickerTip::enableTipping(false);
     kapp->syncX();
+    QGuardedPtr<PanelPopupButton> self = this;
     kapp->processEvents();
+    if (!self)
+    {
+        // the panel went meanwhile (a copy of the main panel on another
+        // screen is made anew at any time)
+        KickerTip::enableTipping(true);
+        return;
+    }
 
     if (!m_initialized)
     {

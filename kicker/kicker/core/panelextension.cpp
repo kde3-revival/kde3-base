@@ -63,7 +63,8 @@ PanelExtension::PanelExtension(const QString& configFile, QWidget *parent, const
       m_removeExtensionMenu(0),
       _configFile(configFile),
       m_opMenuBuilt( false ),
-      m_isMirror(ExtensionManager::isMirrorConfigFile(configFile))
+      m_isMirror(ExtensionManager::isMirrorConfigFile(configFile)),
+      m_populated(false)
 {
     setAcceptDrops(!Kicker::the()->isImmutable());
     setCustomMenu(opMenu());
@@ -100,6 +101,13 @@ PanelExtension::~PanelExtension()
 
 void PanelExtension::populateContainerArea()
 {
+    // once: populateNow() may have come before the event loop
+    if (m_populated)
+    {
+        return;
+    }
+    m_populated = true;
+
     _containerArea->show();
 
     if (ExtensionManager::the()->isMainPanel(topLevelWidget()))

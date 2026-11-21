@@ -30,6 +30,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <qdesktopwidget.h>
 #include <qdir.h>
 #include <qfile.h>
+#include <qfileinfo.h>
+#include <qguardedptr.h>
 #include <qtimer.h>
 
 #include <kaboutdata.h>
@@ -45,6 +47,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <kmessagebox.h>
 #include <kstandarddirs.h>
 #include <kwinmodule.h>
+#include <dcopclient.h>
 #include <dcopref.h>
 
 #include "container_extension.h"
@@ -835,12 +838,8 @@ QRect ExtensionManager::desktopIconsArea(int screen) const
         reduceArea(area, (*it));
     }
 
-    for (MirrorMap::const_iterator it = m_mirrors.constBegin();
-         it != m_mirrors.constEnd();
-         ++it)
-    {
-        reduceArea(area, (*it).panel);
-    }
+    // not the mirrors: this area is the whole desktop's, a mirror would
+    // only cut it further where the screens differ in size
 
     kdDebug(1210) << "ExtensionManager::desktopIconsArea() = " << area
                   << " screen = " << screen << endl;
@@ -915,6 +914,38 @@ static QString mirrorEntriesText(const QMap<QString, QString>& entries,
     }
 
     return text;
+}
+
+// The entries of a config file as an application sees them, with those
+// of the system's files below the user's (KConfig::entryMap() leaves the
+// system's out: a default panel layout the user never touched).
+static QMap<QString, QMap<QString, QString> > readConfigCascade(const QString& name)
+{
+    QMap<QString, QMap<QString, QString> > groups;
+    QStringList files = KGlobal::dirs()->findAllResources("config", name);
+    // the user's first: read the other way round, the later wins
+    for (QStringList::const_iterator it = files.fromLast(); it != files.end(); --it)
+    {
+        KConfig file(*it, true, false, "");
+        QStringList names = file.groupList();
+        for (QStringList::const_iterator git = names.constBegin(); git != names.constEnd(); ++git)
+        {
+            QMap<QString, QString> entries = file.entryMap(*git);
+            for (QMap<QString, QString>::const_iterator eit = entries.constBegin();
+                 eit != entries.constEnd();
+                 ++eit)
+            {
+                groups[*git][eit.key()] = eit.data();
+            }
+        }
+
+        if (it == files.begin())
+        {
+            break;
+        }
+    }
+
+    return groups;
 }
 
 QString ExtensionManager::mirrorFilePrefix()
@@ -1099,16 +1130,17 @@ bool ExtensionManager::readMirrorSource(MirrorSource& source) const
     }
 
     QStringList applets = general.readListEntry("Applets2");
+    MirrorSource::Groups mainGroups = readConfigCascade(mainConfigFile);
     QString content;
     for (QStringList::const_iterator it = applets.constBegin(); it != applets.constEnd(); ++it)
     {
         QString appletId = *it;
-        if (!config.hasGroup(appletId))
+        if (!mainGroups.contains(appletId))
         {
             continue;
         }
 
-        MirrorSource::Entries entries = config.entryMap(appletId);
+        MirrorSource::Entries entries = mainGroups[appletId];
         QString appletType = appletId.left(appletId.findRev('_'));
         QString configFile;
         if (appletType == "Applet")
@@ -1127,30 +1159,43 @@ bool ExtensionManager::readMirrorSource(MirrorSource& source) const
         source.containers[appletId] = entries;
         content += '[' + appletId + "]\n" + mirrorEntriesText(entries, false);
 
-        if (configFile.isEmpty())
+        if (appletType != "Applet")
         {
             continue;
         }
 
+        // an applet of a mirror always gets a config file of the mirror,
+        // also when the main panel's has none (AppletInfo would make up
+        // a name outside the mirror's files)
         MirrorSource::Groups groups;
-        KConfig appletConfig(configFile, true, false);
-        QStringList groupNames = appletConfig.groupList();
-        for (QStringList::const_iterator git = groupNames.constBegin();
-             git != groupNames.constEnd();
-             ++git)
+        if (!configFile.isEmpty())
         {
-            groups[*git] = appletConfig.entryMap(*git);
-            content += '[' + appletId + '/' + *git + "]\n" + mirrorEntriesText(groups[*git]);
+            groups = readConfigCascade(configFile);
+            for (MirrorSource::Groups::const_iterator git = groups.constBegin();
+                 git != groups.constEnd();
+                 ++git)
+            {
+                // what an applet records as it is used, not settings: the
+                // quick launcher's statistics change with every program
+                // started, the mirrors would be made anew every time
+                if (git.key() == "PopularityData")
+                {
+                    continue;
+                }
+
+                content += '[' + appletId + '/' + git.key() + "]\n" + mirrorEntriesText(*git);
+            }
+
+            source.watchedFiles.append(locateLocal("config", configFile));
         }
 
         // the pager of a mirror shows its own screen
-        if (entries["DesktopFile"] == "minipagerapplet.desktop")
+        if (QFileInfo(entries["DesktopFile"]).fileName() == "minipagerapplet.desktop")
         {
             groups["General"]["CurrentScreenOnly"] = "true";
         }
 
         source.configs[appletId] = groups;
-        source.watchedFiles.append(locateLocal("config", configFile));
     }
 
     source.panelSignature = mirrorEntriesText(source.panel);
@@ -1211,6 +1256,7 @@ QValueList<int> ExtensionManager::mirrorScreens(bool askToReplace)
         bool keep = false;
         while (ExtensionContainer* manual = manualPanelAt(screen, position))
         {
+            QGuardedPtr<ExtensionContainer> guard = manual;
             if (!askToReplace ||
                 KMessageBox::questionYesNo(0,
                     i18n("Screen %1 already has a panel at the edge where the main "
@@ -1225,7 +1271,11 @@ QValueList<int> ExtensionManager::mirrorScreens(bool askToReplace)
                 break;
             }
 
-            removeContainer(manual);
+            // the dialog ran the event loop: still there?
+            if (guard && _containers.contains(manual))
+            {
+                removeContainer(manual);
+            }
         }
 
         if (!keep)
@@ -1247,7 +1297,17 @@ void ExtensionManager::syncMirrors()
     // A mirror may be busy: a menu or a dialog of it runs a nested event
     // loop, and Qt 3 also runs the deleteLater()s in nested loops.  The
     // mirrors are deleted from the main loop only.
-    if (m_syncingMirrors || qApp->loopLevel() > 1)
+    // Nor while a mirror slides in or out: that runs processEvents() from
+    // its own code (at loop level 1), and this timer may fire in there.
+    bool busy = m_syncingMirrors || qApp->loopLevel() > 1 || QApplication::activePopupWidget();
+    for (MirrorMap::const_iterator it = m_mirrors.constBegin();
+         it != m_mirrors.constEnd() && !busy;
+         ++it)
+    {
+        busy = (*it).panel->isBusy();
+    }
+
+    if (busy)
     {
         m_mirrorSyncTimer->start(500, true);
         return;
@@ -1347,6 +1407,14 @@ void ExtensionManager::syncMirrors()
     {
         emit desktopIconsAreaChanged(desktopIconsArea(*it), *it);
     }
+
+    if (!changed.isEmpty())
+    {
+        // the taskbars of the main panel and of the mirrors show the
+        // windows of their screens while there are mirrors (TaskBar::
+        // onlyCurrentScreenWanted()); the signal makes them look again
+        kapp->dcopClient()->emitDCOPSignal("kdeTaskBarConfigChanged()", QByteArray());
+    }
 }
 
 void ExtensionManager::createMirror(int screen, const MirrorSource& source)
@@ -1434,8 +1502,20 @@ void ExtensionManager::createMirror(int screen, const MirrorSource& source)
     mirror.contentSignature = source.contentSignature;
     m_mirrors[screen] = mirror;
 
+    // stacked with the other panels of its screen as the main panel is
+    e->setPanelOrder(m_mainPanel->panelOrder());
+
     e->readConfig();
     e->show();
+
+    // the applets now, not from the event loop: some run a nested event
+    // loop as they start (the trash applet's KIO::NetAccess::stat()), and
+    // two of those nested in each other, one per mirror, never return
+    PanelExtension* panel = dynamic_cast<PanelExtension*>(e->extension());
+    if (panel)
+    {
+        panel->populateNow();
+    }
 }
 
 void ExtensionManager::updateMirrorPanel(Mirror& mirror, int screen,

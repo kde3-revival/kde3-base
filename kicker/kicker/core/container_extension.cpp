@@ -84,7 +84,9 @@ ExtensionContainer::ExtensionContainer(const AppletInfo& info,
     _rbHB(0),
     m_extension(0),
     m_maintainFocus(0),
-    m_panelOrder(ExtensionManager::the()->nextPanelOrder())
+    m_panelOrder(ExtensionManager::the()->nextPanelOrder()),
+    m_busy(0),
+    m_tippingDisabled(0)
 {
     // now actually try to load the extension
     m_extension = PluginManager::the()->loadExtension(info, this);
@@ -109,7 +111,9 @@ ExtensionContainer::ExtensionContainer(KPanelExtension* extension,
     _rbHB(0),
     m_extension(extension),
     m_maintainFocus(0),
-    m_panelOrder(ExtensionManager::the()->nextPanelOrder())
+    m_panelOrder(ExtensionManager::the()->nextPanelOrder()),
+    m_busy(0),
+    m_tippingDisabled(0)
 {
     m_extension->reparent(this, QPoint(0, 0));
     init();
@@ -207,6 +211,30 @@ void ExtensionContainer::init()
 
 ExtensionContainer::~ExtensionContainer()
 {
+    // what a slide still owed when the panel goes (a mirror is deleted
+    // at any time): the global counts must not stay off by one
+    if (_autoHidden)
+    {
+        UnhideTrigger::the()->setEnabled(false);
+    }
+
+    for (; m_tippingDisabled > 0; --m_tippingDisabled)
+    {
+        KickerTip::enableTipping(true);
+    }
+}
+
+namespace
+{
+    // counts the slides running, see ExtensionContainer::isBusy()
+    class BusyGuard
+    {
+    public:
+        BusyGuard(int& count) : m_count(count) { ++m_count; }
+        ~BusyGuard() { --m_count; }
+    private:
+        int& m_count;
+    };
 }
 
 QSize ExtensionContainer::sizeHint(KPanelExtension::Position p, const QSize &maxSize) const
@@ -561,6 +589,10 @@ void ExtensionContainer::actuallyUpdateLayout()
 
 void ExtensionContainer::enableMouseOverEffects()
 {
+    if (m_tippingDisabled > 0)
+    {
+        --m_tippingDisabled;
+    }
     KickerTip::enableTipping(true);
     QPoint globalPos = QCursor::pos();
     QPoint localPos = mapFromGlobal(globalPos);
@@ -763,6 +795,7 @@ void ExtensionContainer::hideRight()
 void ExtensionContainer::autoHide(bool hide)
 {
 //   kdDebug(1210) << "PanelContainer::autoHide( " << hide << " )" << endl;
+    BusyGuard busy(m_busy);
 
     if (_in_autohide || hide == _autoHidden)
     {
@@ -801,6 +834,7 @@ void ExtensionContainer::autoHide(bool hide)
     _autoHidden = hide;
     UnhideTrigger::the()->setEnabled(_autoHidden);
     KickerTip::enableTipping(false);
+    ++m_tippingDisabled;
 
     if (hide)
     {
@@ -868,7 +902,9 @@ void ExtensionContainer::autoHide(bool hide)
 void ExtensionContainer::animatedHide(bool left)
 {
 //    kdDebug(1210) << "PanelContainer::animatedHide()" << endl;
+    BusyGuard busy(m_busy);
     KickerTip::enableTipping(false);
+    ++m_tippingDisabled;
     blockUserInput(true);
 
     UserHidden newState;
@@ -960,10 +996,13 @@ void ExtensionContainer::animatedHide(bool left)
     qApp->processEvents();
 
     // save our hidden status so that when kicker starts up again
-    // we'll come back in the same state
-    KConfig *config = KGlobal::config();
-    config->setGroup(extensionId());
-    config->writeEntry("UserHidden", userHidden());
+    // we'll come back in the same state (a mirror saves nothing)
+    if (!ExtensionManager::the()->isMirror(this))
+    {
+        KConfig *config = KGlobal::config();
+        config->setGroup(extensionId());
+        config->writeEntry("UserHidden", userHidden());
+    }
 
     QTimer::singleShot(100, this, SLOT(enableMouseOverEffects()));
 }
@@ -980,11 +1019,62 @@ KPanelExtension::Alignment ExtensionContainer::alignment() const
     return static_cast<KPanelExtension::Alignment>(m_settings.alignment());
 }
 
+bool ExtensionContainer::onInnerEdge() const
+{
+    QDesktopWidget* desktop = QApplication::desktop();
+    int screen = xineramaScreen();
+    if (screen == XineramaAllScreens || desktop->numScreens() < 2)
+    {
+        return false;
+    }
+
+    QRect screenRect(desktop->screenGeometry(screen));
+    QRect virtRect(desktop->geometry());
+    QRect beyond;
+    switch (position())
+    {
+        case KPanelExtension::Top:
+            beyond.setCoords(screenRect.left(), virtRect.top(),
+                             screenRect.right(), screenRect.top() - 1);
+            break;
+        case KPanelExtension::Bottom:
+            beyond.setCoords(screenRect.left(), screenRect.bottom() + 1,
+                             screenRect.right(), virtRect.bottom());
+            break;
+        case KPanelExtension::Left:
+            beyond.setCoords(virtRect.left(), screenRect.top(),
+                             screenRect.left() - 1, screenRect.bottom());
+            break;
+        case KPanelExtension::Right:
+            beyond.setCoords(screenRect.right() + 1, screenRect.top(),
+                             virtRect.right(), screenRect.bottom());
+            break;
+        default:
+            return false;
+    }
+
+    if (!beyond.isValid())
+    {
+        return false;
+    }
+
+    for (int s = 0; s < desktop->numScreens(); ++s)
+    {
+        if (s != screen && desktop->screenGeometry(s).intersects(beyond))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void ExtensionContainer::updateWindowManager()
 {
     NETExtendedStrut strut;
 
-    if (reserveStrut())
+    // no strut on an inner edge: it would cover the screen beyond too
+    if (reserveStrut() && !onInnerEdge())
     {
         //    kdDebug(1210) << "PanelContainer::updateWindowManager()" << endl;
         // Set the relevant properties on the window.

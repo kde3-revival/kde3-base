@@ -115,6 +115,15 @@ public:
     int panelOrder() const { return m_panelOrder; }
     void setPanelOrder(int order) { m_panelOrder = order; }
 
+    // sliding in or out: it runs the event loop (processEvents()) from
+    // its own code and must not be deleted meanwhile
+    bool isBusy() const { return m_busy > 0 || _in_autohide || _block_user_input; }
+
+    // an inner edge: another screen lies beyond the panel's edge, where
+    // a strut, which counts from the edge of the whole desktop, would
+    // take that screen too
+    bool onInnerEdge() const;
+
 signals:
     void removeme(ExtensionContainer*);
 
@@ -197,6 +206,8 @@ private:
     KPanelExtension *m_extension;
     int m_maintainFocus;
     int m_panelOrder;
+    int m_busy;
+    int m_tippingDisabled;
     QColor m_highlightColor;
 };
 

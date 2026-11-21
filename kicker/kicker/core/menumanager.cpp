@@ -21,6 +21,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ******************************************************************/
 
+#include <qguardedptr.h>
 #include <qcursor.h>
 #include <qpixmap.h>
 #include <qtimer.h>
@@ -169,7 +170,7 @@ void MenuManager::kmenuAccelActivated()
         const QSize size = m_kmenu->sizeHint();
         m_kmenu->resize(size.width(),size.height());
 
-        PanelPopupButton* button = findKButtonFor(m_kmenu);
+        QGuardedPtr<PanelPopupButton> button = findKButtonFor(m_kmenu);
 
         // let's unhide the panel while we're at it. traverse the widget
         // hierarchy until we find the panel, if any
@@ -190,7 +191,10 @@ void MenuManager::kmenuAccelActivated()
             menuParent = menuParent->parent();
         }
 
-        button->showMenu();
+        if (button)
+        {
+            button->showMenu();
+        }
     }
 }
 

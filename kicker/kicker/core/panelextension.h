@@ -49,6 +49,8 @@ public:
 
     QPopupMenu* opMenu();
     ContainerArea* containerArea() const { return _containerArea; }
+    // loads the applets at once instead of from the event loop
+    void populateNow() { populateContainerArea(); }
 
 k_dcop:
     int panelSize() { return sizeInPixels(); }
@@ -106,6 +108,7 @@ private:
     QString _configFile;
     bool m_opMenuBuilt;
     bool m_isMirror;
+    bool m_populated;
 };
 
 class MenubarExtension : public PanelExtension
