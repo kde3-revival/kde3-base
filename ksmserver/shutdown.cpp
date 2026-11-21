@@ -287,6 +287,29 @@ void KSMServer::suspend()
 
 void KSMServer::suspendInternal()
 {
+    sleepInternal( false );
+}
+
+bool KSMServer::canHibernate()
+{
+    KConfig* config = KGlobal::config();
+    config->reparseConfiguration();
+    config->setGroup( "General" );
+    return config->readBoolEntry( "offerSleep", true ) && Logind::canHibernate();
+}
+
+void KSMServer::hibernate()
+{
+    QTimer::singleShot( 0, this, SLOT( hibernateInternal() ) );
+}
+
+void KSMServer::hibernateInternal()
+{
+    sleepInternal( true );
+}
+
+void KSMServer::sleepInternal( bool hibernate )
+{
     if ( state != Idle || dialogActive )
         return;
     KConfig* config = KGlobal::config();
@@ -295,7 +318,7 @@ void KSMServer::suspendInternal()
     if ( !config->readBoolEntry( "offerSleep", true ) )
         return;
     dialogActive = true; // no logout meanwhile
-    goToSleep( false, config->readBoolEntry( "lockBeforeSleep", true ) );
+    goToSleep( hibernate, config->readBoolEntry( "lockBeforeSleep", true ) );
     dialogActive = false;
 }
 

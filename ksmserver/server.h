@@ -60,6 +60,9 @@ k_dcop:
     // sleep (suspend to RAM) without the logout dialog, e.g. from the K menu
     bool canSuspend();
     void suspend();
+    // and hibernate (suspend to disk), e.g. from the power applet
+    bool canHibernate();
+    void hibernate();
 public:
     KSMServer( const QString& windowManager, bool only_local );
     ~KSMServer();
@@ -112,6 +115,7 @@ private slots:
     void kcmPhase2Timeout();
     void pendingShutdownTimeout();
     void suspendInternal();
+    void hibernateInternal();
 
     void autoStart0();
     void autoStart1();
@@ -132,6 +136,7 @@ private:
 
     bool lockScreen();
     void goToSleep( bool hibernate, bool lock );
+    void sleepInternal( bool hibernate );
 
     void discardSession();
     void storeSession();
