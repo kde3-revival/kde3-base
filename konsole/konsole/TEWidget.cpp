@@ -202,6 +202,13 @@ void TEWidget::setColorTable(const ColorEntry table[])
 // box drawing (U+2500..U+257F) and block elements (U+2580..U+259F)
 static inline bool isLineChar(Q_UINT16 c) { return c >= 0x2500 && c <= 0x259F; }
 
+// U+FFFD stands in for the characters a cell cannot show (those above
+// U+FFFF) and the font's glyph for it is often wider than a cell.  Drawn
+// as part of a fixed font run it would push the following characters out
+// of their cells, so it is drawn cell by cell, like the line characters,
+// and as a box where the glyph does not fit.
+static inline bool isCellDrawn(Q_UINT16 c) { return isLineChar(c) || c == 0xfffd; }
+
 // assert for i in [0..31] : vt100extended(vt100_graphics[i]) == i.
 
 unsigned short vt100_graphics[32] =
@@ -748,6 +755,16 @@ void TEWidget::drawTextFixed(QPainter &paint, int x, int y,
         }
     }
 
+    // a U+FFFD glyph that does not fit becomes a box, see isCellDrawn()
+    if (drawstr[0].unicode() == 0xfffd && paint.fontMetrics().width(drawstr[0]) > w)
+    {
+        int m = QMAX(1, w/6);
+        int top = y + m_lineSpacing/2 + font_a/4;
+        paint.drawRect(x + m, top, w - 2*m, y + m_lineSpacing/2 + font_a - top);
+        x += w;
+        continue;
+    }
+
     paint.drawText(x,y, w, font_h, Qt::AlignHCenter | Qt::DontClip, drawstr, -1);
     x += w;
   }
@@ -1033,7 +1050,7 @@ void TEWidget::setImage(const ca* const newimg, int lines, int columns)
             continue;
         int p = 0;
         disstrU[p++] = c; //fontMap(c);
-        bool lineDraw = isLineChar(c);
+        bool lineDraw = isCellDrawn(c);
         bool doubleWidth = (ext[x+1].c == 0);
         cr = ext[x].r;
         cb = ext[x].b;
@@ -1046,7 +1063,7 @@ void TEWidget::setImage(const ca* const newimg, int lines, int columns)
             continue; // Skip trailing part of multi-col chars.
 
           if (ext[x+len].f != cf || ext[x+len].b != cb || ext[x+len].r != cr ||
-              !dirtyMask[x+len] || isLineChar(c) != lineDraw || (ext[x+len+1].c == 0) != doubleWidth)
+              !dirtyMask[x+len] || isCellDrawn(c) != lineDraw || (ext[x+len+1].c == 0) != doubleWidth)
             break;
 
           disstrU[p++] = c; //fontMap(c);
@@ -1296,7 +1313,7 @@ void TEWidget::paintContents(QPainter &paint, const QRect &rect, bool pm)
       c = image[loc(x,y)].glyph();
       if (c)
          disstrU[p++] = c; //fontMap(c);
-      bool lineDraw = isLineChar(c);
+      bool lineDraw = isCellDrawn(c);
       bool doubleWidth = (image[loc(x,y)+1].c == 0);
       cacol cf = image[loc(x,y)].f;
       cacol cb = image[loc(x,y)].b;
@@ -1306,7 +1323,7 @@ void TEWidget::paintContents(QPainter &paint, const QRect &rect, bool pm)
              image[loc(x+len,y)].b == cb &&
              image[loc(x+len,y)].r == cr &&
              (image[loc(x+len,y)+1].c == 0) == doubleWidth &&
-             isLineChar( c = image[loc(x+len,y)].glyph()) == lineDraw) // Assignment!
+             isCellDrawn( c = image[loc(x+len,y)].glyph()) == lineDraw) // Assignment!
       {
         if (c)
           disstrU[p++] = c; //fontMap(c);
