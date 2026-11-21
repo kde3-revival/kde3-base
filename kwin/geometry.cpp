@@ -31,6 +31,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "rules.h"
 #include "overview.h"
 #include "effects.h"
+#include "compositor.h"
 
 extern Time qt_x_time;
 
@@ -2048,6 +2049,7 @@ void Client::changeMaximize( bool vertical, bool horizontal, bool adjust )
     // application asks, not when only the work area changed or when the
     // geometry already is the maximized one)
     EffectsMaximize effects_maximize( this, !adjust && check_maximize_recursion == 0 );
+    CompositorUpdate compositor_update( this ); // (no shadow when maximized)
     GeometryUpdatesPostponer blocker( this );
 
     // maximing one way and unmaximizing the other way shouldn't happen
@@ -2319,6 +2321,8 @@ void Client::setFullScreen( bool set, bool user )
     updateWindowRules();
     if( workspace()->windowOverview() != NULL )
         workspace()->windowOverview()->stackingChanged(); // redirection, hot corners
+    if( workspace()->compositor() != NULL )
+        workspace()->compositor()->clientChanged( this ); // shadow, unredirection
     }
 
 int Client::checkFullScreenHack( const QRect& geom ) const

@@ -140,6 +140,14 @@ class Presenter : public QObject
         ~Presenter();
         // buffers of w x h for drawing into window win (offset x, y)
         void start( Window win, int x, int y, int w, int h, bool use_present );
+        // presenting count (<= Buffers) pixmaps of the window's size made by
+        // someone else (the compositor's renderer), never freed here
+        void startExternal( Window win, const Pixmap* pixmaps, int count, bool use_present );
+        // the index of a buffer the server doesn't use (-1: none, idle() later)
+        int freeBuffer() const;
+        // shows buffer index: with Present at the next refresh (update: what
+        // changed, for copies; None: all), else copied at once
+        void presentBuffer( int index, XID update );
         void stop();
         bool isStarted() const { return window != None; }
         // a new place in the window; the buffers are made anew when larger
@@ -190,6 +198,8 @@ class Presenter : public QObject
         GC gc;
         int current;
         bool present;
+        bool external; // the buffers aren't ours
+        int buffer_count;
         XID present_eid;
         unsigned int serial;
         int queue; // presentations queued in the server, at consecutive MSCs

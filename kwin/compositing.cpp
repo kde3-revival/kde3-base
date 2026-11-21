@@ -226,7 +226,8 @@ QPtrList< Presenter >* Presenter::presenters = NULL;
 
 Presenter::Presenter( Display* d )
     : dpy( d ), window( None ), off_x( 0 ), off_y( 0 ), width( 0 ), height( 0 ), buf_w( 0 ), buf_h( 0 ),
-      format( NULL ), depth( 0 ), gc( NULL ), current( 0 ), present( false ), present_eid( None ),
+      format( NULL ), depth( 0 ), gc( NULL ), current( 0 ), present( false ), external( false ), buffer_count( 0 ),
+      present_eid( None ),
       serial( 0 ), queue( 0 ), next_msc( 0 ), last_msc( 0 ), last_ust( 0 ), period( 1000.0 / 60 ),
       last_complete( 0 ), stat_msc( 0 )
     {
@@ -286,12 +287,90 @@ void Presenter::start( Window win, int x, int y, int w, int h, bool use_present 
 #endif
     }
 
+void Presenter::startExternal( Window win, const Pixmap* pixmaps, int count, bool use_present )
+    {
+    stop();
+    window = win;
+    off_x = off_y = 0;
+    XWindowAttributes attr;
+    XGetWindowAttributes( dpy, win, &attr );
+    width = buf_w = attr.width;
+    height = buf_h = attr.height;
+#ifdef COMPOSITING_PRESENT
+    present = use_present && have_present;
+#else
+    Q_UNUSED( use_present );
+    present = false;
+#endif
+    external = true;
+    buffer_count = QMIN( count, (int) Buffers );
+    for( int i = 0;
+         i < Buffers;
+         ++i )
+        {
+        buffers[ i ] = i < buffer_count ? pixmaps[ i ] : None;
+        pictures[ i ] = None;
+        busy[ i ] = false;
+        }
+    current = 0;
+    queue = 0;
+    next_msc = 0;
+    last_msc = 0;
+    last_ust = 0;
+    period = 1000.0 / 60;
+    last_complete = 0;
+    stat_msc = 0;
+    gc = XCreateGC( dpy, window, 0, NULL );
+#ifdef COMPOSITING_PRESENT
+    if( present )
+        present_eid = XPresentSelectInput( dpy, window, PresentCompleteNotifyMask | PresentIdleNotifyMask );
+#endif
+    }
+
+int Presenter::freeBuffer() const
+    {
+    for( int i = 0;
+         i < buffer_count;
+         ++i )
+        if( !busy[ i ] )
+            return i;
+    return -1;
+    }
+
+void Presenter::presentBuffer( int buf, XID update )
+    {
+    current = buf;
+#ifdef COMPOSITING_PRESENT
+    if( present )
+        {
+        busy[ buf ] = true;
+        if( !mscKnown( now()))
+            next_msc = 0; // the next refresh
+        ++queue;
+        XPresentPixmap( dpy, window, buffers[ buf ], ++serial, None, update, 0, 0,
+            None, None, None, PresentOptionNone, next_msc, 0, 0, NULL, 0 );
+        if( next_msc != 0 )
+            ++next_msc;
+        watchdog_timer.start( 200, true );
+        XFlush( dpy );
+        return;
+        }
+#endif
+    if( update != None )
+        XFixesSetGCClipRegion( dpy, gc, 0, 0, update );
+    XCopyArea( dpy, buffers[ buf ], window, gc, 0, 0, width, height, 0, 0 );
+    if( update != None )
+        XSetClipMask( dpy, gc, None );
+    XFlush( dpy );
+    }
+
 void Presenter::createBuffers()
     {
     buf_w = QMAX( 1, width );
     buf_h = QMAX( 1, height );
     Window root = DefaultRootWindow( dpy );
     const int count = present ? (int) Buffers : 1;
+    buffer_count = count;
     for( int i = 0;
          i < count;
          ++i )
@@ -305,6 +384,19 @@ void Presenter::createBuffers()
 
 void Presenter::freeBuffers()
     {
+    if( external )
+        {
+        for( int i = 0;
+             i < Buffers;
+             ++i )
+            {
+            buffers[ i ] = None;
+            busy[ i ] = false;
+            }
+        external = false;
+        buffer_count = 0;
+        return;
+        }
     for( int i = 0;
          i < Buffers;
          ++i )

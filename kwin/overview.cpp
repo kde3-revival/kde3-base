@@ -53,6 +53,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "utils.h"
 #include "compositing.h"
 #include "effects.h"
+#include "compositor.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -1231,6 +1232,9 @@ void Overview::show()
             kdWarning( 1212 ) << "overview: not shown, state " << state << " blocked " << blocked() << endl;
         return;
         }
+    // (not over a composited screen yet)
+    if( ws->compositor() != NULL && ws->compositor()->isActive())
+        return;
     // the window animations draw the same windows (and the overview
     // changes their redirection meanwhile)
     if( ws->windowEffects() != NULL )

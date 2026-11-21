@@ -34,9 +34,11 @@ kde3_add_kdeinit_executable(kwin
     render.cpp
     render_xrender.cpp
     shadow.cpp
+    compositor.cpp
   MOC
     client.h
     compositing.h
+    compositor.h
     effects.h
     geometrytip.h
     main.h

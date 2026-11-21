@@ -50,6 +50,7 @@ class Rules;
 class WindowRules;
 class Overview;
 class Effects;
+class Compositor;
 
 class SystemTrayWindow
     {
@@ -299,6 +300,11 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void hideOverview();
         Overview* windowOverview() const { return overview; }
         Effects* windowEffects() const { return effects; }
+        Compositor* compositor() const { return compositor_; }
+        // dcop interface: compositing (compositor.h)
+        void toggleCompositing();
+        bool compositingActive();
+        QString compositingStatus();
         // KWin keeps all frames below this (unmapped) window
         Window supportWindowId() const;
         bool tabBoxActive() const { return tab_grab || control_grab; }
@@ -346,6 +352,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void slotWalkThroughWindows();
         void slotWalkBackThroughWindows();
         void slotShowOverview();
+        void slotToggleCompositing();
 
         void slotWindowOperations();
         void slotWindowClose();
@@ -386,8 +393,10 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
 
         void updateClientArea();
         
-        // kompmgr, also dcop
+        // the old kompmgr's dcop calls: compositing on (unless disabled in the settings)
         void startKompmgr();
+        // off (suspended)
+        void stopKompmgr();
 
     private slots:
         void desktopPopupAboutToShow();
@@ -410,10 +419,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void setPopupClientOpacity(int v);
         void resetClientOpacity();
         void setTransButtonText(int value);
-        void unblockKompmgrRestart();
-        void restartKompmgr();
-        void handleKompmgrOutput( KProcess *proc, char *buffer, int buflen);
-        void stopKompmgr();
+        void compositingChanged( bool active );
         // end 
 
     protected:
@@ -578,6 +584,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         TabBox* tab_box;
         Overview* overview;
         Effects* effects;
+        Compositor* compositor_;
         PopupInfo* popupinfo;
 
         QPopupMenu *popup;

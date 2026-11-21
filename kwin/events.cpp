@@ -24,6 +24,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "overview.h"
 #include "effects.h"
 #include "compositing.h"
+#include "compositor.h"
 
 #include <qwhatsthis.h>
 #include <kkeynative.h>
@@ -199,7 +200,9 @@ void RootInfo::changeShowingDesktop( bool showing )
 bool Workspace::workspaceEvent( XEvent * e )
     {
     if( Compositing::dispatchPresentEvent( e ))
-        return true; // the overview's and the animations' frames
+        return true; // the compositor's, the overview's and the animations' frames
+    if( compositor_ != NULL && compositor_->x11Event( e ))
+        return true;
     if( effects != NULL && effects->x11Event( e ))
         return true;
     if( overview != NULL && overview->x11Event( e ))

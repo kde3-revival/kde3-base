@@ -42,6 +42,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "rules.h"
 #include "overview.h"
 #include "effects.h"
+#include "compositor.h"
 #include "compositing.h"
 
 #include <X11/extensions/shape.h>
@@ -57,11 +58,6 @@ namespace KWinInternal
 extern int screen_number;
 
 Workspace *Workspace::_self = 0;
-
-KProcess* kompmgr = 0;
-KSelectionOwner* kompmgr_selection;
-
-bool allowKompmgrRestart = TRUE;
 
 // Rikkus: This class is too complex. It needs splitting further.
 // It's a nightmare to understand, especially with so few comments :(
@@ -97,6 +93,7 @@ Workspace::Workspace( bool restore )
     tab_box           (0),
     overview          (NULL),
     effects           (NULL),
+    compositor_       (NULL),
     popupinfo         (0),
     popup             (0),
     advanced_popup    (0),
@@ -206,14 +203,11 @@ Workspace::Workspace( bool restore )
     connect( kapp->desktop(), SIGNAL( resized( int )), SLOT( desktopResized()));
 #endif
 
-    // start kompmgr - i wanted to put this into main.cpp, but that would prevent dcop support, as long as Application was no dcop_object
-    if (options->useTranslucency)
-        {
-        kompmgr = new KProcess;
-        connect(kompmgr, SIGNAL(receivedStderr(KProcess*, char*, int)), SLOT(handleKompmgrOutput(KProcess*, char*, int)));
-        *kompmgr << "kompmgr";
-        startKompmgr();
-        }
+    // KWin composites itself (compositor.h), kompmgr is gone
+    compositor_ = new Compositor( this );
+    connect( compositor_, SIGNAL( activeChanged( bool )), SLOT( compositingChanged( bool )));
+    compositor_->reconfigure();
+    options->useTranslucency = compositor_->isActive();
     }
 
 
@@ -440,12 +434,12 @@ void Workspace::init()
 
 Workspace::~Workspace()
     {
+    delete compositor_; // the windows back on the screen
+    compositor_ = NULL;
     delete effects; // (before the overview: it asks it about the windows)
     effects = NULL;
     delete overview; // gives the windows back if shown
     overview = NULL;
-    if (kompmgr)
-        delete kompmgr;
     blockStackingUpdates( true );
 // TODO    grabXServer();
     // use stacking_order, so that kwin --replace keeps stacking order
@@ -1007,12 +1001,10 @@ void Workspace::slotReconfigure()
         discardUsedWindowRules( *it, false );
         }
 
-    if (options->resetKompmgr) // need restart
+    if( compositor_ != NULL )
         {
-        bool tmp = options->useTranslucency;
-        stopKompmgr();
-        if (tmp)
-            QTimer::singleShot( 200, this, SLOT(startKompmgr()) ); // wait some time to ensure system's ready for restart
+        compositor_->reconfigure();
+        options->useTranslucency = compositor_->isActive();
         }
     }
 
@@ -2525,144 +2517,69 @@ void Workspace::helperDialog( const QString& message, const Client* c )
     }
 
 
-// kompmgr stuff
-    
+// compositing (compositor.h); the old kompmgr's dcop calls
+
 void Workspace::startKompmgr()
-{
-    if (!kompmgr || kompmgr->isRunning())
-        return;
-    if (!kompmgr->start(KProcess::OwnGroup, KProcess::Stderr))
-        {
-        options->useTranslucency = FALSE;
-        KProcess proc;
-        proc << "kdialog" << "--error"
-            << i18n("The Composite Manager could not be started.\\nMake sure you have \"kompmgr\" in a $PATH directory.")
-            << "--title" << "Composite Manager Failure";
-        proc.start(KProcess::DontCare);
-        }
-    else
-        {
-        delete kompmgr_selection;
-        char selection_name[ 100 ];
-        sprintf( selection_name, "_NET_WM_CM_S%d", DefaultScreen( qt_xdisplay()));
-        kompmgr_selection = new KSelectionOwner( selection_name );
-        connect( kompmgr_selection, SIGNAL( lostOwnership()), SLOT( stopKompmgr()));
-        kompmgr_selection->claim( true );
-        connect(kompmgr, SIGNAL(processExited(KProcess*)), SLOT(restartKompmgr()));
-        options->useTranslucency = TRUE;
-        allowKompmgrRestart = FALSE;
-        QTimer::singleShot( 60000, this, SLOT(unblockKompmgrRestart()) );
-        QByteArray ba;
-        QDataStream arg(ba, IO_WriteOnly);
-        arg << "";
-        kapp->dcopClient()->emitDCOPSignal("default", "kompmgrStarted()", ba);
-        }
-        if (popup){ delete popup; popup = 0L; desk_popup = NULL; screen_popup = NULL; } // to add/remove opacity slider (its submenus go with it)
-}
+    {
+    if( !compositor_->isActive())
+        compositor_->toggle();
+    }
 
 void Workspace::stopKompmgr()
-{
-    if (!kompmgr  || !kompmgr->isRunning())
-        return;
-    delete kompmgr_selection;
-    kompmgr_selection = NULL;
-    kompmgr->disconnect(this, SLOT(restartKompmgr()));
-    options->useTranslucency = FALSE;
-    if (popup){ delete popup; popup = 0L; desk_popup = NULL; screen_popup = NULL; } // to add/remove opacity slider (its submenus go with it)
-    kompmgr->kill();
-    QByteArray ba;
-    QDataStream arg(ba, IO_WriteOnly);
-    arg << "";
-    kapp->dcopClient()->emitDCOPSignal("default", "kompmgrStopped()", ba);
-}
+    {
+    if( compositor_->isActive())
+        compositor_->toggle();
+    }
 
 bool Workspace::kompmgrIsRunning()
-{
-   return kompmgr && kompmgr->isRunning();
-}
+    {
+    return compositor_->isActive();
+    }
 
-void Workspace::unblockKompmgrRestart()
-{
-    allowKompmgrRestart = TRUE;
-}
+void Workspace::toggleCompositing()
+    {
+    compositor_->toggle();
+    }
 
-void Workspace::restartKompmgr()
-// this is for inernal purpose (crashhandling) only, usually you want to use workspace->stopKompmgr(); QTimer::singleShot(200, workspace, SLOT(startKompmgr()));
-{
-    if (!allowKompmgrRestart) // uh-ohh
-        {
-        delete kompmgr_selection;
-        kompmgr_selection = NULL;
-        options->useTranslucency = FALSE;
-        KProcess proc;
-        proc << "kdialog" << "--error"
-            << i18n( "The Composite Manager crashed twice within a minute and is therefore disabled for this session.")
-            << "--title" << i18n("Composite Manager Failure");
-        proc.start(KProcess::DontCare);
-        return;
-        }
-    if (!kompmgr)
-        return;
-// this should be useless, i keep it for maybe future need
-//     if (!kcompmgr)
-//         {
-//         kompmgr = new KProcess;
-//         kompmgr->clearArguments();
-//         *kompmgr << "kompmgr";
-//         }
-// -------------------
-    if (!kompmgr->start(KProcess::NotifyOnExit, KProcess::Stderr))
-        {
-        delete kompmgr_selection;
-        kompmgr_selection = NULL;
-        options->useTranslucency = FALSE;
-        KProcess proc;
-        proc << "kdialog" << "--error"
-            << i18n("The Composite Manager could not be started.\\nMake sure you have \"kompmgr\" in a $PATH directory.")
-            << "--title" << i18n("Composite Manager Failure");
-        proc.start(KProcess::DontCare);
-        }
-    else
-        {
-        allowKompmgrRestart = FALSE;
-        QTimer::singleShot( 60000, this, SLOT(unblockKompmgrRestart()) );
-        }
-}
+void Workspace::slotToggleCompositing()
+    {
+    compositor_->toggle();
+    }
 
-void Workspace::handleKompmgrOutput( KProcess* , char *buffer, int buflen)
-{
-    QString message;
-    QString output = QString::fromLocal8Bit( buffer, buflen );
-    if (output.contains("Started",false))
-        ; // don't do anything, just pass to the connection release
-    else if (output.contains("Can't open display",false))
-        message = i18n("<qt><b>kompmgr failed to open the display</b><br>There is probably an invalid display entry in your ~/.xcompmgrrc.</qt>");
-    else if (output.contains("No render extension",false))
-        message = i18n("<qt><b>kompmgr cannot find the Xrender extension</b><br>You are using either an outdated or a crippled version of XOrg.<br>Get XOrg &ge; 6.8 from www.freedesktop.org.<br></qt>");
-    else if (output.contains("No composite extension",false))
-        message = i18n("<qt><b>Composite extension not found</b><br>You <i>must</i> use XOrg &ge; 6.8 for translucency and shadows to work.<br>Additionally, you need to add a new section to your X config file:<br>"
-        "<i>Section \"Extensions\"<br>"
-        "Option \"Composite\" \"Enable\"<br>"
-        "EndSection</i></qt>");
-    else if (output.contains("No damage extension",false))
-        message = i18n("<qt><b>Damage extension not found</b><br>You <i>must</i> use XOrg &ge; 6.8 for translucency and shadows to work.</qt>");
-    else if (output.contains("No XFixes extension",false))
-        message = i18n("<qt><b>XFixes extension not found</b><br>You <i>must</i> use XOrg &ge; 6.8 for translucency and shadows to work.</qt>");
-    else return; //skip others
-    // kompmgr startup failed or succeeded, release connection
-    kompmgr->closeStderr();
-    disconnect(kompmgr, SIGNAL(receivedStderr(KProcess*, char*, int)), this, SLOT(handleKompmgrOutput(KProcess*, char*, int)));
-    if( !message.isEmpty())
-        {
-        KProcess proc;
-        proc << "kdialog" << "--error"
-            << message
-            << "--title" << i18n("Composite Manager Failure");
-        proc.start(KProcess::DontCare);
+bool Workspace::compositingActive()
+    {
+    return compositor_ != NULL && compositor_->isActive();
+    }
+
+QString Workspace::compositingStatus()
+    {
+    return compositor_ != NULL ? compositor_->status() : QString::null;
+    }
+
+void Workspace::compositingChanged( bool on )
+    {
+    options->useTranslucency = on; // the opacity items of the window menu
+    if( popup != NULL )
+        { // (made anew with or without them)
+        delete popup;
+        popup = NULL;
+        desk_popup = NULL; // (its submenus go with it)
+        screen_popup = NULL;
         }
-}
+    if( on )
+        {
+        // the overview and the animations can't draw over a composited screen yet
+        if( effects != NULL )
+            effects->abort();
+        if( overview != NULL )
+            overview->abort();
+        }
+    QByteArray ba;
+    QDataStream arg( ba, IO_WriteOnly );
+    arg << "";
+    kapp->dcopClient()->emitDCOPSignal( "default", on ? "kompmgrStarted()" : "kompmgrStopped()", ba );
+    }
     
-        
 void Workspace::setOpacity(unsigned long winId, unsigned int opacityPercent)
 {
     if (opacityPercent > 100) opacityPercent = 100;

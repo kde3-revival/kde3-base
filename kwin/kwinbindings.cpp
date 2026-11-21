@@ -25,6 +25,7 @@
 	DEF( I18N_NOOP("Walk Through Desktop List"),           0, 0, slotWalkThroughDesktopList() );
 	DEF( I18N_NOOP("Walk Through Desktop List (Reverse)"), 0, 0, slotWalkBackThroughDesktopList() );
 	DEF( I18N_NOOP("Show Window Overview"),                ALT+CTRL+Qt::Key_W, WIN+int(Qt::Key_W), slotShowOverview() );
+	DEF( I18N_NOOP("Suspend Compositing"),                 ALT+CTRL+SHIFT+Qt::Key_F12, ALT+CTRL+SHIFT+Qt::Key_F12, slotToggleCompositing() );
 
 	keys->insert( "Group:Windows", i18n("Windows") );
 	DEF( I18N_NOOP("Window Operations Menu"),              ALT+Qt::Key_F3, ALT+Qt::Key_Menu, slotWindowOperations() );

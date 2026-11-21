@@ -10,6 +10,7 @@ License. See the file "COPYING" for the exact licensing terms.
 ******************************************************************/
 
 #include "options.h"
+#include "compositor.h"
 
 #ifndef KCMRULES
 
@@ -166,7 +167,7 @@ unsigned long Options::updateSettings()
 
     //translucency settings
     config->setGroup( "Notification Messages" );
-    useTranslucency = config->readBoolEntry("UseTranslucency", false);
+    useTranslucency = false; // (whether KWin composites: Workspace::compositingChanged())
     config->setGroup( "Translucency");
     translucentActiveWindows = config->readBoolEntry("TranslucentActiveWindows", false);
     activeWindowOpacity = uint((config->readNumEntry("ActiveWindowOpacity", 100)/100.0)*0xFFFFFFFF);
@@ -212,6 +213,21 @@ unsigned long Options::updateSettings()
     effectsOpenCloseAnimation = config->readBoolEntry( "OpenCloseAnimation", true );
     effectsAnimationSpeed = QMAX( 0, QMIN( 10, config->readNumEntry( "AnimationSpeed",
         animateMinimizeSpeed )));
+
+    // compositing: by default on when the X server renders on a GPU
+    config->setGroup( "Compositing" );
+    if( config->hasKey( "Enabled" ))
+        compositingEnabled = config->readBoolEntry( "Enabled", true );
+    else
+        compositingEnabled = Compositor::gpuAvailable( qt_xdisplay());
+    QString backend = config->readEntry( "Backend", "auto" ).lower();
+    compositingBackend = backend == "gles" ? 1 : backend == "xrender" ? 2 : 0;
+    compositingUnredirectFullscreen = config->readBoolEntry( "UnredirectFullscreen", true );
+    compositingShadows = config->readBoolEntry( "Shadows", true );
+    compositingShadowSize = QMAX( 1, QMIN( 64, config->readNumEntry( "ShadowSize", 14 )));
+    compositingShadowOpacity = QMAX( 0, QMIN( 100, config->readNumEntry( "ShadowOpacity", 45 )));
+    compositingShadowOffsetX = QMAX( -32, QMIN( 32, config->readNumEntry( "ShadowOffsetX", 0 )));
+    compositingShadowOffsetY = QMAX( -32, QMIN( 32, config->readNumEntry( "ShadowOffsetY", 3 )));
     
     
     

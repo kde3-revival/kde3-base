@@ -18,6 +18,7 @@ License. See the file "COPYING" for the exact licensing terms.
 
 #include "client.h"
 #include "workspace.h"
+#include "compositor.h"
 
 #include <fixx11h.h>
 #include <qpopupmenu.h>
@@ -810,6 +811,7 @@ void Client::setActive( bool act, bool updateOpacity_)
     {
     if ( active == act )
         return;
+    CompositorUpdate compositor_update( this ); // the shadow
     active = act;
     workspace()->setActiveClient( act ? this : NULL, Allowed );
     

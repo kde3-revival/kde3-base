@@ -320,6 +320,16 @@ class Options : public KDecorationOptions
         bool effectsOpenCloseAnimation;
         int effectsAnimationSpeed; // 0 slow .. 10 fast, 5 normal
 
+        // compositing ([Compositing], see compositor.h)
+        bool compositingEnabled; // the setting, by default on when the X server renders on a GPU
+        int compositingBackend; // Render::Renderer::Backend: 0 auto, 1 GLES, 2 XRender
+        bool compositingUnredirectFullscreen; // full screen windows drawn directly
+        bool compositingShadows;
+        int compositingShadowSize; // the active window's shadow: blur radius, px
+        int compositingShadowOpacity; // %
+        int compositingShadowOffsetX; // px
+        int compositingShadowOffsetY;
+
     private:
         WindowOperation OpTitlebarDblClick;
 
