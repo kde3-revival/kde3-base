@@ -1709,10 +1709,11 @@ void Workspace::sendTakeActivity( Client* c, Time timestamp, long flags )
 */
 static bool runKSnapshot( const char* mode )
     {
-    if( KStandardDirs::findExe( "ksnapshot" ).isEmpty())
+    const QString ksnapshot = KStandardDirs::findExe( "ksnapshot" );
+    if( ksnapshot.isEmpty())
         return false;
     KProcess proc;
-    proc << "ksnapshot" << mode;
+    proc << ksnapshot << mode;
     return proc.start( KProcess::DontCare );
     }
 

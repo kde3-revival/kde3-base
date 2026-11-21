@@ -1005,9 +1005,16 @@ void KDesktop::slotLaunchBrowser()
     const QString browser = group.readPathEntry( "BrowserApplication" );
     if ( browser.startsWith( "!" ) )
         KRun::runCommand( browser.mid( 1 ) );
-    else if ( browser.isEmpty() || !runService( browser.endsWith( ".desktop" )
-                                                ? browser.left( browser.length() - 8 ) : browser ) )
-        runService( "konqbrowser" );
+    else
+    {
+        // a menu id or a path, as the component chooser stores it
+        KService::Ptr service = browser.isEmpty() ? KService::Ptr()
+                                                  : KService::serviceByStorageId( browser );
+        if ( service )
+            KRun::run( *service, KURL::List() );
+        else
+            runService( "konqbrowser" );
+    }
 }
 
 // KDE's email client (Components, Default Applications); KMail is unique
