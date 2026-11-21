@@ -73,7 +73,7 @@ defFont.setBold(true);
   <group name="Digital">
     <entry name="DigitalShowSeconds" type="Bool" key="Show_Seconds">
       <label>Show seconds.</label>
-      <default>true</default>
+      <default>false</default>
     </entry>
     <entry name="DigitalShowDate" type="Bool" key="Show_Date">
       <label>Show date.</label>
@@ -101,7 +101,7 @@ defFont.setBold(true);
     </entry>
     <entry name="DigitalBlink" type="Bool" key="Blink">
       <label>Blink</label>
-      <default>false</default>
+      <default>true</default>
     </entry>
     <entry name="DigitalLCDStyle" type="Bool" key="LCD_Style">
       <label>LCD Style</label>
