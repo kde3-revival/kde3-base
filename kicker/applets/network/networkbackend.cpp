@@ -406,6 +406,7 @@ void NetworkBackendPrivate::stop()
 
     if (agent)
     {
+        reinterpret_cast<NetworkAgent *>(agent)->d = 0;
         nm_secret_agent_old_destroy(agent);
         g_object_unref(agent);
         agent = 0;
@@ -489,6 +490,9 @@ void NetworkBackendPrivate::clientReady(GObject *, GAsyncResult *result, gpointe
                      NM_SECRET_AGENT_OLD_CAPABILITIES, NM_SECRET_AGENT_CAPABILITY_NONE,
                      (char *)0));
     agent->d = d;
+    // Kept from now on: libnm exports the agent before its initialization
+    // ends, and stop() must cut it off from this even then.
+    d->agent = NM_SECRET_AGENT_OLD(agent);
     g_async_initable_init_async(G_ASYNC_INITABLE(agent), G_PRIORITY_DEFAULT,
                                 d->cancellable, agentReady, d);
 
@@ -499,24 +503,24 @@ void NetworkBackendPrivate::agentReady(GObject *source, GAsyncResult *result,
                                        gpointer data)
 {
     GError *error = 0;
-    NMSecretAgentOld *agent = NM_SECRET_AGENT_OLD(source);
     if (!g_async_initable_init_finish(G_ASYNC_INITABLE(source), result, &error))
     {
+        // Cancelled: stop() has dealt with the agent already.
         if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
         {
-            // Another applet process has registered one: it gets the
-            // requests.
             kdWarning() << "network applet: no secret agent: "
                         << error->message << endl;
+            NetworkBackendPrivate *d = static_cast<NetworkBackendPrivate *>(data);
+            if (d->agent == NM_SECRET_AGENT_OLD(source))
+            {
+                reinterpret_cast<NetworkAgent *>(d->agent)->d = 0;
+                nm_secret_agent_old_destroy(d->agent);
+                g_object_unref(d->agent);
+                d->agent = 0;
+            }
         }
         g_error_free(error);
-        reinterpret_cast<NetworkAgent *>(agent)->d = 0;
-        g_object_unref(agent);
-        return;
     }
-
-    NetworkBackendPrivate *d = static_cast<NetworkBackendPrivate *>(data);
-    d->agent = agent;
 }
 
 void NetworkBackendPrivate::changedCb(gpointer data)
