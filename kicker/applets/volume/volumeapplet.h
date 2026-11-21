@@ -21,6 +21,7 @@
 #define VOLUMEAPPLET_H
 
 #include <qmap.h>
+#include <qptrlist.h>
 #include <qstring.h>
 
 #include <kpanelapplet.h>
@@ -29,13 +30,16 @@ class QPopupMenu;
 class KPopupMenu;
 class PulseVolume;
 class VolumeButton;
+class VolumeOSD;
 class VolumePopup;
 
 /**
  * A panel button for the volume of the default PulseAudio sink: the
  * left button opens a slider, the wheel changes the volume, the middle
  * button mutes, the right button has a menu for choosing the output
- * device and starting the mixer (pavucontrol).
+ * device and starting the mixer (pavucontrol).  The changes made with
+ * the wheel and the mute switches outside the popup are shown on the
+ * screen.
  */
 class VolumeApplet : public KPanelApplet
 {
@@ -67,6 +71,7 @@ private slots:
 
 private:
     void checkMixer();
+    void showOSD();
 
     PulseVolume *m_pulse;
     VolumeButton *m_button;
@@ -80,6 +85,10 @@ private:
     QString m_iconName;
     QString m_tip;
     bool m_haveMixer;
+
+    // The applets of this process, which share one on-screen display.
+    static QPtrList<VolumeApplet> s_applets;
+    static VolumeOSD *s_osd;
 };
 
 #endif

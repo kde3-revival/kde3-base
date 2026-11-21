@@ -10,6 +10,7 @@ kde3_add_module(volume_panelapplet
     kpulsemainloop.cpp
     pulsevolume.cpp
     volumebutton.cpp
+    volumeosd.cpp
     volumepopup.cpp
     volumeapplet.cpp
   MOC
@@ -17,6 +18,7 @@ kde3_add_module(volume_panelapplet
     kpulsemainloop_p.h
     pulsevolume.h
     volumebutton.h
+    volumeosd.h
     volumepopup.h
     volumeapplet.h
   LINK

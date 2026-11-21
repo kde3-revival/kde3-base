@@ -30,6 +30,7 @@
 #include "global.h"
 #include "pulsevolume.h"
 #include "volumebutton.h"
+#include "volumeosd.h"
 #include "volumepopup.h"
 #include "volumeapplet.h"
 
@@ -38,6 +39,9 @@ static const int WheelStep = 5;
 
 // The mixer: PulseAudio Volume Control.
 static const char MixerCommand[] = "pavucontrol";
+
+QPtrList<VolumeApplet> VolumeApplet::s_applets;
+VolumeOSD *VolumeApplet::s_osd = 0;
 
 extern "C"
 {
@@ -90,10 +94,20 @@ VolumeApplet::VolumeApplet(const QString &configFile, Type type, int actions,
     m_pulse = new PulseVolume(this);
     connect(m_pulse, SIGNAL(changed()), SLOT(updateState()));
     updateState();
+
+    s_applets.append(this);
 }
 
 VolumeApplet::~VolumeApplet()
 {
+    s_applets.removeRef(this);
+
+    // With the last applet: the library may be unloaded after it.
+    if (s_applets.isEmpty())
+    {
+        delete s_osd;
+        s_osd = 0;
+    }
 }
 
 // As wide (or high, on a vertical panel) as the icon with a small margin,
@@ -191,9 +205,28 @@ void VolumeApplet::togglePopup()
     m_popup->show();
 }
 
+void VolumeApplet::showOSD()
+{
+    // Nothing to show without a device.
+    int volume = m_pulse->volume();
+    if (volume < 0)
+    {
+        return;
+    }
+
+    if (!s_osd)
+    {
+        s_osd = new VolumeOSD("volumeosd");
+    }
+    s_osd->showVolume(volume, m_pulse->isMuted());
+}
+
+// The panel button's middle button and the menu: shown on the screen.
+// The popup's switch calls setMuted() and shows nothing more.
 void VolumeApplet::toggleMute()
 {
     m_pulse->setMuted(!m_pulse->isMuted());
+    showOSD();
 }
 
 void VolumeApplet::setVolume(int percent)
@@ -219,6 +252,7 @@ void VolumeApplet::changeVolume(int steps)
     target = QMIN(target, QMAX(volume, 100));
     target = QMAX(target, 0);
     m_pulse->setVolume(target);
+    showOSD();
 }
 
 void VolumeApplet::showMenu(const QPoint &pos)
