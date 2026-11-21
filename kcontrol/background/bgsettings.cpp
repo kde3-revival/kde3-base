@@ -415,12 +415,14 @@ QStringList KBackgroundProgram::list()
 /**** KBackgroundSettings ****/
 
 
-KBackgroundSettings::KBackgroundSettings(int desk, int screen, bool drawBackgroundPerScreen, KConfig *config)
+KBackgroundSettings::KBackgroundSettings(int desk, int screen, bool drawBackgroundPerScreen, KConfig *config,
+                                         bool commonScreen)
     : KBackgroundPattern(),
       KBackgroundProgram()
 {
     dirty = false; hashdirty = true;
 	m_bDrawBackgroundPerScreen = drawBackgroundPerScreen;
+    m_bCommonScreen = commonScreen;
     m_Desk = desk;
     m_Screen = screen;
     m_bEnabled = true;
@@ -549,11 +551,13 @@ void KBackgroundSettings::copyConfig(const KBackgroundSettings *settings)
 }
 
 
-void KBackgroundSettings::load(int desk, int screen, bool drawBackgroundPerScreen, bool reparseConfig)
+void KBackgroundSettings::load(int desk, int screen, bool drawBackgroundPerScreen, bool reparseConfig,
+                               bool commonScreen)
 {
     m_Desk = desk;
     m_Screen = screen;	
     m_bDrawBackgroundPerScreen = drawBackgroundPerScreen;
+    m_bCommonScreen = commonScreen;
     readSettings(reparseConfig);
 }
 
@@ -723,10 +727,24 @@ void KBackgroundSettings::setUseShm(bool use)
 
 QString KBackgroundSettings::configGroupName() const
 {
-    QString screenName;
-    if (m_bDrawBackgroundPerScreen)
-        screenName = QString("Screen%1").arg(QString::number(m_Screen));
-    return QString("Desktop%1%2").arg(m_Desk).arg(screenName);
+    QString group = QString("Desktop%1").arg(m_Desk);
+    if (m_bDrawBackgroundPerScreen && !m_bCommonScreen)
+        group += QString("Screen%1").arg(m_Screen);
+    return group;
+}
+
+/*
+ * A screen that has not been configured on its own (no group
+ * "Desktop<N>Screen<M>") shows the background of the desktop
+ * ("Desktop<N>"), as do all screens of a configuration written before
+ * there was a background per screen.
+ */
+QString KBackgroundSettings::readGroupName() const
+{
+    QString group = configGroupName();
+    if (m_bDrawBackgroundPerScreen && !m_bCommonScreen && !m_pConfig->hasGroup(group))
+        group = QString("Desktop%1").arg(m_Desk);
+    return group;
 }
 
 void KBackgroundSettings::readSettings(bool reparse)
@@ -734,7 +752,8 @@ void KBackgroundSettings::readSettings(bool reparse)
     if (reparse)
         m_pConfig->reparseConfiguration();
 
-    m_pConfig->setGroup(configGroupName());
+    m_ReadGroup = readGroupName();
+    m_pConfig->setGroup(m_ReadGroup);
 
     // Background mode (Flat, div. Gradients, Pattern or Program)
     m_ColorA = m_pConfig->readColorEntry("Color1", &defColorA);
@@ -844,6 +863,7 @@ void KBackgroundSettings::writeSettings()
     m_pConfig->writeEntry("CurrentWallpaperName", m_CurrentWallpaperName);
 
     m_pConfig->sync();
+    m_ReadGroup = configGroupName();
 
     dirty = false;
 }
@@ -957,7 +977,9 @@ void KBackgroundSettings::changeWallpaper(bool init)
 
     m_CurrentWallpaperName = m_WallpaperFiles[ m_CurrentWallpaper ];
     m_LastChange = (int) time(0L);
-    m_pConfig->setGroup(configGroupName());
+    // into the group the settings came from: a group of the screen with
+    // only these two entries would hide the settings of the desktop
+    m_pConfig->setGroup(m_ReadGroup.isEmpty() ? readGroupName() : m_ReadGroup);
     m_pConfig->deleteEntry("CurrentWallpaper"); // obsolete, remember name
     m_pConfig->writeEntry("CurrentWallpaperName", m_CurrentWallpaperName);
     m_pConfig->writeEntry("LastChange", m_LastChange);
@@ -1110,7 +1132,7 @@ void KGlobalBackgroundSettings::setLimitCache(bool limit)
 
 bool KGlobalBackgroundSettings::drawBackgroundPerScreen(int desk) const
 {
-    if ( desk > int(m_bDrawBackgroundPerScreen.size()) )
+    if ( desk >= int(m_bDrawBackgroundPerScreen.size()) )
         return _defDrawBackgroundPerScreen;
     return m_bDrawBackgroundPerScreen[desk];
 }

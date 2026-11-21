@@ -11,7 +11,7 @@
 
 
 // Globals
-#define _defDrawBackgroundPerScreen false
+#define _defDrawBackgroundPerScreen true
 #define _defCommonScreen true
 #define _defCommonDesk true
 #define _defDock true

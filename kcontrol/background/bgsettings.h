@@ -155,8 +155,15 @@ public:
      * @param drawBackgroundPerScreen if false, then all screens (in xinerama
      * mode) will be treated as one big display, and the "screen" paramater
      * will be ignored.
+     * @param commonScreen with drawBackgroundPerScreen, the screen gets the
+     * settings of the desktop, the same for every screen, instead of its own.
+     *
+     * The settings of a desktop are in the group "Desktop<desk>", those of
+     * one of its screens in "Desktop<desk>Screen<screen>"; a screen without
+     * a group of its own is read from the group of the desktop.
      */
-    KBackgroundSettings(int desk, int screen, bool drawBackgroundPerScreen, KConfig *config);
+    KBackgroundSettings(int desk, int screen, bool drawBackgroundPerScreen, KConfig *config,
+                        bool commonScreen = false);
     ~KBackgroundSettings();
 
     void copyConfig(const KBackgroundSettings*);
@@ -166,8 +173,10 @@ public:
 
     int desk() const { return m_Desk; }
     int screen() const { return m_Screen; }
+    bool commonScreen() const { return m_bCommonScreen; }
 //     void load(int desk, int screen, bool drawBackgroundPerScreen, bool reparseConfig=true);
-    void load(int desk, int screen, bool drawBackgroundPerScreen, bool reparseConfig);
+    void load(int desk, int screen, bool drawBackgroundPerScreen, bool reparseConfig,
+              bool commonScreen = false);
 
     void setColorA(const QColor &color);
     QColor colorA() const { return m_ColorA; }
@@ -248,6 +257,7 @@ public:
 
     void readSettings(bool reparse=false);
     void writeSettings();
+    /** The group the settings are written to. */
     QString configGroupName() const;
 
     int hash();
@@ -258,6 +268,7 @@ public:
 
 private:
     void updateHash();
+    QString readGroupName() const;
 
     bool dirty;
     bool hashdirty;
@@ -276,6 +287,8 @@ private:
     int m_MinOptimizationDepth;
     bool m_bShm;
     bool m_bDrawBackgroundPerScreen;
+    bool m_bCommonScreen;
+    QString m_ReadGroup; // the group the settings were read from
 
     int m_MultiMode, defMultiMode;
     int m_Interval, m_LastChange;

@@ -175,21 +175,21 @@ BGDialog::BGDialog(QWidget* parent, KConfig* _config, bool _multidesktop)
          
          int eDesk = i>0 ? i-1 : 0;
          
-         // Setup the merged-screen renderer
-         KBackgroundRenderer * r = new KBackgroundRenderer(eDesk, 0, false, _config);
-         m_renderer[i].insert( 0, r );
+         // Setup the common-screen renderer
+         KBackgroundRenderer * r = new KBackgroundRenderer(eDesk, 0, true, _config, true);
+         m_renderer[i].insert( IdenticalScreens, r );
          connect( r, SIGNAL(imageDone(int,int)), SLOT(slotPreviewDone(int,int)) );
          
-         // Setup the common-screen renderer
-         r = new KBackgroundRenderer(eDesk, 0, true, _config);
-         m_renderer[i].insert( 1, r );
+         // Setup the merged-screen renderer
+         r = new KBackgroundRenderer(eDesk, 0, false, _config);
+         m_renderer[i].insert( SpanScreens, r );
          connect( r, SIGNAL(imageDone(int,int)), SLOT(slotPreviewDone(int,int)) );
          
          // Setup the remaining renderers for each screen
          for (unsigned j=0; j < m_numScreens; ++j )
          {
             r = new KBackgroundRenderer(eDesk, j, true, _config);
-            m_renderer[i].insert( j+2, r );
+            m_renderer[i].insert( FirstScreen+j, r );
             connect( r, SIGNAL(imageDone(int,int)), SLOT(slotPreviewDone(int,int)) );
          }
       }
@@ -202,6 +202,8 @@ BGDialog::BGDialog(QWidget* parent, KConfig* _config, bool _multidesktop)
          m_renderer[i].setAutoDelete(true);
       }
       
+      // One screen: the renderer of a desktop has the settings the screen
+      // is drawn with (see load())
       // set up the common desktop renderer
       KBackgroundRenderer * r = new KBackgroundRenderer(0, 0, false, _config);
       m_renderer[0].insert(0, r);
@@ -256,14 +258,39 @@ KBackgroundRenderer * BGDialog::eRenderer()
 void BGDialog::getEScreen()
 {
    if ( m_pGlobals->drawBackgroundPerScreen( m_eDesk>0 ? m_eDesk-1 : 0 ) )
-      m_eScreen = m_pGlobals->commonScreenBackground() ? 1 : m_screen+2;
+      m_eScreen = m_pGlobals->commonScreenBackground() ? int(IdenticalScreens) : FirstScreen+m_screen;
    else
-      m_eScreen = 0;
+      m_eScreen = SpanScreens;
    
    if ( m_numScreens == 1 )
       m_eScreen = 0;
    else if ( m_eScreen > int(m_numScreens+1) )
       m_eScreen = m_numScreens+1;
+}
+
+/*
+ * The groups "Desktop<desk>Screen<n>" of the backgrounds of single screens.
+ * The background drawn identically on all screens, or across all screens,
+ * is that of the desktop, "Desktop<desk>": a group of a screen left over
+ * from a background per screen is removed with it, rather than kept unused
+ * and showing up again (instead of the background of the desktop) when the
+ * screens are given their own background another time, or on a monitor
+ * connected later.
+ */
+void BGDialog::deleteScreenGroups(int desk)
+{
+   KConfig *config = m_pGlobals->getConfig();
+   QString prefix = QString("Desktop%1Screen").arg(desk);
+   QStringList groups = config->groupList();
+   for (QStringList::ConstIterator it = groups.begin(); it != groups.end(); ++it)
+   {
+      if (!(*it).startsWith(prefix))
+         continue;
+      bool isNumber = false;
+      (*it).mid(prefix.length()).toUInt(&isNumber);
+      if (isNumber)
+         config->deleteGroup(*it);
+   }
 }
 
 void BGDialog::makeReadOnly()
@@ -298,11 +325,19 @@ void BGDialog::load( bool useDefaults )
    for (unsigned desk = 0; desk < m_renderer.size(); ++desk)
    {
       unsigned eDesk = desk>0 ? desk-1 : 0;
+      if (m_numScreens < 2)
+      {
+         // one screen: the background it is drawn with, also with the
+         // settings of several screens (the first)
+         m_renderer[desk][0]->load( eDesk, 0, m_pGlobals->drawBackgroundPerScreen(eDesk), useDefaults,
+                                    m_pGlobals->commonScreenBackground() );
+         continue;
+      }
       for (unsigned screen = 0; screen < m_renderer[desk].size(); ++screen)
       {
-         unsigned eScreen = screen>1 ? screen-2 : 0;
-//          m_renderer[desk][screen]->load( eDesk, eScreen, (screen>0) );
-         m_renderer[desk][screen]->load( eDesk, eScreen, (screen>0), useDefaults );
+         unsigned eScreen = screen>=FirstScreen ? screen-FirstScreen : 0;
+         m_renderer[desk][screen]->load( eDesk, eScreen, (screen != SpanScreens), useDefaults,
+                                         (screen == IdenticalScreens) );
       }
    }
    
@@ -342,17 +377,33 @@ void BGDialog::save()
       if (desk == 1 && m_pGlobals->commonDeskBackground())
          continue;
       
-      for (unsigned screen = 0; screen < m_renderer[desk].size(); ++screen)
+      if (m_numScreens < 2)
       {
-         if (screen == 1 && !m_pGlobals->commonScreenBackground())
-            continue;
-         
-         if (screen == 2 && m_pGlobals->commonScreenBackground())
-            continue;
-         
-         m_renderer[desk][screen]->writeSettings();
+         m_renderer[desk][0]->writeSettings();
+         continue;
+      }
+
+      // only the settings of the way the screens are drawn: the identical
+      // and the spanning background are both the background of the desktop,
+      // and a background per screen is written only when there is one
+      int eDesk = desk>0 ? desk-1 : 0;
+      if (!m_pGlobals->drawBackgroundPerScreen(eDesk))
+      {
+         m_renderer[desk][SpanScreens]->writeSettings();
+         deleteScreenGroups(eDesk);
+      }
+      else if (m_pGlobals->commonScreenBackground())
+      {
+         m_renderer[desk][IdenticalScreens]->writeSettings();
+         deleteScreenGroups(eDesk);
+      }
+      else
+      {
+         for (unsigned screen = FirstScreen; screen < m_renderer[desk].size(); ++screen)
+            m_renderer[desk][screen]->writeSettings();
       }
    }
+   m_pGlobals->getConfig()->sync();
 
    emit changed(false);
 }
@@ -753,12 +804,12 @@ void BGDialog::updateUI()
     setBlendingEnabled(wallpaperMode != KBackgroundSettings::NoWallpaper);
 
     // Start preview renderer(s)
-    if ( m_eScreen == 0 )
+    if ( m_numScreens < 2 || m_eScreen == SpanScreens )
     {
        r->setPreview( m_pMonitorArrangement->combinedPreviewSize() );
        r->start(true);
     }
-    else if ( m_eScreen == 1 )
+    else if ( m_eScreen == IdenticalScreens )
     {
        r->setPreview( m_pMonitorArrangement->maxPreviewSize() );
        r->start(true);
@@ -767,9 +818,9 @@ void BGDialog::updateUI()
     {
        for (unsigned j = 0; j < m_numScreens; ++j)
        {
-          m_renderer[m_eDesk][j+2]->stop();
-          m_renderer[m_eDesk][j+2]->setPreview( m_pMonitorArrangement->monitor(j)->size() );
-          m_renderer[m_eDesk][j+2]->start(true);
+          m_renderer[m_eDesk][FirstScreen+j]->stop();
+          m_renderer[m_eDesk][FirstScreen+j]->setPreview( m_pMonitorArrangement->monitor(j)->size() );
+          m_renderer[m_eDesk][FirstScreen+j]->start(true);
        }
     }
 }
@@ -784,7 +835,7 @@ void BGDialog::slotPreviewDone(int desk_done, int screen_done)
    if (!m_previewUpdates)
       return;
 
-   KBackgroundRenderer * r = m_renderer[m_eDesk][(m_eScreen>1) ? (screen_done+2) : m_eScreen];
+   KBackgroundRenderer * r = m_renderer[m_eDesk][(m_eScreen>=FirstScreen) ? (FirstScreen+screen_done) : m_eScreen];
 
    if (r->image().isNull())
       return;
@@ -797,11 +848,11 @@ void BGDialog::slotPreviewDone(int desk_done, int screen_done)
    else
       pm.convertFromImage(r->image());
 
-   if ( m_eScreen == 0 )
+   if ( m_numScreens < 2 || m_eScreen == SpanScreens )
    {
       m_pMonitorArrangement->setPixmap(pm);
    }
-   else if ( m_eScreen == 1 )
+   else if ( m_eScreen == IdenticalScreens )
    {
       for (unsigned i = 0; i < m_pMonitorArrangement->numMonitors(); ++i)
          m_pMonitorArrangement->monitor(i)->setPixmap(pm);
@@ -1043,30 +1094,35 @@ void BGDialog::slotPattern(int pattern)
 
 void BGDialog::slotSelectScreen(int screen)
 {
-   // Copy the settings from "All screens" to all the other screens
-   // at a suitable point
-   if (m_pGlobals->commonScreenBackground() && (screen >1) && m_copyAllScreens)
-   {
-      // Copy stuff
-      for (unsigned desk = 0; desk < m_numDesks+1; ++desk )
-      {
-         KBackgroundRenderer *master = m_renderer[desk][1];
-         for (unsigned screen = 0; screen < m_numScreens; ++screen)
-         {
-            m_renderer[desk][screen+2]->copyConfig(master);
-         }
-      }
-   }
-   
    if (screen == m_eScreen )
    {
       return; // Nothing to do
    }
 
+   // The identical and the spanning background are the same settings, those
+   // of the desktop: take what was set into the other one. Going to the
+   // screens from either for the first time, or after a change, they start
+   // with these settings too.
+   if (m_eScreen < FirstScreen && (screen < FirstScreen || m_copyAllScreens))
+   {
+      for (unsigned desk = 0; desk < m_numDesks+1; ++desk )
+      {
+         KBackgroundRenderer *master = m_renderer[desk][m_eScreen];
+         if (screen < FirstScreen)
+            m_renderer[desk][screen]->copyConfig(master);
+         else
+            for (unsigned j = 0; j < m_numScreens; ++j)
+               m_renderer[desk][FirstScreen+j]->copyConfig(master);
+      }
+   }
+
    m_copyAllScreens = false;
    
-   bool drawBackgroundPerScreen = screen > 0;
-   bool commonScreenBackground = screen < 2;
+   bool drawBackgroundPerScreen = screen != SpanScreens;
+   bool commonScreenBackground = screen < FirstScreen;
+   // only the choice between identical, spanning and a background per
+   // screen is a change; picking another screen is not
+   bool modeChanged = screen < FirstScreen || m_eScreen < FirstScreen;
    
    // Update drawBackgroundPerScreen
    if (m_eDesk == 0)
@@ -1081,19 +1137,17 @@ void BGDialog::slotSelectScreen(int screen)
    
    m_pGlobals->setCommonScreenBackground(commonScreenBackground);
    
-   if (screen < 2)
-      emit changed(true);
-   else
+   for (unsigned i = 0; i < m_renderer[m_eDesk].size(); ++i)
    {
-      for (unsigned i = 0; i < m_renderer[m_eDesk].size(); ++i)
-      {
-         if ( m_renderer[m_eDesk][i]->isActive() )
-            m_renderer[m_eDesk][i]->stop();
-      }
+      if ( m_renderer[m_eDesk][i]->isActive() )
+         m_renderer[m_eDesk][i]->stop();
    }
 
    m_eScreen = screen;
    updateUI();
+
+   if (modeChanged)
+      emit changed(true);
 }
 
 void BGDialog::slotSelectDesk(int desk)

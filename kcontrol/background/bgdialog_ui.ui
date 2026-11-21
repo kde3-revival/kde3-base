@@ -69,12 +69,12 @@
 		<widget class="KComboBox" row="0" column="2">
 			<item>
 				<property name="text">
-					<string>Across All Screens</string>
+					<string>Identical on All Screens</string>
 				</property>
 			</item>
 			<item>
 				<property name="text">
-					<string>On Each Screen</string>
+					<string>One Picture Across All Screens</string>
 				</property>
             </item>
 			<property name="name">
@@ -92,7 +92,7 @@
 				</sizepolicy>
 			</property>
 			<property name="whatsThis" stdset="0">
-				<string>Choose the screen you wish to configure the background for from this list.</string>
+				<string>Choose how the background is drawn on several screens: "Identical on All Screens" shows the whole background on each screen, "One Picture Across All Screens" spreads one background over all of them. Choose a screen to give it a background of its own.</string>
 			</property>
 		</widget>
         <spacer row="0" column="3" rowspan="1" colspan="2">

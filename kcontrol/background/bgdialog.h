@@ -82,7 +82,14 @@ protected slots:
    void setBlendingEnabled(bool);
 
 protected:
+   // The entries of the screen combo box, which are also the indexes of the
+   // renderers of a desktop in m_renderer[desk]: the same background on
+   // each screen, one background across all screens (both are the settings
+   // of the desktop), then a background for each screen.
+   enum { IdenticalScreens = 0, SpanScreens = 1, FirstScreen = 2 };
+
    void getEScreen();
+   void deleteScreenGroups(int desk);
    KGlobalBackgroundSettings *m_pGlobals;
    KStandardDirs *m_pDirs;
    bool m_multidesktop;

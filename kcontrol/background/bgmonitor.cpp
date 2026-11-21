@@ -110,7 +110,10 @@ void BGMonitorArrangement::updateArrangement()
     m_maxPreviewSize = QSize(0,0);
     int previousMax = 0;
     
-    for (int screen = 0; screen < QApplication::desktop()->numScreens(); ++screen)
+    // the monitors of the arrangement are those there were when it was
+    // made: one connected since has none
+    int numScreens = QMIN( QApplication::desktop()->numScreens(), int(m_pBGMonitor.size()) );
+    for (int screen = 0; screen < numScreens; ++screen)
     {
         QPoint topLeft = (QApplication::desktop()->screenGeometry(screen).topLeft() - overallGeometry.topLeft()) * scale;
         QPoint expandedTopLeft = expandToPreview(topLeft);

@@ -42,10 +42,12 @@ class KBackgroundRenderer:
     Q_OBJECT
 
 public:
-    KBackgroundRenderer(int desk, int screen, bool drawBackgroundPerScreen, KConfig *config=0);
+    KBackgroundRenderer(int desk, int screen, bool drawBackgroundPerScreen, KConfig *config=0,
+                        bool commonScreen=false);
     ~KBackgroundRenderer();
     
-    void load(int desk, int screen, bool drawBackgroundPerScreen, bool reparseConfig=true);
+    void load(int desk, int screen, bool drawBackgroundPerScreen, bool reparseConfig=true,
+              bool commonScreen=false);
 
     void setPreview(const QSize &size);
     void setSize(const QSize &size);

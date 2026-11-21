@@ -47,8 +47,9 @@
 /**** KBackgroundRenderer ****/
 
 
-KBackgroundRenderer::KBackgroundRenderer(int desk, int screen, bool drawBackgroundPerScreen, KConfig *config)
-    : KBackgroundSettings(desk, screen, drawBackgroundPerScreen, config)
+KBackgroundRenderer::KBackgroundRenderer(int desk, int screen, bool drawBackgroundPerScreen, KConfig *config,
+                                         bool commonScreen)
+    : KBackgroundSettings(desk, screen, drawBackgroundPerScreen, config, commonScreen)
 {
     m_State = 0;
     m_isBusyCursor = false;
@@ -927,7 +928,8 @@ QImage KBackgroundRenderer::image()
 }
 
 
-void KBackgroundRenderer::load(int desk, int screen, bool drawBackgroundPerScreen, bool reparseConfig)
+void KBackgroundRenderer::load(int desk, int screen, bool drawBackgroundPerScreen, bool reparseConfig,
+                               bool commonScreen)
 {
     if (m_State & Rendering)
         stop();
@@ -936,7 +938,7 @@ void KBackgroundRenderer::load(int desk, int screen, bool drawBackgroundPerScree
     m_bPreview = false;
     m_Size = m_rSize;
 
-    KBackgroundSettings::load(desk, screen, drawBackgroundPerScreen, reparseConfig);
+    KBackgroundSettings::load(desk, screen, drawBackgroundPerScreen, reparseConfig, commonScreen);
 }
 
 void KBackgroundRenderer::createTempFile()
@@ -1227,10 +1229,13 @@ void KVirtualBGRenderer::initRenderers()
         delete m_renderer[i];
     
     m_renderer.resize(m_numRenderers);
+    // each renderer draws the background of its own monitor (screen i of
+    // QDesktopWidget, the primary monitor first); with a common screen
+    // background they all take the settings of the desktop
     for (unsigned i=0; i<m_numRenderers; ++i)
     {
-        int eScreen = m_bCommonScreen ? 0 : i;
-        KBackgroundRenderer * r = new KBackgroundRenderer( m_desk, eScreen, m_bDrawBackgroundPerScreen, m_pConfig );
+        KBackgroundRenderer * r = new KBackgroundRenderer( m_desk, i, m_bDrawBackgroundPerScreen, m_pConfig,
+                                                           m_bCommonScreen );
         m_renderer.insert( i, r );
         r->setSize(renderSize(i));
         connect( r, SIGNAL(imageDone(int,int)), this, SLOT(screenDone(int,int)) );
@@ -1249,8 +1254,11 @@ void KVirtualBGRenderer::load(int desk, bool reparseConfig)
     
     for (unsigned i=0; i<m_numRenderers; ++i)
     {
-        unsigned eScreen = m_bCommonScreen ? 0 : i;
-        m_renderer[i]->load(desk, eScreen, m_bDrawBackgroundPerScreen, reparseConfig);
+        m_renderer[i]->load(desk, i, m_bDrawBackgroundPerScreen, reparseConfig, m_bCommonScreen);
+        // the renderers are kept when only the settings change: the size of
+        // a renderer that now draws one monitor instead of all, or the
+        // reverse
+        m_renderer[i]->setSize(renderSize(i));
     }
 }
 
