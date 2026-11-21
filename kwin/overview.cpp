@@ -138,10 +138,12 @@ int mipLevel( double scale )
     return level;
     }
 
-inline double easeOutCubic( double t )
+// GNOME's overview curve; ease out cubic puts too much of the motion
+// into the first frames
+inline double easeOutQuad( double t )
     {
     t = 1 - t;
-    return 1 - t * t * t;
+    return 1 - t * t;
     }
 
 // error trapping around requests on windows that may vanish any time
@@ -1608,7 +1610,7 @@ void Overview::renderFrame()
     const double t0 = t_start + ( r->present ? r->queued * r->period : 0 );
     // the transition
     double lin = trans_duration > 0 ? clamp01(( t0 - trans_start ) / trans_duration ) : 1.0;
-    double e = easeOutCubic( lin );
+    double e = easeOutQuad( lin );
     progress = mix( trans_from, trans_to, e );
     for( OverviewItem* item = items.first();
          item != NULL;
