@@ -126,6 +126,9 @@ private:
     void cancelShutdown( KSMClient* c );
     void killingCompleted();
 
+    bool lockScreen();
+    void goToSleep( bool hibernate, bool lock );
+
     void discardSession();
     void storeSession();
 

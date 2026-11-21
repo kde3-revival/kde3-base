@@ -86,8 +86,10 @@ void KSMShutdownFeedback::slotPaintEffect()
 //////
 
 KSMShutdownDlg::KSMShutdownDlg( QWidget* parent,
-                                bool maysd, KApplication::ShutdownType sdtype )
-  : QDialog( parent, 0, TRUE, WType_Popup ), targets(0)
+                                bool maysd, bool maySuspend, bool mayHibernate,
+                                KApplication::ShutdownType sdtype )
+  : QDialog( parent, 0, TRUE, WType_Popup ),
+    m_shutdownType( sdtype ), m_sleep( NoSleep ), targets(0)
     // this is a WType_Popup on purpose. Do not change that! Not
     // having a popup here has severe side effects.
 {
@@ -171,6 +173,24 @@ KSMShutdownDlg::KSMShutdownDlg( QWidget* parent,
 	}
     }
 
+    // Sleep and hibernate keep the session, so they are offered even
+    // when ending it with a shutdown is not
+    if (maySuspend) {
+        KPushButton* btnSuspend = new KPushButton( KGuiItem( i18n("&Sleep"), "player_pause",
+                                                             i18n("Suspend to RAM") ), frame );
+        btnSuspend->setFont( btnFont );
+        buttonlay->addWidget( btnSuspend );
+        connect(btnSuspend, SIGNAL(clicked()), SLOT(slotSuspend()));
+    }
+
+    if (mayHibernate) {
+        KPushButton* btnHibernate = new KPushButton( KGuiItem( i18n("&Hibernate"), "hdd_unmount",
+                                                               i18n("Suspend to disk") ), frame );
+        btnHibernate->setFont( btnFont );
+        buttonlay->addWidget( btnHibernate );
+        connect(btnHibernate, SIGNAL(clicked()), SLOT(slotHibernate()));
+    }
+
     buttonlay->addStretch( 1 );
 
     // Separator
@@ -216,12 +236,28 @@ void KSMShutdownDlg::slotHalt()
 }
 
 
-bool KSMShutdownDlg::confirmShutdown( bool maysd, KApplication::ShutdownType& sdtype, QString& bootOption )
+void KSMShutdownDlg::slotSuspend()
+{
+    m_sleep = SleepSuspend;
+    accept();
+}
+
+
+void KSMShutdownDlg::slotHibernate()
+{
+    m_sleep = SleepHibernate;
+    accept();
+}
+
+
+bool KSMShutdownDlg::confirmShutdown( bool maysd, bool maySuspend, bool mayHibernate,
+                                      KApplication::ShutdownType& sdtype, QString& bootOption,
+                                      SleepType& sleep )
 {
     kapp->enableStyles();
     KSMShutdownDlg* l = new KSMShutdownDlg( 0,
                                             //KSMShutdownFeedback::self(),
-                                            maysd, sdtype );
+                                            maysd, maySuspend, mayHibernate, sdtype );
 
     // Show dialog (will save the background in showEvent)
     QSize sh = l->sizeHint();
@@ -232,6 +268,7 @@ bool KSMShutdownDlg::confirmShutdown( bool maysd, KApplication::ShutdownType& sd
     bool result = l->exec();
     sdtype = l->m_shutdownType;
     bootOption = l->m_bootOption;
+    sleep = l->m_sleep;
 
     delete l;
 

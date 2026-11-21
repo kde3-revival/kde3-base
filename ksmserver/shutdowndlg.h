@@ -47,20 +47,32 @@ class KSMShutdownDlg : public QDialog
     Q_OBJECT
 
 public:
-    static bool confirmShutdown( bool maysd, KApplication::ShutdownType& sdtype, QString& bopt );
+    // Sleeping keeps the session, so it is not a KApplication::ShutdownType
+    enum SleepType { NoSleep, SleepSuspend, SleepHibernate };
+
+    // Returns true if the user confirmed; then either @p sleep says how
+    // to put the computer to sleep, or (if it is NoSleep) @p sdtype and
+    // @p bopt say how to end the session.
+    static bool confirmShutdown( bool maysd, bool maySuspend, bool mayHibernate,
+                                 KApplication::ShutdownType& sdtype, QString& bopt,
+                                 SleepType& sleep );
 
 public slots:
     void slotLogout();
     void slotHalt();
     void slotReboot();
     void slotReboot(int);
+    void slotSuspend();
+    void slotHibernate();
 
 protected:
     ~KSMShutdownDlg() {};
 
 private:
-    KSMShutdownDlg( QWidget* parent, bool maysd, KApplication::ShutdownType sdtype );
+    KSMShutdownDlg( QWidget* parent, bool maysd, bool maySuspend, bool mayHibernate,
+                    KApplication::ShutdownType sdtype );
     KApplication::ShutdownType m_shutdownType;
+    SleepType m_sleep;
     QString m_bootOption;
     QPopupMenu *targets;
     QStringList rebootOptions;

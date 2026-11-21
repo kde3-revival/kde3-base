@@ -80,11 +80,13 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <dmctl.h>
 #include <kdebug.h>
 #include <knotifyclient.h>
+#include <kmessagebox.h>
 
 #include "server.h"
 #include "global.h"
 #include "shutdowndlg.h"
 #include "client.h"
+#include "logind.h"
 
 void KSMServer::logout( int confirm, int sdtype, int sdmode )
 {
@@ -139,15 +141,33 @@ void KSMServer::shutdown( KApplication::ShutdownConfirm confirm,
 
     dialogActive = true;
     QString bopt;
+    KSMShutdownDlg::SleepType sleep = KSMShutdownDlg::NoSleep;
     if ( !logoutConfirmed ) {
+        // Sleeping does not end the session, so it does not depend on
+        // offerShutdown or on what the display manager allows
+        bool maySuspend = false;
+        bool mayHibernate = false;
+        if ( config->readBoolEntry( "offerSleep", true ) ) {
+            maySuspend = Logind::canSuspend();
+            mayHibernate = Logind::canHibernate();
+        }
         KSMShutdownFeedback::start(); // make the screen gray
         logoutConfirmed =
-            KSMShutdownDlg::confirmShutdown( maysd, sdtype, bopt );
+            KSMShutdownDlg::confirmShutdown( maysd, maySuspend, mayHibernate,
+                                             sdtype, bopt, sleep );
         // ###### We can't make the screen remain gray while talking to the apps,
         // because this prevents interaction ("do you want to save", etc.)
         // TODO: turn the feedback widget into a list of apps to be closed,
         // with an indicator of the current status for each.
         KSMShutdownFeedback::stop(); // make the screen become normal again
+    }
+
+    if ( logoutConfirmed && sleep != KSMShutdownDlg::NoSleep ) {
+        // dialogActive stays set, so no logout starts meanwhile
+        goToSleep( sleep == KSMShutdownDlg::SleepHibernate,
+                   config->readBoolEntry( "lockBeforeSleep", true ) );
+        dialogActive = false;
+        return;
     }
 
     if ( logoutConfirmed ) {
@@ -202,6 +222,50 @@ void KSMServer::shutdown( KApplication::ShutdownConfirm confirm,
             completeShutdownOrCheckpoint();
     }
     dialogActive = false;
+}
+
+// Locks the screen through kdesktop; returns once it is locked.
+bool KSMServer::lockScreen()
+{
+    QByteArray data, replyData;
+    QCString replyType;
+    // kdesktop answers when kdesktop_lock reports the screen as locked
+    if ( !kapp->dcopClient()->call( "kdesktop", "KScreensaverIface", "lock()",
+                                    data, replyType, replyData, true, 10000 ) ) {
+        kdWarning( 1218 ) << "Could not lock the screen through kdesktop" << endl;
+        return false;
+    }
+    return true;
+}
+
+// Suspends or hibernates the computer through systemd-logind, keeping
+// the session.  Returns before the computer actually sleeps.
+void KSMServer::goToSleep( bool hibernate, bool lock )
+{
+    kapp->enableStyles(); // for the message boxes
+    if ( lock && !lockScreen() ) {
+        QString msg = hibernate
+            ? i18n( "The screen could not be locked. Hibernate the computer anyway?" )
+            : i18n( "The screen could not be locked. Put the computer to sleep anyway?" );
+        KGuiItem cont = hibernate ? KGuiItem( i18n( "&Hibernate" ), "hdd_unmount" )
+                                  : KGuiItem( i18n( "&Sleep" ), "player_pause" );
+        if ( KMessageBox::warningContinueCancel( 0, msg, QString::null, cont )
+             != KMessageBox::Continue ) {
+            kapp->disableStyles();
+            return;
+        }
+    }
+
+    QString error;
+    bool ok = hibernate ? Logind::hibernate( &error ) : Logind::suspend( &error );
+    if ( !ok ) {
+        kdWarning( 1218 ) << ( hibernate ? "Hibernate" : "Suspend" ) << " failed: "
+                          << error << endl;
+        KMessageBox::error( 0, hibernate
+            ? i18n( "The computer could not be hibernated:\n%1" ).arg( error )
+            : i18n( "The computer could not be put to sleep:\n%1" ).arg( error ) );
+    }
+    kapp->disableStyles();
 }
 
 void KSMServer::pendingShutdownTimeout()
