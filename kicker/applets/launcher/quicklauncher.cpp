@@ -82,7 +82,9 @@ QuickLauncher::QuickLauncher(const QString& configFile, Type type, int actions,
                              QWidget *parent, const char *name) : 
     KPanelApplet(configFile, type, actions, parent, name)
 {
-    DCOPObject::setObjId("QuickLauncherApplet");
+    // one launcher of the process has the DCOP object; another one (a
+    // copy of the main panel on another screen, say) does without
+    bool haveObjId = DCOPObject::setObjId("QuickLauncherApplet");
     DEBUGSTR << endl << endl << endl << "------------" << flush;
     DEBUGSTR << "QuickLauncher::QuickLauncher(" << configFile << ",...)" <<
                 endl << flush;
@@ -129,13 +131,18 @@ QuickLauncher::QuickLauncher(const QString& configFile, Type type, int actions,
     DEBUGSTR << "    QuickLauncher::QuickLauncher(" << configFile << 
                 ",...) END" << endl << flush;
 
-    DCOPClient *dcopClient = KApplication::dcopClient();
-    dcopClient->connectDCOPSignal(0, "appLauncher", 
-        "serviceStartedByStorageId(QString,QString)",
-        "QuickLauncherApplet",
-        "serviceStartedByStorageId(QString,QString)",
-        false);
-    kdDebug() << "Quicklauncher registered DCOP signal" << endl;
+    // through the DCOPObject: it is counted, and disconnected with it (a
+    // connection made by the client would stay, and add up with every
+    // launcher made)
+    if (haveObjId)
+    {
+        connectDCOPSignal("appLauncher",
+            0,
+            "serviceStartedByStorageId(QString,QString)",
+            "serviceStartedByStorageId(QString,QString)",
+            false);
+        kdDebug() << "Quicklauncher registered DCOP signal" << endl;
+    }
 }
 
 
