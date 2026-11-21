@@ -50,7 +50,9 @@ GVariant *filter( GVariant *all, const char *const *patterns );
 GVariant *lookup( GVariant *all, const char *ns, const char *key );
 
 // calls changed() for each key of now that is not in before or has
-// another value there
+// another value there; a key that is no more in now (the cursor theme
+// or size) is not reported: the clients keep its old value until they
+// read the settings again
 void compare( GVariant *before, GVariant *now,
 	      void ( *changed )( const char *ns, const char *key, GVariant *value, void *data ),
 	      void *data );

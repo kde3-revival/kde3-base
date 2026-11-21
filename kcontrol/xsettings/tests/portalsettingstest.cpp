@@ -95,7 +95,7 @@ static void testDefaults()
     CHECK_EQ( printed( s, gnome, "clock-format" ), QCString( "<none>" ) );
     CHECK_EQ( printed( s, "org.gnome.desktop.a11y.interface", "high-contrast" ), QCString( "<none>" ) );
     CHECK_EQ( printed( s, fdo, "color-scheme" ), QCString( "uint32 0" ) );
-    CHECK_EQ( printed( s, fdo, "contrast" ), QCString( "uint32 0" ) );
+    CHECK_EQ( printed( s, fdo, "contrast" ), QCString( "<none>" ) );
     CHECK_EQ( printed( s, fdo, "reduced-motion" ), QCString( "<none>" ) );
     // KDE's default selection colour, 103,141,178
     GVariant *accent = lookup( s, fdo, "accent-color" );
@@ -229,7 +229,7 @@ static void testChanges()
     GVariant *cursor = settings( "", "[Mouse]\ncursorTheme=whiteglass\n", "" );
     CHECK_EQ( changes( light, cursor ), QString( "org.gnome.desktop.interface cursor-theme" ) );
     // without settings before (the first reading): everything
-    CHECK_EQ( changes( 0, light ).contains( ';' ), 7 );
+    CHECK_EQ( changes( 0, light ).contains( ';' ), 6 );
 
     g_variant_unref( light );
     g_variant_unref( light2 );

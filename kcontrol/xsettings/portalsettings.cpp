@@ -89,12 +89,14 @@ GVariant *collect( KConfig &globals, KConfig &input, KConfig &fonts,
 
     GVariantBuilder appearance;
     g_variant_builder_init( &appearance, G_VARIANT_TYPE_VARDICT );
-    // 1: prefer dark; a light scheme is no preference, as GNOME's "default"
+    // 1: prefer dark; a light scheme is deliberately no preference (0), as
+    // GNOME's "default", so that applications that prefer dark stay dark
     g_variant_builder_add( &appearance, "{sv}", "color-scheme", g_variant_new_uint32( dark ? 1 : 0 ) );
     g_variant_builder_add( &appearance, "{sv}", "accent-color",
 			   g_variant_new( "(ddd)", highlight.red() / 255.0,
 					  highlight.green() / 255.0, highlight.blue() / 255.0 ) );
-    g_variant_builder_add( &appearance, "{sv}", "contrast", g_variant_new_uint32( 0 ) );
+    // no contrast: KDE has no such setting, and GNOME's high contrast
+    // (through xdg-desktop-portal-gtk) is kept
 
     GVariantBuilder all;
     g_variant_builder_init( &all, G_VARIANT_TYPE( "a{sa{sv}}" ) );

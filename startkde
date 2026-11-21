@@ -248,6 +248,10 @@ export KDE_SESSION_UID
 # start a new bus for the X display.
 if test -n "$DBUS_SESSION_BUS_ADDRESS" || test -S "$XDG_RUNTIME_DIR/bus"; then
   session_env="DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP DESKTOP_SESSION XDG_DATA_DIRS XDG_CONFIG_DIRS"
+  # xdg-desktop-portal-kde3 reads KDE's configuration and the cursor
+  for v in KDEHOME KDEDIRS XCURSOR_THEME XCURSOR_SIZE; do
+    eval "test -n \"\${$v}\"" && session_env="$session_env $v"
+  done
   if command -v dbus-update-activation-environment >/dev/null 2>&1; then
     dbus-update-activation-environment --systemd $session_env
   elif command -v systemctl >/dev/null 2>&1; then
