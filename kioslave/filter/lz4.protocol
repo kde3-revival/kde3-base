@@ -1,0 +1,9 @@
+[Protocol]
+exec=kio_filter
+protocol=lz4
+mimetype=application/x-lz4
+input=stream
+output=stream
+reading=true
+source=false
+Icon=ark

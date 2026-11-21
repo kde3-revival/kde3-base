@@ -56,7 +56,8 @@ int kdemain( int argc, char ** argv)
 FilterProtocol::FilterProtocol( const QCString & protocol, const QCString &pool, const QCString &app )
  : KIO::SlaveBase( protocol, pool, app )
 {
-    QString mimetype = QString::fromLatin1("application/x-") + QString::fromLatin1(protocol);
+    QString mimetype = protocol == "zstd" ? QString::fromLatin1("application/zstd")
+                       : QString::fromLatin1("application/x-") + QString::fromLatin1(protocol);
     filter = KFilterBase::findFilterByMimeType( mimetype );
     Q_ASSERT(filter);
 }
@@ -80,6 +81,7 @@ void FilterProtocol::get( const KURL & )
   bool bNeedHeader = true;
   bool bNeedMimetype = true;
   bool bError = true;
+  bool bEndOfInput = false;
   int result;
 
   QByteArray inputBuffer;
@@ -87,17 +89,25 @@ void FilterProtocol::get( const KURL & )
   filter->setOutBuffer( outputBuffer.data(), outputBuffer.size() );
   while(true)
   {
-     if (filter->inBufferEmpty())
+     if (filter->inBufferEmpty() && !bEndOfInput)
      {
         dataReq(); // Request data
         result = readData( inputBuffer);
   kdDebug(7110) << "requestData: got " << result << endl;
-        if (result <= 0)
+        if (result < 0 || (result == 0 && !filter->setEndOfInput()))
         {
           bError = true;
           break; // Unexpected EOF.
         }
-        filter->setInBuffer( inputBuffer.data(), inputBuffer.size() );
+        if (result == 0)
+        {
+          // The filter finishes the stream: it returns END if the
+          // data was complete, ERROR if it was cut off
+          bEndOfInput = true;
+          filter->setInBuffer( 0, 0 );
+        }
+        else
+          filter->setInBuffer( inputBuffer.data(), inputBuffer.size() );
      }
      if (bNeedHeader)
      {
@@ -107,6 +117,12 @@ void FilterProtocol::get( const KURL & )
         bNeedHeader = false;
      }
      result = filter->uncompress();
+     if (bEndOfInput && result == KFilterBase::OK && filter->outBufferAvailable() != 0)
+     {
+        // No more input, and still not at the end
+        bError = true;
+        break;
+     }
      if ((filter->outBufferAvailable() == 0) || (result == KFilterBase::END))
      {
          kdDebug(7110) << "avail_out = " << filter->outBufferAvailable() << endl;
@@ -136,9 +152,12 @@ void FilterProtocol::get( const KURL & )
 
   if (!bError)
   {
-     dataReq(); // Request data
-     result = readData( inputBuffer);
+     if (!bEndOfInput)
+     {
+        dataReq(); // Request data
+        result = readData( inputBuffer);
   kdDebug(7110) << "requestData: got " << result << "(expecting 0)" << endl;
+     }
      data( QByteArray() ); // Send EOF
   }
 
