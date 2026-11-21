@@ -28,7 +28,6 @@
 #include "removablebackend.h"
 #include "mediadirnotify.h"
 
-class HALBackend;
 class FstabBackend;
 
 class MediaManager : public KDEDModule
@@ -53,7 +52,7 @@ k_dcop:
 
 	ASYNC reloadBackends();
 
-	// Removable media handling (for people not having HAL)
+	// Removable media handling (without UDisks2)
 	bool removablePlug(const QString &devNode, const QString &label);
 	bool removableUnplug(const QString &devNode);
 	bool removableCamera(const QString &devNode);
@@ -82,7 +81,6 @@ private:
 	MediaList m_mediaList;
 	QValueList<BackendBase*> m_backends;
 	RemovableBackend *mp_removableBackend;
-	HALBackend *m_halbackend;
 	MediaDirNotify m_dirNotify;
 	FstabBackend *m_fstabbackend;
 };

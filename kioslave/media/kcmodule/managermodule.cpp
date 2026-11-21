@@ -35,13 +35,6 @@ ManagerModule::ManagerModule( QWidget* parent, const char* name )
 
 	addConfig(  MediaManagerSettings::self(), view );
 
-#ifndef COMPILE_HALBACKEND
-	QString hal_text = view->kcfg_HalBackendEnabled->text();
-	hal_text += " ("+i18n("No support for HAL on this system")+")";
-	view->kcfg_HalBackendEnabled->setText( hal_text );
-#endif
-	view->kcfg_HalBackendEnabled->setEnabled( false );
-
 #ifndef COMPILE_LINUXCDPOLLING
 	QString poll_text = view->kcfg_CdPollingEnabled->text();
 	poll_text += " ("+i18n("No support for CD polling on this system")+")";

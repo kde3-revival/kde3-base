@@ -18,17 +18,6 @@
         </property>
         <widget class="QCheckBox">
             <property name="name">
-                <cstring>kcfg_HalBackendEnabled</cstring>
-            </property>
-            <property name="text">
-                <string>Enable HAL backend</string>
-            </property>
-            <property name="whatsThis" stdset="0">
-                <string>Select this if you want to enable the Hardware Abstraction Layer (http://hal.freedesktop.org/wiki/Software/hal) support.</string>
-            </property>
-        </widget>
-        <widget class="QCheckBox">
-            <property name="name">
                 <cstring>kcfg_CdPollingEnabled</cstring>
             </property>
             <property name="text">

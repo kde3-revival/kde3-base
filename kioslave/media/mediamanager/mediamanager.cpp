@@ -32,10 +32,6 @@
 
 #include "fstabbackend.h"
 
-#ifdef COMPILE_HALBACKEND
-#include "halbackend.h"
-#endif //COMPILE_HALBACKEND
-
 #ifdef COMPILE_LINUXCDPOLLING
 #include "linuxcdpolling.h"
 #endif //COMPILE_LINUXCDPOLLING
@@ -77,29 +73,7 @@ void MediaManager::loadBackends()
     }
 
     mp_removableBackend = 0L;
-    m_halbackend = 0L;
     m_fstabbackend = 0L;
-
-#ifdef COMPILE_HALBACKEND
-    if ( MediaManagerSettings::self()->halBackendEnabled() )
-    {
-        m_halbackend = new HALBackend(m_mediaList, this);
-        if (m_halbackend->InitHal())
-        {
-            m_backends.append( m_halbackend );
-            m_fstabbackend = new FstabBackend(m_mediaList, true);
-            m_backends.append( m_fstabbackend );
-            // No need to load something else...
-            m_mediaList.blockSignals(false);
-            return;
-        }
-        else
-        {
-            delete m_halbackend;
-            m_halbackend = 0;
-        }
-    }
-#endif // COMPILE_HALBACKEND
 
     mp_removableBackend = new RemovableBackend(m_mediaList);
     m_backends.append( mp_removableBackend );
@@ -184,52 +158,29 @@ QStringList MediaManager::properties(const QString &name)
         return QStringList();
 }
 
-QStringList MediaManager::mountoptions(const QString &name)
+// The mount options were kept by the HAL backend, which is gone
+QStringList MediaManager::mountoptions(const QString &)
 {
-#ifdef COMPILE_HALBACKEND
-    if (!m_halbackend)
-        return QStringList();
-    return m_halbackend->mountoptions(name);
-#else
     return QStringList();
-#endif
 }
 
-bool MediaManager::setMountoptions(const QString &name, const QStringList &options)
+bool MediaManager::setMountoptions(const QString &, const QStringList &)
 {
-#ifdef COMPILE_HALBACKEND
-    if (!m_halbackend)
-        return false;
-    return m_halbackend->setMountoptions(name, options);
-#else
     return false;
-#endif
 }
 
 QString MediaManager::mount(const QString &name)
 {
-#ifdef COMPILE_HALBACKEND
-    if (!m_halbackend)
-        return i18n("Feature only available with HAL");
-    return m_halbackend->mount(name);
-#else
     if ( !m_fstabbackend ) // lying :)
         return i18n("Feature only available with HAL");
     return m_fstabbackend->mount( name );
-#endif
 }
 
 QString MediaManager::unmount(const QString &name)
 {
-#ifdef COMPILE_HALBACKEND
-    if (!m_halbackend)
-        return i18n("Feature only available with HAL");
-    return m_halbackend->unmount(name);
-#else
     if ( !m_fstabbackend ) // lying :)
         return i18n("Feature only available with HAL");
     return m_fstabbackend->unmount( name );
-#endif
 }
 
 QString MediaManager::nameForLabel(const QString &label)

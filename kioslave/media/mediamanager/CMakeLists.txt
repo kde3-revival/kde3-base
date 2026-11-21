@@ -3,8 +3,7 @@ include_directories(
   "${CMAKE_CURRENT_BINARY_DIR}/../libmediacommon"
 )
 
-# include_media_linuxcdpolling (linux/cdrom.h); the HAL backend
-# (include_media_halbackend, libhalbackend.la) is not built: HAL is gone
+# include_media_linuxcdpolling (linux/cdrom.h)
 if(COMPILE_LINUXCDPOLLING)
 kde3_add_library(linuxcdpolling OBJECT
   SOURCES
