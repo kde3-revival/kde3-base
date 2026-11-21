@@ -70,6 +70,10 @@ void SMServerConfig::load(bool useDefaults )
   bool en = c->readBoolEntry("offerShutdown", true);
   dialog->offerShutdownCheck->setChecked(en);
   dialog->sdGroup->setEnabled(en);
+  en = c->readBoolEntry("offerSleep", true);
+  dialog->offerSleepCheck->setChecked(en);
+  dialog->lockBeforeSleepCheck->setEnabled(en);
+  dialog->lockBeforeSleepCheck->setChecked(c->readBoolEntry("lockBeforeSleep", true));
 
   QString s = c->readEntry( "loginMode" );
   if ( s == "default" )
@@ -103,6 +107,8 @@ void SMServerConfig::save()
   c->setGroup("General");
   c->writeEntry( "confirmLogout", dialog->confirmLogoutCheck->isChecked());
   c->writeEntry( "offerShutdown", dialog->offerShutdownCheck->isChecked());
+  c->writeEntry( "offerSleep", dialog->offerSleepCheck->isChecked());
+  c->writeEntry( "lockBeforeSleep", dialog->lockBeforeSleepCheck->isChecked());
   QString s = "restorePreviousLogout";
   if ( dialog->emptySessionRadio->isChecked() )
       s = "default";
