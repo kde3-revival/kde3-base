@@ -636,12 +636,10 @@ KFonts::KFonts(QWidget *parent, const char *name, const QStringList &)
        " when the real DPI of the hardware is not detected properly and it"
        " is also often misused when poor quality fonts are used that do not"
        " look well with DPI values other than 96 or 120 DPI.</p>"
-       "<p>The use of this option is generally discouraged. For selecting proper DPI"
-       " value a better option is explicitly configuring it for the whole X server if"
-       " possible (e.g. DisplaySize in xorg.conf or adding <i>-dpi value</i> to"
-       " ServerLocalArgs= in $KDEDIR/share/config/kdm/kdmrc). When fonts do not render"
-       " properly with real DPI value better fonts should be used or configuration"
-       " of font hinting should be checked.</p>" );
+       "<p>When this option is disabled, KDE uses the DPI set by the Xft.dpi X resource"
+       " (e.g. in ~/.Xresources), or 96 DPI if there is none. The same value is given"
+       " to GTK, Qt 5/6, Firefox, LibreOffice and the other applications, so that"
+       " their fonts have the same size as those of KDE applications.</p>" );
    QWhatsThis::add(comboForceDpi, whatsthis);
    connect( comboForceDpi, SIGNAL( activated( int )), SLOT( changed()));
    lay->addWidget( comboForceDpi, 1, 1 );

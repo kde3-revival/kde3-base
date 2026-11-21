@@ -43,6 +43,8 @@
 #include "krdb.h"
 
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
+#include <X11/Xresource.h>
 
 inline const char * gtkEnvVar(int version)
 {
@@ -419,6 +421,70 @@ static void createGtkrc( bool exportColors, const QColorGroup& cg, int version )
 
 // -----------------------------------------------------------------------------
 
+// Whether the X resources have a value for name (class cls) now; Xlib's
+// own copy, XResourceManagerString(), is from when the connection was
+// opened.
+static bool hasResource( const char *name, const char *cls )
+{
+  Atom type;
+  int format;
+  unsigned long n, after;
+  unsigned char *data = 0;
+  bool found = false;
+  if ( XGetWindowProperty( qt_xdisplay(), RootWindow( qt_xdisplay(), 0 ), XA_RESOURCE_MANAGER,
+                           0, LONG_MAX / 4, False, XA_STRING, &type, &format, &n, &after,
+                           &data ) == Success && data && type == XA_STRING && format == 8 )
+  {
+    XrmInitialize();
+    XrmDatabase db = XrmGetStringDatabase( reinterpret_cast<char *>( data ) );
+    if ( db )
+    {
+      char *rtype = 0;
+      XrmValue value;
+      found = XrmGetResource( db, name, cls, &rtype, &value ) && value.addr;
+      XrmDestroyDatabase( db );
+    }
+  }
+  if ( data )
+    XFree( data );
+  return found;
+}
+
+// Without Xft.dpi, Qt 3 and libXft use the DPI of the X screen, while
+// GTK, Chromium and Qt 5/6 use 96: export the 96 DPI that KDE uses when
+// the fonts module does not force a DPI, unless the X resources already
+// have one (from ~/.Xresources or the display manager), so that all
+// agree.  The XSETTINGS manager (kded_xsettings) passes it on to GTK.
+static void exportDefaultDpi()
+{
+  if ( hasResource( "Xft.dpi", "Xft.Dpi" ) )
+    return;
+  QCString contents = "Xft.dpi: 96\n";
+  // libXcursor takes the cursor size from Xft.dpi when no size is set
+  // (16 points, 21 pixels at 96 DPI), and from the screen size without
+  // it: keep the size the cursors have (the size at login: unlike
+  // libXcursor's default, it does not follow later screen size changes)
+  if ( !hasResource( "Xcursor.size", "Xcursor.Size" ) )
+  {
+    Display *dpy = qt_xdisplay();
+    const int screen = DefaultScreen( dpy );
+    const int dim = QMIN( DisplayWidth( dpy, screen ), DisplayHeight( dpy, screen ) );
+    if ( dim / 48 > 0 )
+      contents += "Xcursor.size: " + QCString().setNum( dim / 48 ) + "\n";
+  }
+  KTempFile tmpFile;
+  if ( tmpFile.status() != 0 )
+    return;
+  tmpFile.file()->writeBlock( contents.data(), contents.length() );
+  tmpFile.close();
+  KProcess proc;
+  proc << "xrdb" << "-quiet" << "-merge" << "-nocpp" << tmpFile.name();
+  proc.start( KProcess::Block );
+  tmpFile.unlink();
+}
+
+// -----------------------------------------------------------------------------
+
 void runRdb( uint flags )
 {
   // Obtain the application palette that is about to be set.
@@ -565,6 +631,10 @@ void runRdb( uint flags )
   proc.start( KProcess::Block, KProcess::Stdin );
 
   tmpFile.unlink();
+
+  // also when only the colours are exported: the colours module may
+  // have deleted all the X resources before
+  exportDefaultDpi();
 
   applyGtkStyles(exportColors, 1);
   applyGtkStyles(exportColors, 2);
