@@ -226,7 +226,8 @@ QPtrList< Presenter >* Presenter::presenters = NULL;
 
 Presenter::Presenter( Display* d )
     : dpy( d ), window( None ), off_x( 0 ), off_y( 0 ), width( 0 ), height( 0 ), buf_w( 0 ), buf_h( 0 ),
-      format( NULL ), depth( 0 ), gc( NULL ), current( 0 ), present( false ), external( false ), buffer_count( 0 ),
+      format( NULL ), depth( 0 ), gc( NULL ), current( 0 ), present( false ), external( false ),
+      last_mode( ModeUnknown ), buffer_count( 0 ),
       present_eid( None ),
       serial( 0 ), queue( 0 ), next_msc( 0 ), last_msc( 0 ), last_ust( 0 ), period( 1000.0 / 60 ),
       last_complete( 0 ), stat_msc( 0 )
@@ -337,7 +338,7 @@ int Presenter::freeBuffer() const
     return -1;
     }
 
-void Presenter::presentBuffer( int buf, XID update )
+void Presenter::presentBuffer( int buf, XID update, int x, int y )
     {
     current = buf;
 #ifdef COMPOSITING_PRESENT
@@ -347,7 +348,7 @@ void Presenter::presentBuffer( int buf, XID update )
         if( !mscKnown( now()))
             next_msc = 0; // the next refresh
         ++queue;
-        XPresentPixmap( dpy, window, buffers[ buf ], ++serial, None, update, 0, 0,
+        XPresentPixmap( dpy, window, buffers[ buf ], ++serial, None, update, -x, -y,
             None, None, None, PresentOptionNone, next_msc, 0, 0, NULL, 0 );
         if( next_msc != 0 )
             ++next_msc;
@@ -357,8 +358,8 @@ void Presenter::presentBuffer( int buf, XID update )
         }
 #endif
     if( update != None )
-        XFixesSetGCClipRegion( dpy, gc, 0, 0, update );
-    XCopyArea( dpy, buffers[ buf ], window, gc, 0, 0, width, height, 0, 0 );
+        XFixesSetGCClipRegion( dpy, gc, -x, -y, update );
+    XCopyArea( dpy, buffers[ buf ], window, gc, x, y, width, height, 0, 0 );
     if( update != None )
         XSetClipMask( dpy, gc, None );
     XFlush( dpy );
@@ -550,6 +551,7 @@ void Presenter::handle( XEvent* e )
             return;
         queue = QMAX( 0, queue - 1 );
         bool skipped = ce->mode == PresentCompleteModeSkip;
+        last_mode = ce->mode == PresentCompleteModeFlip ? ModeFlip : skipped ? ModeSkip : ModeCopy;
         int missed = 0;
         if( !skipped )
             {

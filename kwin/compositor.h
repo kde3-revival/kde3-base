@@ -31,6 +31,7 @@ class Workspace;
 class Client;
 class ShadowCache;
 class SceneWindow;
+class CompositorOutput;
 
 namespace Render
 {
@@ -89,8 +90,8 @@ class Compositor : public QObject
         void activeChanged( bool active );
     private slots:
         void performRepaint();
-        void presentCompleted( bool skipped, int missed );
-        void presentIdle();
+        void outputCompleted( bool skipped, int missed );
+        void outputIdle();
         void checkUnredirect();
         void retry();
         void selectionLost();
@@ -100,6 +101,12 @@ class Compositor : public QObject
         bool claimSelection();
         bool createBuffers();
         void freeBuffers();
+        void setupOutputs( bool per_monitor );
+        void freeOutputs();
+        int freeBuffer() const;
+        bool presentTo( CompositorOutput* o, int buffer );
+        bool outputWanted( const CompositorOutput* o ) const;
+        bool leadCompleted( bool skipped, int missed );
         // the scene's windows
         SceneWindow* findWindow( Window w ) const;
         SceneWindow* addWindow( Window w, bool query_attributes );
@@ -126,6 +133,7 @@ class Compositor : public QObject
         void setUnredirected( SceneWindow* w, bool unredirect );
         void updateOverlayShape();
         void debugFrame( double start, const QRegion& repaint );
+        QString outputStats() const;
 
         Workspace* ws;
         Display* dpy;
@@ -138,7 +146,16 @@ class Compositor : public QObject
         KSelectionOwner* selection;
         Render::Renderer* renderer;
         ShadowCache* shadows;
+        // where frames are presented (see setupOutputs()); presenter is the
+        // first one's, which paces the frames
+        QPtrList< CompositorOutput > outputs;
         Compositing::Presenter* presenter;
+        bool per_monitor;
+        bool flips_failed; // the overlay was copied, not flipped
+        int copies_in_row;
+        int latest_buffer; // drawn last
+        double hold_until; // no drawing into buffers before (outputs switched)
+        int force_mode; // KWIN_COMPOSITOR_PRESENT: 1 overlay, 2 monitors
         Window overlay;
         // the present buffers and the frame each one shows (buffer age)
         enum { BufferCount = 3 };
@@ -158,13 +175,24 @@ class Compositor : public QObject
         Render::Texture* root_texture;
         QRegion overlay_hole; // where unredirected windows show through
         int shape_event;
+        // frame scheduling: drawn render_budget ms before the next refresh
+        bool asap;
+        double render_budget, min_budget;
+        int on_time; // frames in time since the budget changed
+        double target_vblank; // the refresh the queued frame is meant for
+        int late_at_max; // late frames with the largest budget
+        bool late_failed; // the refreshes are not where they seem to be: frames at once
+        double submit_time; // when it was presented
+        double shown_delay[ 16 ]; // how long after that frames were shown
+        int shown_index;
+        bool immediate_server; // shows them at once (no refreshes to wait for)
         Atom atom_opacity, atom_type, atom_rootpmap, atom_esetroot;
         Atom atom_types[ 12 ];
         // statistics (KWIN_COMPOSITOR_DEBUG)
         bool debug;
         int stat_frames;
         double stat_render, stat_max_render;
-        int stat_skipped, stat_missed;
+        int stat_skipped, stat_missed, stat_late;
         double stat_start;
     };
 

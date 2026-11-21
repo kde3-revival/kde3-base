@@ -145,9 +145,14 @@ class Presenter : public QObject
         void startExternal( Window win, const Pixmap* pixmaps, int count, bool use_present );
         // the index of a buffer the server doesn't use (-1: none, idle() later)
         int freeBuffer() const;
-        // shows buffer index: with Present at the next refresh (update: what
-        // changed, for copies; None: all), else copied at once
-        void presentBuffer( int index, XID update );
+        // shows buffer index at x, y of the window: with Present at the next
+        // refresh (update: what changed, in buffer coordinates, for copies;
+        // None: all), else copied at once
+        void presentBuffer( int index, XID update, int x = 0, int y = 0 );
+        bool isBusy( int index ) const { return busy[ index ]; }
+        // how the last presentation was done
+        enum Mode { ModeUnknown, ModeCopy, ModeFlip, ModeSkip };
+        Mode lastMode() const { return last_mode; }
         void stop();
         bool isStarted() const { return window != None; }
         // a new place in the window; the buffers are made anew when larger
@@ -170,6 +175,10 @@ class Presenter : public QObject
         // missed refreshes are counted from the next presentation
         void resetStats() { stat_msc = 0; }
         double refreshPeriod() const { return period; }
+        // the last completed presentation: when it was shown (ms,
+        // CLOCK_MONOTONIC) and its refresh counter
+        double lastShown() const { return last_ust / 1000.0; }
+        unsigned long long lastMsc() const { return last_msc; }
         static bool dispatch( XEvent* e );
     signals:
         // a presentation completed (skipped: never shown; missed: refreshes
@@ -199,6 +208,7 @@ class Presenter : public QObject
         int current;
         bool present;
         bool external; // the buffers aren't ours
+        Mode last_mode;
         int buffer_count;
         XID present_eid;
         unsigned int serial;

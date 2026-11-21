@@ -48,6 +48,7 @@ License. See the file "COPYING" for the exact licensing terms.
 
 #include <qapplication.h>
 #include <qdesktopwidget.h>
+#include <qtl.h>
 #include <kdebug.h>
 #include <klocale.h>
 #include <kmanagerselection.h>
@@ -157,6 +158,34 @@ SceneWindow::SceneWindow( Window w )
     {
     }
 
+/*
+ Where frames are presented: the overlay window (one output), or a child
+ window of the overlay per monitor, presented at that monitor's refresh.
+*/
+class CompositorOutput
+    {
+    public:
+        CompositorOutput() : window( None ), own_window( false ), presenter( NULL ), deferred( false ), flips( 0 ),
+            copies( 0 ), skips( 0 ) {}
+        void count()
+            {
+            switch( presenter->lastMode())
+                {
+                case Presenter::ModeFlip: ++flips; break;
+                case Presenter::ModeCopy: ++copies; break;
+                case Presenter::ModeSkip: ++skips; break;
+                default: break;
+                }
+            }
+        QRect geom; // screen coordinates
+        Window window;
+        bool own_window; // a child of the overlay
+        Presenter* presenter;
+        QRegion pending; // changed since the last presentation here (screen coordinates)
+        bool deferred; // a frame waits for the presentation queued here
+        int flips, copies, skips; // (statistics)
+    };
+
 static int trapped = 0;
 static int ( *saved_handler )( Display*, XErrorEvent* ) = NULL;
 
@@ -182,9 +211,12 @@ static int untrap()
 Compositor::Compositor( Workspace* w )
     : ws( w ), dpy( qt_xdisplay()), root( qt_xrootwin()), screen_w( 0 ), screen_h( 0 ), active( false ),
       suspended( false ), failed_once( false ), selection( NULL ), renderer( NULL ), shadows( NULL ),
-      presenter( NULL ), overlay( None ), frame_number( 0 ), frame_wanted( false ), root_pixmap( None ),
-      root_texture( NULL ), shape_event( 0 ), stat_frames( 0 ), stat_render( 0 ), stat_max_render( 0 ),
-      stat_skipped( 0 ), stat_missed( 0 ), stat_start( 0 )
+      presenter( NULL ), per_monitor( false ), flips_failed( false ), copies_in_row( 0 ), latest_buffer( -1 ),
+      hold_until( 0 ), force_mode( 0 ), overlay( None ), frame_number( 0 ), frame_wanted( false ), root_pixmap( None ),
+      root_texture( NULL ), shape_event( 0 ), asap( false ), render_budget( 3.0 ), min_budget( 3.0 ), on_time( 0 ),
+      target_vblank( 0 ), late_at_max( 0 ), late_failed( false ), submit_time( 0 ), shown_index( 0 ),
+      immediate_server( false ), stat_frames( 0 ), stat_render( 0 ), stat_max_render( 0 ), stat_skipped( 0 ),
+      stat_missed( 0 ), stat_late( 0 ), stat_start( 0 )
     {
     stacking.setAutoDelete( false );
     for( int i = 0;
@@ -197,6 +229,11 @@ Compositor::Compositor( Workspace* w )
         }
     frame_damage.resize( BufferCount + 1 );
     debug = getenv( "KWIN_COMPOSITOR_DEBUG" ) != NULL;
+    // KWIN_COMPOSITOR_ASAP=1: frames drawn at once (for comparing);
+    // KWIN_COMPOSITOR_BUDGET=ms: the time kept for drawing before a refresh
+    asap = getenv( "KWIN_COMPOSITOR_ASAP" ) != NULL;
+    if( getenv( "KWIN_COMPOSITOR_BUDGET" ) != NULL )
+        min_budget = render_budget = QMAX( 0.5, QMIN( 10.0, atof( getenv( "KWIN_COMPOSITOR_BUDGET" ))));
     connect( &repaint_timer, SIGNAL( timeout()), SLOT( performRepaint()));
     connect( &unredirect_timer, SIGNAL( timeout()), SLOT( checkUnredirect()));
     connect( &retry_timer, SIGNAL( timeout()), SLOT( retry()));
@@ -413,10 +450,13 @@ bool Compositor::start()
         stop( true, i18n( "the frame buffers could not be made" ));
         return false;
         }
-    presenter = new Presenter( dpy );
-    connect( presenter, SIGNAL( completed( bool, int )), SLOT( presentCompleted( bool, int )));
-    connect( presenter, SIGNAL( idle()), SLOT( presentIdle()));
-    presenter->startExternal( overlay, buffer_pixmaps, BufferCount, have_present );
+    flips_failed = false;
+    copies_in_row = 0;
+    latest_buffer = -1;
+    hold_until = 0;
+    const char* mode = getenv( "KWIN_COMPOSITOR_PRESENT" ); // overlay|monitors (tests)
+    force_mode = mode == NULL ? 0 : strcmp( mode, "monitors" ) == 0 ? 2 : strcmp( mode, "overlay" ) == 0 ? 1 : 0;
+    setupOutputs( force_mode == 2 );
     updateRootPixmap();
     for( QPtrListIterator< SceneWindow > it( stacking );
          it.current() != NULL;
@@ -427,8 +467,16 @@ bool Compositor::start()
     frame_number = 0;
     stat_frames = 0;
     stat_render = stat_max_render = 0;
-    stat_skipped = stat_missed = 0;
+    stat_skipped = stat_missed = stat_late = 0;
     stat_start = now();
+    render_budget = min_budget;
+    on_time = 0;
+    late_at_max = 0;
+    late_failed = false;
+    target_vblank = 0;
+    submit_time = 0;
+    shown_index = 0;
+    immediate_server = false;
     kdDebug( 1212 ) << "compositor: started, " << renderer->description() << endl;
     if( debug )
         kdWarning( 1212 ) << "compositor: started, " << renderer->description() << ", present "
@@ -455,12 +503,9 @@ void Compositor::stop( bool failed, const QString& why )
     if( debug && was_active && stat_frames > 0 )
         kdWarning( 1212 ) << "compositor: stopped after " << stat_frames << " frames, render avg "
             << stat_render / stat_frames << " ms max " << stat_max_render << " ms, skipped " << stat_skipped
-            << " missed refreshes " << stat_missed << endl;
-    if( presenter != NULL )
-        presenter->stop();
-    delete presenter;
-    presenter = NULL;
+            << " missed refreshes " << stat_missed << outputStats() << endl;
     trap();
+    freeOutputs();
     // the overlay goes first: the screen keeps the last frame (the root's
     // background isn't painted while its children are redirected) until
     // the windows are back on it
@@ -1194,34 +1239,315 @@ void Compositor::updateRootPixmap()
 // painting
 //****************************************
 
+/*
+ When a frame is drawn: as late as it safely makes the next refresh of a
+ monitor that gets something (render_budget before it), so that all
+ damage until then is in it and shown at that refresh, also when more
+ comes during the frame (drawing at once would queue the frame and leave
+ later damage for the refresh after it).  The refreshes are known from the
+ last presentations; without them (idle for a while, no Present) the frame
+ is drawn at once.  Frames that miss their refresh make the budget larger;
+ servers that show frames at once (Xwayland) or whose refreshes are not
+ where their timestamps say (Xvfb) get frames at once.
+*/
 void Compositor::scheduleRepaint()
     {
     if( !active || repaint_timer.isActive())
         return;
     if( frame_wanted )
         return; // (the completion of the queued frame starts it)
-    repaint_timer.start( 0, true );
+    int delay = 0;
+    if( !asap && !immediate_server && !late_failed )
+        {
+        const double t = now();
+        double earliest = -1;
+        for( QPtrListIterator< CompositorOutput > it( outputs );
+             it.current() != NULL;
+             ++it )
+            {
+            if( !outputWanted( it.current()))
+                continue;
+            const Presenter* p = it.current()->presenter;
+            const double last = p->lastShown();
+            const double period = p->refreshPeriod();
+            if( !p->usesPresent() || last <= 0 || t < last || t - last >= 2000 || period <= 4 )
+                {
+                earliest = t;
+                break;
+                }
+            const double next = last + ( floor(( t - last ) / period ) + 1 ) * period;
+            if( earliest < 0 || next < earliest )
+                earliest = next;
+            }
+        if( earliest > 0 && earliest - render_budget > t )
+            delay = (int) floor( earliest - render_budget - t );
+        }
+    repaint_timer.start( delay, true );
     }
 
-void Compositor::presentCompleted( bool skipped, int missed )
+// the pending damage is (partly) on o's monitor, or o missed frames
+bool Compositor::outputWanted( const CompositorOutput* o ) const
+    {
+    return o->deferred || !( pending & QRegion( o->geom )).isEmpty();
+    }
+
+// a frame is queued for o's next refresh
+static bool queuedOn( const CompositorOutput* o )
+    {
+    return o->presenter->usesPresent() && o->presenter->queued() >= 1;
+    }
+
+void Compositor::outputCompleted( bool skipped, int missed )
+    {
+    CompositorOutput* o = NULL;
+    for( QPtrListIterator< CompositorOutput > it( outputs );
+         it.current() != NULL && o == NULL;
+         ++it )
+        if( it.current()->presenter == sender())
+            o = it.current();
+    if( o == NULL )
+        return;
+    o->count();
+    // KWIN_COMPOSITOR_DEBUG=2: every frame (the latency tests)
+    static const bool every = getenv( "KWIN_COMPOSITOR_DEBUG" ) != NULL
+        && strcmp( getenv( "KWIN_COMPOSITOR_DEBUG" ), "2" ) == 0;
+    if( every )
+        kdWarning( 1212 ) << "compositor: " << ( o->presenter == presenter ? "" : "other monitor " ) << "shown at "
+            << QString::number( o->presenter->lastShown(), 'f', 3 ) << " msc "
+            << (unsigned long) o->presenter->lastMsc() << " period "
+            << QString::number( o->presenter->refreshPeriod(), 'f', 3 ) << " mode " << o->presenter->lastMode()
+            << ( skipped ? " skipped" : "" ) << endl;
+    if( o->presenter == presenter && leadCompleted( skipped, missed ))
+        return; // (the outputs are new)
+    if( o->deferred && !queuedOn( o ) && latest_buffer >= 0 )
+        presentTo( o, latest_buffer ); // the newest frame, with all it missed
+    if( frame_wanted )
+        {
+        frame_wanted = false;
+        scheduleRepaint();
+        }
+    }
+
+void Compositor::outputIdle()
+    {
+    if( frame_wanted )
+        {
+        frame_wanted = false;
+        scheduleRepaint();
+        }
+    }
+
+// the presentation on the monitor that paces the frames completed: timing
+// statistics, the budget, flips or not; true when the outputs were switched
+bool Compositor::leadCompleted( bool skipped, int missed )
     {
     if( skipped )
         ++stat_skipped;
     stat_missed += missed;
-    if( frame_wanted )
-        {
-        frame_wanted = false;
-        performRepaint(); // right after the refresh
+    if( !skipped && submit_time > 0 )
+        { // servers that show frames at once (Xwayland): no waiting for refreshes
+        shown_delay[ shown_index++ % 16 ] = presenter->lastShown() - submit_time;
+        if( shown_index >= 16 )
+            {
+            QValueVector< double > v( 16 );
+            for( int i = 0;
+                 i < 16;
+                 ++i )
+                v[ i ] = shown_delay[ i ];
+            qHeapSort( v );
+            const bool immediate = v[ 8 ] < 1.0 && presenter->refreshPeriod() > 8;
+            if( immediate != immediate_server && debug )
+                kdWarning( 1212 ) << "compositor: the X server shows frames "
+                    << ( immediate ? "at once" : "at refreshes" ) << endl;
+            immediate_server = immediate;
+            }
         }
+    submit_time = 0;
+    if( target_vblank > 0 && !skipped && !immediate_server && !late_failed )
+        { // too late for the refresh it was meant for: more time from now on
+        if( presenter->lastShown() > target_vblank + presenter->refreshPeriod() / 2 )
+            {
+            ++stat_late;
+            on_time = 0;
+            if( render_budget < 10.0 )
+                render_budget += 1.0;
+            else if( ++late_at_max >= 10 )
+                { // the refreshes are not where they seem to be (Xvfb): at once
+                late_failed = true;
+                if( debug )
+                    kdWarning( 1212 ) << "compositor: frames keep missing their refresh, drawn at once now" << endl;
+                }
+            }
+        else if( ++on_time >= 300 && render_budget > min_budget )
+            {
+            render_budget = QMAX( min_budget, render_budget - 0.5 );
+            on_time = 0;
+            late_at_max = 0;
+            }
+        }
+    target_vblank = 0;
+    // copies of the overlay on several monitors tear on all but one of them:
+    // each monitor at its own refresh then
+    if( !per_monitor && !skipped && QApplication::desktop()->numScreens() > 1 && force_mode == 0 )
+        {
+        if( presenter->lastMode() == Presenter::ModeCopy )
+            {
+            if( ++copies_in_row >= 3 )
+                {
+                flips_failed = true;
+                if( debug )
+                    kdWarning( 1212 ) << "compositor: the overlay is copied, not flipped" << endl;
+                setupOutputs( true );
+                scheduleRepaint();
+                return true;
+                }
+            }
+        else if( presenter->lastMode() == Presenter::ModeFlip )
+            copies_in_row = 0;
+        }
+    return false;
     }
 
-void Compositor::presentIdle()
+/*
+ Presenting: the overlay as one window, which Present page-flips on all
+ monitors (each at its own vblank) when it can.  When it copies instead
+ (on several monitors), each monitor gets a child window of the overlay
+ presented at its own refresh, so that no monitor is copied to in the
+ middle of its scanout.  Also so while the overlay has holes (unredirected
+ windows): it can't be flipped then.
+*/
+void Compositor::setupOutputs( bool per_monitor_mode )
     {
-    if( frame_wanted && presenter != NULL && presenter->queued() == 0 )
+#ifdef COMPOSITOR_BUILD
+    freeOutputs();
+    QDesktopWidget* desktop = QApplication::desktop();
+    per_monitor = per_monitor_mode && desktop->numScreens() > 1 && force_mode != 1;
+    const int count = per_monitor ? desktop->numScreens() : 1;
+    const int primary = desktop->primaryScreen();
+    for( int i = 0;
+         i < count;
+         ++i )
         {
-        frame_wanted = false;
-        performRepaint();
+        CompositorOutput* o = new CompositorOutput;
+        if( per_monitor )
+            {
+            o->geom = desktop->screenGeometry( i ) & QRect( 0, 0, screen_w, screen_h );
+            XSetWindowAttributes attr;
+            attr.background_pixmap = None; // (the screen stays as it is until the first frame)
+            o->window = XCreateWindow( dpy, overlay, o->geom.x(), o->geom.y(), o->geom.width(), o->geom.height(),
+                0, CopyFromParent, InputOutput, CopyFromParent, CWBackPixmap, &attr );
+            o->own_window = true;
+            XserverRegion empty = XFixesCreateRegion( dpy, NULL, 0 );
+            XFixesSetWindowShapeRegion( dpy, o->window, ShapeInput, 0, 0, empty );
+            XFixesDestroyRegion( dpy, empty );
+            XMapWindow( dpy, o->window );
+            }
+        else
+            {
+            o->geom = QRect( 0, 0, screen_w, screen_h );
+            o->window = overlay;
+            }
+        o->presenter = new Presenter( dpy );
+        o->presenter->startExternal( o->window, buffer_pixmaps, BufferCount, have_present );
+        o->pending = QRegion( o->geom );
+        if( per_monitor && i == primary )
+            outputs.prepend( o ); // the primary monitor paces the frames
+        else
+            outputs.append( o );
         }
+    presenter = outputs.first()->presenter;
+    for( QPtrListIterator< CompositorOutput > it( outputs );
+         it.current() != NULL;
+         ++it )
+        {
+        connect( it.current()->presenter, SIGNAL( completed( bool, int )), SLOT( outputCompleted( bool, int )));
+        connect( it.current()->presenter, SIGNAL( idle()), SLOT( outputIdle()));
+        }
+    copies_in_row = 0;
+    frame_wanted = false;
+    submit_time = 0;
+    target_vblank = 0;
+    // (presentations of the old windows may still be queued: their buffers
+    // aren't drawn into for a few refreshes)
+    hold_until = now() + 60;
+    if( active )
+        {
+        addRepaintFull();
+        if( debug )
+            kdWarning( 1212 ) << "compositor: presenting " << ( per_monitor ? "per monitor" : "the overlay" ) << endl;
+        }
+#else
+    Q_UNUSED( per_monitor_mode );
+#endif
+    }
+
+void Compositor::freeOutputs()
+    {
+    presenter = NULL;
+    for( QPtrListIterator< CompositorOutput > it( outputs );
+         it.current() != NULL;
+         ++it )
+        {
+        CompositorOutput* o = it.current();
+        o->presenter->stop();
+        delete o->presenter;
+        if( o->own_window )
+            XDestroyWindow( dpy, o->window );
+        delete o;
+        }
+    outputs.clear();
+    }
+
+// a buffer no presentation uses, the most recent one (least to draw)
+int Compositor::freeBuffer() const
+    {
+    int best = -1;
+    for( int i = 0;
+         i < BufferCount;
+         ++i )
+        {
+        bool busy = false;
+        for( QPtrListIterator< CompositorOutput > it( outputs );
+             it.current() != NULL && !busy;
+             ++it )
+            busy = it.current()->presenter->isBusy( i );
+        if( !busy && ( best < 0 || buffer_frame[ i ] > buffer_frame[ best ] ))
+            best = i;
+        }
+    return best;
+    }
+
+// what changed on o's monitor since its last presentation, from buffer buf
+// (copies: only that is copied); false when nothing changed there
+bool Compositor::presentTo( CompositorOutput* o, int buf )
+    {
+#ifdef COMPOSITOR_BUILD
+    o->deferred = false;
+    QRegion update = o->pending - overlay_hole;
+    o->pending = QRegion();
+    if( update.isEmpty())
+        return false;
+    QMemArray< QRect > rects = update.rects();
+    XRectangle* xr = new XRectangle[ QMAX( 1, (int) rects.size()) ];
+    for( unsigned int i = 0;
+         i < rects.size();
+         ++i )
+        {
+        xr[ i ].x = rects[ i ].x();
+        xr[ i ].y = rects[ i ].y();
+        xr[ i ].width = rects[ i ].width();
+        xr[ i ].height = rects[ i ].height();
+        }
+    XserverRegion region = XFixesCreateRegion( dpy, xr, rects.size());
+    delete[] xr;
+    o->presenter->presentBuffer( buf, region, o->geom.x(), o->geom.y());
+    XFixesDestroyRegion( dpy, region );
+    return true;
+#else
+    Q_UNUSED( o );
+    Q_UNUSED( buf );
+    return false;
+#endif
     }
 
 void Compositor::performRepaint()
@@ -1229,21 +1555,38 @@ void Compositor::performRepaint()
 #ifdef COMPOSITOR_BUILD
     if( !active )
         return;
+    pending -= overlay_hole; // (drawn by the unredirected windows themselves)
     if( pending.isEmpty())
         {
-        flushDamage(); // (unredirected windows' damage)
+        flushDamage();
         return;
         }
-    // at most one frame queued in the server
-    if( presenter->usesPresent() && presenter->queued() >= 1 )
+    if( hold_until > 0 )
+        { // just switched the outputs
+        const double t = now();
+        if( t < hold_until )
+            {
+            repaint_timer.start( (int) ceil( hold_until - t ), true );
+            return;
+            }
+        hold_until = 0;
+        }
+    // at most one frame queued in the server per monitor: wait when every
+    // monitor that gets something has one
+    bool can = false;
+    for( QPtrListIterator< CompositorOutput > it( outputs );
+         it.current() != NULL && !can;
+         ++it )
+        can = outputWanted( it.current()) && !queuedOn( it.current());
+    if( !can )
         {
         frame_wanted = true;
         return;
         }
-    const int buf = presenter->freeBuffer();
+    const int buf = freeBuffer();
     if( buf < 0 )
         {
-        frame_wanted = true; // (presentIdle())
+        frame_wanted = true; // (outputIdle())
         return;
         }
     const double start = now();
@@ -1271,23 +1614,41 @@ void Compositor::performRepaint()
         return;
         }
     buffer_frame[ buf ] = frame_number;
-    // what changed on the screen (copies: only that is copied)
-    damage -= overlay_hole;
-    QMemArray< QRect > rects = damage.rects();
-    XRectangle* xr = new XRectangle[ QMAX( 1, (int) rects.size()) ];
-    for( unsigned int i = 0;
-         i < rects.size();
-         ++i )
+    latest_buffer = buf;
+    // the refresh the frame is meant for (for the budget), when it was drawn
+    // in time for it: not for damage that came too late for it anyway
+    const double submit = now();
+    target_vblank = 0;
+    submit_time = 0;
+    if( presenter->usesPresent() && presenter->lastShown() > 0 )
         {
-        xr[ i ].x = rects[ i ].x();
-        xr[ i ].y = rects[ i ].y();
-        xr[ i ].width = rects[ i ].width();
-        xr[ i ].height = rects[ i ].height();
+        const double last = presenter->lastShown();
+        const double period = presenter->refreshPeriod();
+        if( submit >= last && submit - last < 2000 )
+            {
+            target_vblank = last + ( floor(( submit - last ) / period ) + 1 ) * period;
+            if( start > target_vblank - render_budget + 0.5 )
+                target_vblank = 0;
+            }
         }
-    XserverRegion update = XFixesCreateRegion( dpy, xr, rects.size());
-    delete[] xr;
-    presenter->presentBuffer( buf, update );
-    XFixesDestroyRegion( dpy, update );
+    // what changed goes to each monitor; one that still has a frame queued
+    // gets the newest frame when that one was shown
+    for( QPtrListIterator< CompositorOutput > it( outputs );
+         it.current() != NULL;
+         ++it )
+        {
+        CompositorOutput* o = it.current();
+        o->pending |= damage & QRegion( o->geom );
+        if( queuedOn( o ))
+            o->deferred = !o->pending.isEmpty();
+        else if( presentTo( o, buf ))
+            {
+            if( o->presenter == presenter )
+                submit_time = submit; // (for leadCompleted())
+            }
+        else if( o->presenter == presenter )
+            target_vblank = 0;
+        }
     debugFrame( start, repaint );
 #endif
     }
@@ -1314,7 +1675,20 @@ void Compositor::debugFrame( double start, const QRegion& repaint )
             << " render " << QString::number( t, 'f', 3 ) << " ms, " << (long) px << " px; avg "
             << QString::number( stat_render / stat_frames, 'f', 3 ) << " max "
             << QString::number( stat_max_render, 'f', 3 ) << " skipped " << stat_skipped << " missed "
-            << stat_missed << endl;
+            << stat_missed << " late " << stat_late << " budget " << render_budget << outputStats() << endl;
+    }
+
+// "; monitor 0: flips 10 copies 0 skipped 0; ..."
+QString Compositor::outputStats() const
+    {
+    QString s;
+    int i = 0;
+    for( QPtrListIterator< CompositorOutput > it( outputs );
+         it.current() != NULL;
+         ++it, ++i )
+        s += QString( "; %1 %2: flips %3 copies %4 skipped %5" ).arg( per_monitor ? "monitor" : "overlay" ).arg( i )
+            .arg( it.current()->flips ).arg( it.current()->copies ).arg( it.current()->skips );
+    return s;
     }
 
 void Compositor::paintBackground( const QRegion& region )
@@ -1541,6 +1915,14 @@ void Compositor::updateOverlayShape()
 #ifdef COMPOSITOR_BUILD
     if( overlay == None )
         return;
+    // a shaped overlay can't be flipped: per monitor; whole again: flips
+    // (unless they didn't work)
+    if( force_mode == 0 && QApplication::desktop()->numScreens() > 1 && !outputs.isEmpty())
+        {
+        const bool want = !overlay_hole.isEmpty() || flips_failed;
+        if( want != per_monitor )
+            setupOutputs( want );
+        }
     if( overlay_hole.isEmpty())
         {
         XFixesSetWindowShapeRegion( dpy, overlay, ShapeBounding, 0, 0, None );
