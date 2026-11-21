@@ -761,6 +761,14 @@ void TEScreen::ShowCharacter(int c)
 
   checkSelection(i, i); // check if selection is still valid.
 
+  // Never leave half of a double-width character behind: the widget
+  // would draw the remaining half (or the new character) two columns
+  // wide. A cell with c == 0 is the right half of the character before.
+  if (cuX > 0 && image[i].c == 0)
+    image[i-1].c = ' ';
+  if (cuX+w < columns && image[i+w].c == 0)
+    image[i+w].c = ' ';
+
   image[i].c = c;
   image[i].f = ef_fg;
   image[i].b = ef_bg;
