@@ -27,6 +27,7 @@ class Workspace;
 class Client;
 class EffectAnim;
 class EffectScene;
+class EffectPicture;
 
 namespace Compositing
 {
@@ -111,7 +112,7 @@ class Effects : public QObject
         void renderFrame( bool immediate = false );
         bool updateAnim( EffectAnim* anim, double t );
         void drawAnim( EffectAnim* anim, XID dst );
-        void drawGenie( EffectAnim* anim, XID src, int sw, int sh, XID dst, double p, double alpha );
+        void drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copies, XID dst, double p, double alpha );
         void dumpFrame();
         void report();
 

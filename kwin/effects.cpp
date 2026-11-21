@@ -83,13 +83,17 @@ const double MaxWait = 300.0;
 const double CrossfadeTime = 150.0;
 // the pixmaps kept for restoring minimized windows (bytes)
 const unsigned long RetainLimit = 256UL << 20;
-// the genie: a strip's edges move at most this much (pixels) between its
-// ends; strips at least this high
-const double GenieStep = 2.0;
-const int GenieMinStrip = 2;
-// at most about this many strips (2 requests each, a draw call each with
-// glamor): larger edge steps for large windows
-const int GenieMaxStrips = 192;
+// the genie: a strip's edges move at most this much (pixels) along it (each
+// strip is drawn with the edges of its middle: a step of up to half of
+// this at its ends, under the anti-aliasing)
+const double GenieStep = 0.3;
+// at most this high, and about this many strips (2 requests each, one draw
+// call with glamor: about 1 us each on a desktop GPU): larger edge steps
+// for windows taller than that
+const int GenieMaxStrip = 32;
+const int GenieMaxStrips = 2000;
+// downscaled copies of the window, halved across and along separately
+const int GenieLevels = 5; // 1 .. 1/16
 
 // the mip level that is downscaled by at most a half
 int mipLevel( double scale )
@@ -189,6 +193,51 @@ class EffectPicture
                 }
             }
         bool isNull() const { return picture[ 0 ] == None; }
+        /*
+         The window downscaled by 2^lx across and 2^ly along (for the genie,
+         which squeezes it across much more than along, or the other way),
+         each made once from the one halved less in one direction: 2x1 or
+         1x2 boxes, sampled bilinearly between two pixels.
+        */
+        Picture grid( Display* dpy, int lx, int ly, int* gw, int* gh )
+            {
+            if( lx == 0 && ly == 0 )
+                {
+                *gw = w[ 0 ];
+                *gh = h[ 0 ];
+                return picture[ 0 ];
+                }
+            const int key = lx * 16 + ly;
+            QMap< int, GridLevel >::ConstIterator it = grid_levels.find( key );
+            if( it != grid_levels.end())
+                {
+                *gw = (*it).w;
+                *gh = (*it).h;
+                return (*it).picture;
+                }
+            const bool across = lx > 0; // halve across from ( lx - 1, ly )
+            int sw, sh;
+            Picture src = across ? grid( dpy, lx - 1, ly, &sw, &sh ) : grid( dpy, lx, ly - 1, &sw, &sh );
+            GridLevel g;
+            g.w = across ? QMAX( 1, ( sw + 1 ) / 2 ) : sw;
+            g.h = across ? sh : QMAX( 1, ( sh + 1 ) / 2 );
+            g.pixmap = XCreatePixmap( dpy, DefaultRootWindow( dpy ), g.w, g.h, depth );
+            g.picture = XRenderCreatePicture( dpy, g.pixmap, format, 0, NULL );
+            XRenderPictureAttributes pa;
+            pa.repeat = RepeatPad;
+            XRenderChangePicture( dpy, src, CPRepeat, &pa );
+            setTransform( dpy, src, across ? 2 : 1, across ? 1 : 2, 0, 0 );
+            XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
+            XRenderComposite( dpy, PictOpSrc, src, None, g.picture, 0, 0, 0, 0, 0, 0, g.w, g.h );
+            pa.repeat = RepeatNone;
+            XRenderChangePicture( dpy, src, CPRepeat, &pa );
+            if( src == picture[ 0 ] )
+                transformed = true;
+            grid_levels[ key ] = g;
+            *gw = g.w;
+            *gh = g.h;
+            return g.picture;
+            }
         // pixmap 0 is owned (a named pixmap) when owned
         void set( Display* dpy, Pixmap p, const QSize& size, int d, Visual* vis, bool own )
             {
@@ -208,6 +257,14 @@ class EffectPicture
             {
             Pixmap ret = None;
             transformed = false;
+            for( QMap< int, GridLevel >::ConstIterator it = grid_levels.begin();
+                 it != grid_levels.end();
+                 ++it )
+                {
+                XRenderFreePicture( dpy, (*it).picture );
+                XFreePixmap( dpy, (*it).pixmap );
+                }
+            grid_levels.clear();
             for( int i = 0;
                  i < MipLevels;
                  ++i )
@@ -263,6 +320,13 @@ class EffectPicture
         Visual* visual;
         bool owned;
         bool transformed; // picture 0 not at the identity (drawn scaled)
+        struct GridLevel
+            {
+            Pixmap pixmap;
+            Picture picture;
+            int w, h;
+            };
+        QMap< int, GridLevel > grid_levels; // by lx * 16 + ly
         Pixmap pixmap[ MipLevels ];
         Picture picture[ MipLevels ];
         int w[ MipLevels ], h[ MipLevels ];
@@ -434,7 +498,10 @@ bool Effects::isActive() const
 
 double Effects::duration( double factor ) const
     {
-    return base_time * factor;
+    // (KWIN_EFFECTS_SLOW=n: n times slower, for looking at the frames)
+    static const double slow = getenv( "KWIN_EFFECTS_SLOW" ) != NULL
+        ? QMAX( 1.0, atof( getenv( "KWIN_EFFECTS_SLOW" ))) : 1.0;
+    return base_time * factor * slow;
     }
 
 bool Effects::enabled() const
@@ -1528,7 +1595,9 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
                 }
             if( anim->style == Genie )
                 {
-                drawGenie( anim, pic->picture[ 0 ], pic->w[ 0 ], pic->h[ 0 ], dst, anim->p, 1.0 );
+                // (the downscaled copies only of the kept contents: the
+                // window's own ones change)
+                drawGenie( anim, *pic, pic == &anim->snap, dst, anim->p, 1.0 );
                 pic->transformed = true;
                 return;
                 }
@@ -1577,16 +1646,26 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
  that narrows from the window's width to the button's.  First its near
  edge is pulled to the button while the edges curve in (the window
  stretches), then its far edge follows (the window is squeezed into the
- button).  Drawn as strips across the direction of travel, each scaled on
- its own across (to the funnel's width in its middle) and all alike along;
- thinner strips where the edges curve more, each a whole number of pixels
- high (no clipping needed between them).
+ button).
+
+ Drawn as strips across the direction of travel, a whole number of pixel
+ rows each (no seams, no overlaps), each scaled across on its own to the
+ funnel's width in its middle, all alike along; a strip is one row where
+ the edges curve, more where they move less than GenieStep along it.  The
+ edges are where the funnel is, to the subpixel, anti-aliased by the
+ bilinear filter (outside the window is transparent).  Where the window
+ is squeezed to less than half, a copy downscaled across and/or along is
+ drawn (made once, see EffectPicture::grid()): no aliasing, no shimmer of
+ the text.
 
  Computed along the main axis m (the direction of travel, negated for up
  and left so that it increases towards the button) and the cross axis.
 */
-void Effects::drawGenie( EffectAnim* anim, Picture src, int sw, int sh, Picture dst, double p, double alpha )
+void Effects::drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copies, Picture dst, double p,
+    double alpha )
     {
+    const int sw = pic.w[ 0 ];
+    const int sh = pic.h[ 0 ];
     const QRect& wg = anim->geom;
     const QRect& ic = anim->icon;
     // the direction
@@ -1609,6 +1688,7 @@ void Effects::drawGenie( EffectAnim* anim, Picture src, int sw, int sh, Picture 
     // along m: the window from m0 (its far edge) for len, the button's near
     // edge at i0; across: the window from wc0 to wc1, the button from ic0 to ic1
     const double len = horizontal ? sw : sh;
+    const double width = horizontal ? sh : sw;
     double m0, i0, wc0, wc1, ic0, ic1;
     if( !horizontal )
         {
@@ -1643,9 +1723,6 @@ void Effects::drawGenie( EffectAnim* anim, Picture src, int sw, int sh, Picture 
 #define GENIE_F( m ) ( s1 * smoothstep((( m ) - m0 ) / ( i0 - m0 )))
 #define GENIE_L( m ) mix( wc0, ic0, GENIE_F( m ))
 #define GENIE_R( m ) mix( wc1, ic1, GENIE_F( m ))
-    Picture mask = alpha < 1.0 ? solidPicture( dpy, Qt::black, alpha ) : None;
-    XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
-    int strips = 0;
     const int begin = (int) floor( top );
     const int end = (int) ceil( bottom );
     // the strips: as high as the edges allow
@@ -1659,19 +1736,26 @@ void Effects::drawGenie( EffectAnim* anim, Picture src, int sw, int sh, Picture 
              m < end;
              )
             {
-            int h = end - m;
             const double l0 = GENIE_L( m );
             const double r0 = GENIE_R( m );
-            while( h > GenieMinStrip
-                && ( fabs( GENIE_L( m + h ) - l0 ) > step || fabs( GENIE_R( m + h ) - r0 ) > step ))
-                h = QMAX( GenieMinStrip, h / 2 );
-            h = QMIN( h, end - m );
+            int h = 1;
+            while( h < GenieMaxStrip && m + h < end
+                && fabs( GENIE_L( m + h + 1 ) - l0 ) <= step && fabs( GENIE_R( m + h + 1 ) - r0 ) <= step )
+                ++h;
             heights.append( h );
             m += h;
             }
-        if( (int) heights.size() <= GenieMaxStrips || step > 64 )
+        if( (int) heights.size() <= GenieMaxStrips || step > 16 )
             break;
         }
+    // the levels of the downscaled copies along (the same for all strips)
+    int level_along = 0;
+    if( scaled_copies )
+        while( level_along < GenieLevels - 1 && sy * ( 1 << ( level_along + 1 )) <= 1.0 )
+            ++level_along;
+    Picture mask = alpha < 1.0 ? solidPicture( dpy, Qt::black, alpha ) : None;
+    Picture last = None;
+    int strips = 0;
     int m = begin;
     for( unsigned int i = 0;
          i < heights.size();
@@ -1680,20 +1764,34 @@ void Effects::drawGenie( EffectAnim* anim, Picture src, int sw, int sh, Picture 
         const int h = heights[ i ];
         const double cl = GENIE_L( m + h / 2.0 );
         const double cr = GENIE_R( m + h / 2.0 );
-        const double sx = ( cr - cl ) / ( horizontal ? sh : sw ); // across
-        if( sx > 0.001 )
+        const double sx = ( cr - cl ) / width; // across
+        if( sx > 0.0005 )
             {
+            int level_across = 0;
+            if( scaled_copies )
+                while( level_across < GenieLevels - 1 && sx * ( 1 << ( level_across + 1 )) <= 1.0 )
+                    ++level_across;
+            int gw, gh;
+            Picture src = horizontal ? pic.grid( dpy, level_along, level_across, &gw, &gh )
+                : pic.grid( dpy, level_across, level_along, &gw, &gh );
+            if( src != last )
+                {
+                XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
+                last = src;
+                }
+            // the copy's pixels per window pixel
+            const double fa = horizontal ? double( gh ) / sh : double( gw ) / sw; // across
+            const double fl = horizontal ? double( gw ) / sw : double( gh ) / sh; // along
             const int c0 = (int) floor( cl );
             const int c1 = (int) ceil( cr );
-            // the source of the box's pixel at b along: u = ( m + b - top ) / sy from the far
-            // edge (sign > 0), len - u (sign < 0); across: ( c0 + b - cl ) / sx
-            const double along_scale = 1 / sy;
-            const double along_off = sign > 0 ? ( m - top ) / sy : len - ( m - top ) / sy - h / sy;
+            // the window's pixel shown at the box's pixel b, along: u = ( m + b - top ) / sy
+            // from the far edge (sign > 0), len - that (sign < 0); across: ( c0 + b - cl ) / sx
+            const double along_off = sign > 0 ? ( m - top ) / sy : len - ( m + h - top ) / sy;
             const double across_off = ( c0 - cl ) / sx;
             int dx, dy, dw, dh;
             if( !horizontal )
                 {
-                setTransform( dpy, src, 1 / sx, along_scale, across_off, along_off );
+                setTransform( dpy, src, fa / sx, fl / sy, fa * across_off, fl * along_off );
                 dx = c0;
                 dw = c1 - c0;
                 dy = sign > 0 ? m : -( m + h );
@@ -1701,7 +1799,7 @@ void Effects::drawGenie( EffectAnim* anim, Picture src, int sw, int sh, Picture 
                 }
             else
                 {
-                setTransform( dpy, src, along_scale, 1 / sx, along_off, across_off );
+                setTransform( dpy, src, fl / sy, fa / sx, fl * along_off, fa * across_off );
                 dy = c0;
                 dh = c1 - c0;
                 dx = sign > 0 ? m : -( m + h );
