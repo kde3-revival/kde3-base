@@ -92,6 +92,7 @@ private:
 
 private slots:
     void slotData(KIO::Job *, const QByteArray &);
+    void slotMimetype(KIO::Job *, const QString &);
     void slotResult(KIO::Job *);
     void slotInfoMessage(KIO::Job *, const QString &);
     void slotKill();

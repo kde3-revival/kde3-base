@@ -43,10 +43,12 @@ struct FaviconsModulePrivate
     {
         QString hostOrURL;
         bool isHost;
+        KURL iconURL;   // as asked for (the job's URL changes on redirects)
+        QString mimetype;
         QByteArray iconData;
     };
     QMap<KIO::Job *, DownloadInfo> downloads;
-    QStringList failedDownloads;
+    QMap<QString, time_t> failedDownloads;   // icon URL -> when it failed
     KSimpleConfig *config;
     QPtrList<KIO::Job> killJobs;
     KIO::MetaData metaData;
@@ -67,12 +69,15 @@ FaviconsModule::FaviconsModule(const QCString &obj)
     d->metaData.insert("cookies", "none");
     d->metaData.insert("no-auth", "true");
     d->config = new KSimpleConfig(locateLocal("data", "konqueror/faviconrc"));
-    d->killJobs.setAutoDelete(true);
     d->faviconsCache.setAutoDelete(true);
 }
 
 FaviconsModule::~FaviconsModule()
 {
+    // Running downloads would report to a module that is gone.
+    QMap<KIO::Job *, FaviconsModulePrivate::DownloadInfo>::Iterator it;
+    for (it = d->downloads.begin(); it != d->downloads.end(); ++it)
+        it.key()->kill(true);
     delete d;
 }
 
@@ -181,50 +186,81 @@ void FaviconsModule::downloadHostIcon(const KURL &url)
 
 void FaviconsModule::startDownload(const QString &hostOrURL, bool isHost, const KURL &iconURL)
 {
-    if (d->failedDownloads.contains(iconURL.url()))
-        return;
+    // A failed icon is not asked for again for a while (every page of a
+    // site would), but not for good: networks fail, sites get fixed.
+    QMap<QString, time_t>::Iterator failed = d->failedDownloads.find(iconURL.url());
+    if (failed != d->failedDownloads.end())
+    {
+        if (time(0) - failed.data() < 3600)
+            return;
+        d->failedDownloads.remove(failed);
+    }
 
     KIO::Job *job = KIO::get(iconURL, false, false);
     job->addMetaData(d->metaData);
     connect(job, SIGNAL(data(KIO::Job *, const QByteArray &)), SLOT(slotData(KIO::Job *, const QByteArray &)));
+    connect(job, SIGNAL(mimetype(KIO::Job *, const QString &)), SLOT(slotMimetype(KIO::Job *, const QString &)));
     connect(job, SIGNAL(result(KIO::Job *)), SLOT(slotResult(KIO::Job *)));
     connect(job, SIGNAL(infoMessage(KIO::Job *, const QString &)), SLOT(slotInfoMessage(KIO::Job *, const QString &)));
     FaviconsModulePrivate::DownloadInfo download;
     download.hostOrURL = hostOrURL;
     download.isHost = isHost;
+    download.iconURL = iconURL;
     d->downloads.insert(job, download);
 }
 
 void FaviconsModule::slotData(KIO::Job *job, const QByteArray &data)
 {
     FaviconsModulePrivate::DownloadInfo &download = d->downloads[job];
+    if (d->killJobs.containsRef(job))
+        return;
     unsigned int oldSize = download.iconData.size();
-    if (oldSize > 0x10000)
+    // Icons with large sizes (256 pixel PNG entries, SVG) are bigger than
+    // 64 KiB; a megabyte is enough for any of them.  A larger one is
+    // killed once (not from inside the job's signal), which reports it as
+    // failed.  (It used to be deleted as often as data came after the
+    // limit, and with every big icon kded crashed.)
+    if (oldSize + data.size() > 0x100000)
     {
         d->killJobs.append(job);
         QTimer::singleShot(0, this, SLOT(slotKill()));
+        return;
     }
     download.iconData.resize(oldSize + data.size());
     memcpy(download.iconData.data() + oldSize, data.data(), data.size());
+}
+
+void FaviconsModule::slotMimetype(KIO::Job *job, const QString &type)
+{
+    d->downloads[job].mimetype = type;
 }
 
 void FaviconsModule::slotResult(KIO::Job *job)
 {
     FaviconsModulePrivate::DownloadInfo download = d->downloads[job];
     d->downloads.remove(job);
-    KURL iconURL = static_cast<KIO::TransferJob *>(job)->url();
+    KIO::TransferJob *transfer = static_cast<KIO::TransferJob *>(job);
+    KURL iconURL = download.iconURL;
     QString iconName;
-    if (!job->error())
+    // An error page (404 or 403 with HTML) is no icon; neither is any
+    // other text: Qt would read it as a TGA image (TGA has no signature).
+    if (!job->error() && !transfer->isErrorPage() && !download.mimetype.startsWith("text/"))
     {
         QBuffer buffer(download.iconData);
         buffer.open(IO_ReadOnly);
         QImageIO io;
         io.setIODevice(&buffer);
         io.setParameters("size=16");
+        // An icon file: Qt's guess from the first bytes takes one whose
+        // first entry is 256 pixels (00 in the directory) for a TGA image.
+        const char *data = download.iconData.data();
+        if (download.iconData.size() >= 6 && data[0] == 0 && data[1] == 0 &&
+            (data[2] == 1 || data[2] == 2) && data[3] == 0 && (data[4] || data[5]))
+            io.setFormat("ICO");
         // Check here too, the job might have had no error, but the downloaded
         // file contains just a 404 message sent with a 200 status.
         // microsoft.com does that... (malte)
-        if (io.read())
+        if (io.read() && qstrcmp(io.format(), "TGA") != 0 && !io.image().isNull())
         {
             // Some sites have nasty 32x32 icons, according to the MS docs
             // IE ignores them, well, we scale them, otherwise the location
@@ -245,11 +281,16 @@ void FaviconsModule::slotResult(KIO::Job *job)
             if (!io.write())
                 iconName = QString::null;
             else if (!download.isHost)
+            {
+                // At once: kded is often ended by a signal (logout), and
+                // pages whose icon is no /favicon.ico would have none.
                 d->config->writeEntry( removeSlash(download.hostOrURL), iconURL.url());
+                d->config->sync();
+            }
         }
     }
     if (iconName.isEmpty())
-        d->failedDownloads.append(iconURL.url());
+        d->failedDownloads.insert(iconURL.url(), time(0));
 
     emit iconChanged(download.isHost, download.hostOrURL, iconName);
 }
@@ -261,7 +302,11 @@ void FaviconsModule::slotInfoMessage(KIO::Job *job, const QString &msg)
 
 void FaviconsModule::slotKill()
 {
+    QPtrList<KIO::Job> jobs = d->killJobs;
     d->killJobs.clear();
+    for (KIO::Job *job = jobs.first(); job; job = jobs.next())
+        if (d->downloads.contains(job))
+            job->kill(false);   // slotResult(): an error, recorded as failed
 }
 
 extern "C" {
