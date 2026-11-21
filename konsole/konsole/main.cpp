@@ -156,9 +156,13 @@ public:
 extern "C" int KDE_EXPORT kdemain(int argc, char* argv[])
 {
   // drop the privileges of a set-id installation (the supplementary
-  // groups are those of the user who ran it, no setgroups() needed)
-  if (setgid(getgid()) < 0 || getegid() != getgid() ||
-      setuid(getuid()) < 0 || geteuid() != getuid()) {
+  // groups are those of the user who ran it, no setgroups() needed);
+  // only change ids that differ: setgid() of an unmapped gid fails in a
+  // user namespace even when there is nothing to drop
+  if ((getegid() != getgid() &&
+       (setgid(getgid()) < 0 || getegid() != getgid())) ||
+      (geteuid() != getuid() &&
+       (setuid(getuid()) < 0 || geteuid() != getuid()))) {
     perror("konsole: cannot drop privileges");
     return 1;
   }
