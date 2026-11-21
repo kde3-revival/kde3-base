@@ -25,6 +25,7 @@
 #include <kglobal.h>
 #include <qfile.h>
 
+#include <ImfHeader.h>
 #include <ImfInputFile.h>
 #include <ImfPreviewImage.h>
 
