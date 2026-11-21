@@ -48,6 +48,7 @@ License. See the file "COPYING" for the exact licensing terms.
 
 #include <qapplication.h>
 #include <qdesktopwidget.h>
+#include <qfile.h>
 #include <qtl.h>
 #include <kdebug.h>
 #include <klocale.h>
@@ -60,6 +61,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "compositing.h"
 #include "render.h"
 #include "shadow.h"
+#include "effects.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -74,6 +76,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <fixx11h.h>
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -127,8 +130,11 @@ class SceneWindow
         // the shadow's blur radius, offset and opacity
         int shadow_radius, shadow_dx, shadow_dy;
         double shadow_alpha;
-        // set while painting: what the opaque windows above leave
+        // set while painting: what the opaque windows above leave, drawn by
+        // the scene, drawn by an animation
         QRegion clip;
+        bool drawn;
+        bool replaced;
         bool isOpaque() const { return !argb && opacity >= 1.0; }
         QRegion shapeOnScreen() const
             {
@@ -154,7 +160,7 @@ SceneWindow::SceneWindow( Window w )
       visual( NULL ), depth( 0 ), argb( false ), damage( None ), damaged( false ), pixmap( None ), texture( NULL ),
       bind_failed( false ), opacity( 1.0 ), type( TypeNone ), locker( false ), unredirected( false ),
       candidate_since( 0 ), redirected_at( 0 ), shadow( NoShadow ), shadow_radius( 0 ), shadow_dx( 0 ),
-      shadow_dy( 0 ), shadow_alpha( 0 )
+      shadow_dy( 0 ), shadow_alpha( 0 ), drawn( false ), replaced( false )
     {
     }
 
@@ -210,9 +216,9 @@ static int untrap()
 
 Compositor::Compositor( Workspace* w )
     : ws( w ), dpy( qt_xdisplay()), root( qt_xrootwin()), screen_w( 0 ), screen_h( 0 ), active( false ),
-      suspended( false ), failed_once( false ), foreign_retries( 0 ), selection( NULL ), renderer( NULL ),
+      suspended( false ), failed_once( false ), foreign_retries( 0 ), selection( NULL ), rend( NULL ),
       shadows( NULL ), presenter( NULL ), per_monitor( false ), flips_failed( false ), copies_in_row( 0 ), latest_buffer( -1 ),
-      hold_until( 0 ), force_mode( 0 ), overlay( None ), frame_number( 0 ), frame_wanted( false ), root_pixmap( None ),
+      hold_until( 0 ), force_mode( 0 ), frame_requested( false ), last_render( 0 ), overlay( None ), frame_number( 0 ), frame_wanted( false ), root_pixmap( None ),
       root_texture( NULL ), shape_event( 0 ), asap( false ), render_budget( 3.0 ), min_budget( 3.0 ), on_time( 0 ),
       target_vblank( 0 ), late_at_max( 0 ), late_failed( false ), submit_time( 0 ), shown_index( 0 ),
       immediate_server( false ), stat_frames( 0 ), stat_render( 0 ), stat_max_render( 0 ), stat_skipped( 0 ),
@@ -229,6 +235,9 @@ Compositor::Compositor( Workspace* w )
         }
     frame_damage.resize( BufferCount + 1 );
     debug = getenv( "KWIN_COMPOSITOR_DEBUG" ) != NULL;
+    dump_dir = QFile::decodeName( getenv( "KWIN_COMPOSITOR_DUMP" ));
+    dump_index = 0;
+    dump_frame = false;
     // KWIN_COMPOSITOR_ASAP=1: frames drawn at once (for comparing);
     // KWIN_COMPOSITOR_BUDGET=ms: the time kept for drawing before a refresh
     asap = getenv( "KWIN_COMPOSITOR_ASAP" ) != NULL;
@@ -284,7 +293,7 @@ bool Compositor::gpuAvailable( Display* dpy )
 QString Compositor::status() const
     {
     if( active )
-        return i18n( "Compositing is active (%1)." ).arg( renderer != NULL ? renderer->description() : QString());
+        return i18n( "Compositing is active (%1)." ).arg( rend != NULL ? rend->description() : QString());
     if( suspended )
         return i18n( "Compositing is suspended (Ctrl+Alt+Shift+F12 resumes it)." );
     if( !reason.isEmpty())
@@ -295,7 +304,7 @@ QString Compositor::status() const
 void Compositor::reconfigure()
     {
     const bool want = options->compositingEnabled && !suspended;
-    if( active && ( !want || ( renderer->backend() != (Render::Renderer::Backend) options->compositingBackend
+    if( active && ( !want || ( rend->backend() != (Render::Renderer::Backend) options->compositingBackend
             && options->compositingBackend != Render::Renderer::Auto )))
         stop( false );
     if( !active && want )
@@ -445,13 +454,13 @@ bool Compositor::start()
     screen_w = DisplayWidth( dpy, DefaultScreen( dpy ));
     screen_h = DisplayHeight( dpy, DefaultScreen( dpy ));
     QString error;
-    renderer = Render::Renderer::create( dpy, (Render::Renderer::Backend) options->compositingBackend, &error );
-    if( renderer == NULL )
+    rend = Render::Renderer::create( dpy, (Render::Renderer::Backend) options->compositingBackend, &error );
+    if( rend == NULL )
         {
         stop( true, error );
         return false;
         }
-    shadows = new ShadowCache( renderer );
+    shadows = new ShadowCache( rend );
     // everything redirected, the windows taken over in one go
     XGrabServer( dpy );
     trapErrors( dpy );
@@ -515,9 +524,9 @@ bool Compositor::start()
     submit_time = 0;
     shown_index = 0;
     immediate_server = false;
-    kdDebug( 1212 ) << "compositor: started, " << renderer->description() << endl;
+    kdDebug( 1212 ) << "compositor: started, " << rend->description() << endl;
     if( debug )
-        kdWarning( 1212 ) << "compositor: started, " << renderer->description() << ", present "
+        kdWarning( 1212 ) << "compositor: started, " << rend->description() << ", present "
             << have_present << endl;
     emit activeChanged( true );
     addRepaintFull();
@@ -533,6 +542,9 @@ bool Compositor::start()
 void Compositor::stop( bool failed, const QString& why )
     {
 #ifdef COMPOSITOR_BUILD
+    // (the animations hold textures of the renderer)
+    if( ws->windowEffects() != NULL )
+        ws->windowEffects()->compositorStopping();
     const bool was_active = active;
     active = false;
     repaint_timer.stop();
@@ -562,7 +574,7 @@ void Compositor::stop( bool failed, const QString& why )
             XDamageDestroy( dpy, w->damage );
         w->damage = None;
         }
-    if( renderer != NULL )
+    if( rend != NULL )
         XCompositeUnredirectSubwindows( dpy, root, CompositeRedirectManual );
     XSync( dpy, False );
     untrap();
@@ -578,8 +590,8 @@ void Compositor::stop( bool failed, const QString& why )
     freeBuffers();
     delete shadows;
     shadows = NULL;
-    delete renderer;
-    renderer = NULL;
+    delete rend;
+    rend = NULL;
     delete selection;
     selection = NULL;
     if( !why.isEmpty())
@@ -609,7 +621,7 @@ bool Compositor::createBuffers()
          i < BufferCount;
          ++i )
         {
-        buffers[ i ] = renderer->createPresentBuffer( overlay, screen_w, screen_h, &buffer_pixmaps[ i ] );
+        buffers[ i ] = rend->createPresentBuffer( overlay, screen_w, screen_h, &buffer_pixmaps[ i ] );
         buffer_frame[ i ] = -1;
         if( buffers[ i ] == NULL )
             return false;
@@ -985,7 +997,7 @@ bool Compositor::bindContents( SceneWindow* w )
     if( errors == 0 )
         {
         trap();
-        w->texture = renderer->textureFromPixmap( w->pixmap, w->geom.width(), w->geom.height(), w->depth, w->visual );
+        w->texture = rend->textureFromPixmap( w->pixmap, w->geom.width(), w->geom.height(), w->depth, w->visual );
         XSync( dpy, False );
         errors = untrap();
         }
@@ -1206,7 +1218,7 @@ bool Compositor::handleDamage( XEvent* e )
     XDamageNotifyEvent* de = (XDamageNotifyEvent*) e;
     SceneWindow* w = findWindow( de->drawable );
     if( w == NULL || w->damage != de->damage )
-        return true; // (the overview's and the animations' damage is theirs)
+        return false; // (the overview's and the animations' damage is theirs)
     w->damaged = true;
     if( !w->unredirected )
         {
@@ -1244,7 +1256,7 @@ void Compositor::updateRootPixmap()
     delete root_texture;
     root_texture = NULL;
     root_pixmap = None;
-    if( renderer == NULL )
+    if( rend == NULL )
         return;
     Atom type;
     int format;
@@ -1262,7 +1274,7 @@ void Compositor::updateRootPixmap()
         unsigned int w, h, bw, depth;
         trap();
         if( XGetGeometry( dpy, root_pixmap, &r, &x, &y, &w, &h, &bw, &depth ))
-            root_texture = renderer->textureFromPixmap( root_pixmap, w, h, depth, NULL );
+            root_texture = rend->textureFromPixmap( root_pixmap, w, h, depth, NULL );
         XSync( dpy, False );
         if( untrap() != 0 )
             {
@@ -1295,8 +1307,14 @@ void Compositor::scheduleRepaint()
     if( frame_wanted )
         return; // (the completion of the queued frame starts it)
     int delay = 0;
-    if( !asap && !immediate_server && !late_failed )
-        {
+    if( immediate_server && presenter != NULL && last_render > 0 )
+        { // (frames shown at once: still no more than one per refresh period)
+        const double wait = last_render + presenter->refreshPeriod() - now();
+        if( wait > 0 )
+            delay = (int) ceil( wait );
+        }
+    else if( !asap && !late_failed && !immediate_server )
+        { // the next refresh of a monitor that gets something
         const double t = now();
         double earliest = -1;
         for( QPtrListIterator< CompositorOutput > it( outputs );
@@ -1593,8 +1611,10 @@ void Compositor::performRepaint()
 #ifdef COMPOSITOR_BUILD
     if( !active )
         return;
+    Effects* fx = ws->windowEffects();
+    const bool animating = fx != NULL && fx->composited();
     pending -= overlay_hole; // (drawn by the unredirected windows themselves)
-    if( pending.isEmpty())
+    if( pending.isEmpty() && !frame_requested && !animating )
         {
         flushDamage();
         return;
@@ -1615,7 +1635,7 @@ void Compositor::performRepaint()
     for( QPtrListIterator< CompositorOutput > it( outputs );
          it.current() != NULL && !can;
          ++it )
-        can = outputWanted( it.current()) && !queuedOn( it.current());
+        can = ( outputWanted( it.current()) || animating ) && !queuedOn( it.current());
     if( !can )
         {
         frame_wanted = true;
@@ -1627,7 +1647,22 @@ void Compositor::performRepaint()
         frame_wanted = true; // (outputIdle())
         return;
         }
+    // a frame is drawn now: the animations move to when it will be shown
+    frame_requested = false;
+    dump_frame = false;
+    if( animating )
+        {
+        pending |= fx->prePaint( nextFrameTime()) & QRegion( 0, 0, screen_w, screen_h );
+        pending -= overlay_hole;
+        dump_frame = !dump_dir.isEmpty(); // (also the last one, the plain scene)
+        }
+    if( pending.isEmpty())
+        {
+        flushDamage();
+        return;
+        }
     const double start = now();
+    last_render = start;
     flushDamage();
     QRegion damage = pending;
     pending = QRegion();
@@ -1643,16 +1678,18 @@ void Compositor::performRepaint()
              ++f )
             repaint |= frame_damage[ f % history ];
     repaint -= overlay_hole;
-    renderer->acquireClientBuffers();
+    rend->acquireClientBuffers();
     paint( buffers[ buf ], repaint );
-    renderer->finish();
-    if( renderer->isLost())
+    rend->finish();
+    if( rend->isLost())
         {
         stop( true, i18n( "the GPU was reset" ));
         return;
         }
     buffer_frame[ buf ] = frame_number;
     latest_buffer = buf;
+    if( dump_frame )
+        dumpFrame( buf, repaint );
     // the refresh the frame is meant for (for the budget), when it was drawn
     // in time for it: not for damage that came too late for it anyway
     const double submit = now();
@@ -1716,6 +1753,54 @@ void Compositor::debugFrame( double start, const QRegion& repaint )
             << stat_missed << " late " << stat_late << " budget " << render_budget << outputStats() << endl;
     }
 
+/*
+ KWIN_COMPOSITOR_DUMP=dir (tests): the part of every frame drawn while the
+ window animations or the overview run, as dir/frame-NNNN.ppm, listed in
+ dir/frames.txt with its position (the effects' and the overview's tests
+ compare the first and the last one with the screen).
+*/
+void Compositor::dumpFrame( int buf, const QRegion& repaint )
+    {
+    const QRect r = repaint.boundingRect() & QRect( 0, 0, screen_w, screen_h );
+    if( r.isEmpty())
+        return;
+    XImage* img = XGetImage( dpy, buffer_pixmaps[ buf ], r.x(), r.y(), r.width(), r.height(), AllPlanes, ZPixmap );
+    if( img == NULL )
+        return;
+    QString name;
+    name.sprintf( "/frame-%04d.ppm", dump_index++ );
+    name.prepend( dump_dir );
+    FILE* f = fopen( QFile::encodeName( name ), "wb" );
+    if( f != NULL )
+        {
+        fprintf( f, "P6\n%d %d\n255\n", r.width(), r.height());
+        QByteArray line( r.width() * 3 );
+        for( int y = 0;
+             y < r.height();
+             ++y )
+            {
+            for( int x = 0;
+                 x < r.width();
+                 ++x )
+                {
+                unsigned long p = XGetPixel( img, x, y );
+                line[ x * 3 ] = ( p >> 16 ) & 0xff;
+                line[ x * 3 + 1 ] = ( p >> 8 ) & 0xff;
+                line[ x * 3 + 2 ] = p & 0xff;
+                }
+            fwrite( line.data(), 1, line.size(), f );
+            }
+        fclose( f );
+        }
+    XDestroyImage( img );
+    FILE* log = fopen( QFile::encodeName( dump_dir + "/frames.txt" ), "a" );
+    if( log != NULL )
+        {
+        fprintf( log, "%s %.1f %d %d\n", QFile::encodeName( name ).data(), now(), r.x(), r.y());
+        fclose( log );
+        }
+    }
+
 // "; monitor 0: flips 10 copies 0 skipped 0; ..."
 QString Compositor::outputStats() const
     {
@@ -1733,87 +1818,244 @@ void Compositor::paintBackground( const QRegion& region )
     {
     if( region.isEmpty())
         return;
-    renderer->setClip( region );
+    rend->setClip( region );
     if( root_texture != NULL )
         {
-        renderer->drawTexture( root_texture, 0, 0, 1.0, Render::BlendSource );
+        rend->drawTexture( root_texture, 0, 0, 1.0, Render::BlendSource );
         QRegion rest = region - QRegion( 0, 0, root_texture->width(), root_texture->height());
         if( !rest.isEmpty())
             {
-            renderer->setClip( rest );
-            renderer->fill( RectF( 0, 0, screen_w, screen_h ), Qt::black, 1.0, Render::BlendSource );
+            rend->setClip( rest );
+            rend->fill( RectF( 0, 0, screen_w, screen_h ), Qt::black, 1.0, Render::BlendSource );
             }
         }
     else
-        renderer->fill( RectF( 0, 0, screen_w, screen_h ), Qt::black, 1.0, Render::BlendSource );
+        rend->fill( RectF( 0, 0, screen_w, screen_h ), Qt::black, 1.0, Render::BlendSource );
     }
 
+/*
+ The window animations (effects.cpp) draw in the frames too: a window
+ they animate is not drawn by the scene (nor counted as opaque); they draw
+ it in place, right above the window it was above (a closed or minimized
+ one), or right above the topmost managed window (on top of the other
+ windows, below override-redirect ones), each clipped to what the opaque
+ windows above that place leave.
+*/
 void Compositor::paint( Render::Texture* target, const QRegion& region )
     {
-    if( !renderer->setTarget( target ))
+    if( !rend->setTarget( target ))
         return;
+    Effects* fx = ws->windowEffects();
+    if( fx != NULL && !fx->composited())
+        fx = NULL;
     const QRect screen( 0, 0, screen_w, screen_h );
     // top-down: opaque windows, each where nothing opaque is above it
     QRegion left = region;
-    QPtrList< SceneWindow > visible;
     QPtrListIterator< SceneWindow > it( stacking );
     for( it.toLast();
          it.current() != NULL;
          --it )
         {
         SceneWindow* w = it.current();
+        w->clip = left;
+        w->drawn = false;
+        w->replaced = false;
         if( !w->isPaintable( screen ))
             continue;
-        if( !bindContents( w ))
+        if( fx != NULL && fx->replacesWindow( w->id ))
+            {
+            w->replaced = true;
             continue;
-        w->clip = left;
-        visible.prepend( w );
+            }
+        if( left.isEmpty() || !bindContents( w ))
+            continue;
+        w->drawn = true;
         if( w->isOpaque())
             {
             QRegion shape = w->shapeOnScreen();
             QRegion draw = left & shape;
             if( !draw.isEmpty())
                 {
-                renderer->setClip( draw );
-                renderer->drawTexture( w->texture, w->geom.x(), w->geom.y(), 1.0, Render::BlendSource );
+                rend->setClip( draw );
+                rend->drawTexture( w->texture, w->geom.x(), w->geom.y(), 1.0, Render::BlendSource );
                 }
             left -= shape;
-            if( left.isEmpty())
-                break;
             }
         }
     paintBackground( left );
-    // bottom-up: shadows and translucent windows
-    for( QPtrListIterator< SceneWindow > vit( visible );
-         vit.current() != NULL;
-         ++vit )
+    SceneWindow* top_managed = NULL;
+    if( fx != NULL )
         {
-        SceneWindow* w = vit.current();
-        if( w->shadow != NoShadow )
+        fx->paintAbove( rend, target, None, left );
+        for( QPtrListIterator< SceneWindow > mit( stacking );
+             mit.current() != NULL;
+             ++mit )
+            if( mit.current()->mapped && ws->findClient( FrameIdMatchPredicate( mit.current()->id )) != NULL )
+                top_managed = mit.current();
+        }
+    // bottom-up: shadows, translucent windows, the animations
+    for( QPtrListIterator< SceneWindow > bit( stacking );
+         bit.current() != NULL;
+         ++bit )
+        {
+        SceneWindow* w = bit.current();
+        if( w->drawn && !w->clip.isEmpty())
             {
-            QRect outer = w->shadowRect();
-            QRegion clip = ( w->clip & QRegion( outer )) - w->shapeOnScreen();
-            if( !clip.isEmpty())
+            if( w->shadow != NoShadow )
                 {
-                const ShadowTiles* tiles = shadows->tiles( w->shadow_radius, w->shape, w->geom.size());
-                if( tiles != NULL )
+                QRect outer = w->shadowRect();
+                QRegion clip = ( w->clip & QRegion( outer )) - w->shapeOnScreen();
+                if( !clip.isEmpty())
                     {
-                    renderer->setClip( clip );
-                    renderer->drawNineSlice( tiles->tile, outer, Qt::black, w->shadow_alpha );
+                    const ShadowTiles* tiles = shadows->tiles( w->shadow_radius, w->shape, w->geom.size());
+                    if( tiles != NULL )
+                        {
+                        rend->setClip( clip );
+                        rend->drawNineSlice( tiles->tile, outer, Qt::black, w->shadow_alpha );
+                        }
+                    }
+                }
+            if( !w->isOpaque())
+                {
+                QRegion clip = w->clip & w->shapeOnScreen();
+                if( !clip.isEmpty())
+                    {
+                    rend->setClip( clip );
+                    rend->drawTexture( w->texture, w->geom.x(), w->geom.y(), w->opacity, Render::BlendOver );
                     }
                 }
             }
-        if( !w->isOpaque())
+        if( fx != NULL )
             {
-            QRegion clip = w->clip & w->shapeOnScreen();
-            if( !clip.isEmpty())
-                {
-                renderer->setClip( clip );
-                renderer->drawTexture( w->texture, w->geom.x(), w->geom.y(), w->opacity, Render::BlendOver );
-                }
+            if( w->replaced )
+                fx->paintWindow( rend, target, w->id, w->clip );
+            fx->paintAbove( rend, target, w->id, w->clip );
+            if( w == top_managed )
+                fx->paintOnTop( rend, target, w->clip );
             }
         }
-    renderer->clearClip();
+    if( fx != NULL && top_managed == NULL )
+        fx->paintOnTop( rend, target, region );
+    rend->clearClip();
+    }
+
+//****************************************
+// for the effects
+//****************************************
+
+void Compositor::requestFrame()
+    {
+    if( !active )
+        return;
+    frame_requested = true;
+    scheduleRepaint();
+    }
+
+// when the frame drawn now will be shown: the next refresh, as far as known
+double Compositor::nextFrameTime() const
+    {
+    const double t = now();
+    if( presenter == NULL || !presenter->usesPresent() || immediate_server )
+        return t;
+    const double last = presenter->lastShown();
+    const double period = presenter->refreshPeriod();
+    if( last <= 0 || t < last || t - last >= 2000 || period <= 4 )
+        return t;
+    return last + ( floor(( t - last ) / period ) + 1 ) * period;
+    }
+
+Render::Texture* Compositor::windowTexture( Window id, QRect* geom )
+    {
+    SceneWindow* w = findWindow( id );
+    if( w == NULL || !active || !w->isPaintable( QRect( 0, 0, screen_w, screen_h )) || !bindContents( w ))
+        return NULL;
+    if( geom != NULL )
+        *geom = w->geom;
+    return w->texture;
+    }
+
+QRegion Compositor::windowShape( Window id ) const
+    {
+    SceneWindow* w = findWindow( id );
+    return w != NULL ? w->shape : QRegion();
+    }
+
+bool Compositor::windowGeometry( Window id, QRect* geom ) const
+    {
+    SceneWindow* w = findWindow( id );
+    if( w == NULL || !w->mapped || !w->queried )
+        return false;
+    *geom = w->geom;
+    return true;
+    }
+
+bool Compositor::windowShadow( Window id, CompositorShadow* s ) const
+    {
+    *s = CompositorShadow();
+    SceneWindow* w = findWindow( id );
+    if( w == NULL || w->shadow == NoShadow )
+        return false;
+    s->valid = true;
+    s->radius = w->shadow_radius;
+    s->dx = w->shadow_dx;
+    s->dy = w->shadow_dy;
+    s->alpha = w->shadow_alpha;
+    s->shape = w->shape;
+    s->size = w->geom.size();
+    return true;
+    }
+
+// a window's shadow drawn for the window drawn into rect (scaled with it)
+void Compositor::drawShadow( Render::Renderer* r, const CompositorShadow& s, const RectF& rect, double alpha,
+    const QRegion& clip )
+    {
+    if( !s.valid || s.size.isEmpty() || alpha <= 1.0 / 512 || shadows == NULL )
+        return;
+    const ShadowTiles* tiles = shadows->tiles( s.radius, s.shape, s.size );
+    if( tiles == NULL )
+        return;
+    const double sx = rect.w / s.size.width();
+    const double sy = rect.h / s.size.height();
+    const RectF outer( rect.x + ( s.dx - s.radius ) * sx, rect.y + ( s.dy - s.radius ) * sy,
+        rect.w + 2 * s.radius * sx, rect.h + 2 * s.radius * sy );
+    r->setClip( clip );
+    r->drawNineSlice( tiles->tile, outer, sx, sy, Qt::black, s.alpha * alpha );
+    }
+
+Window Compositor::windowBelow( Window id, const QRect& area, bool* covered ) const
+    {
+    *covered = false;
+    Window prev = None;
+    bool found = false;
+    for( QPtrListIterator< SceneWindow > it( stacking );
+         it.current() != NULL;
+         ++it )
+        {
+        SceneWindow* w = it.current();
+        if( !w->mapped || !w->queried || w->input_only )
+            continue;
+        if( found )
+            {
+            Client* c = ws->findClient( FrameIdMatchPredicate( w->id ));
+            if(( c == NULL || !c->isDock()) && w->geom.intersects( area ))
+                *covered = true;
+            }
+        else if( w->id == id )
+            found = true;
+        else
+            prev = w->id;
+        }
+    return prev;
+    }
+
+bool Compositor::lockerShown() const
+    {
+    for( QPtrListIterator< SceneWindow > it( stacking );
+         it.current() != NULL;
+         ++it )
+        if( it.current()->locker && it.current()->mapped )
+            return true;
+    return false;
     }
 
 //****************************************

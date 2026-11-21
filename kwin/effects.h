@@ -29,11 +29,18 @@ class Client;
 class EffectAnim;
 class EffectScene;
 class EffectPicture;
+class Compositor;
 
 namespace Compositing
 {
 class Presenter;
 struct RectF;
+}
+
+namespace Render
+{
+class Renderer;
+class Texture;
 }
 
 /*
@@ -48,11 +55,17 @@ struct RectF;
  window, the old size of a maximized one) and waits for the first repaint
  of a window shown or resized before it shows the new contents.
 
- Drawn into an override-redirect window of our own above all managed
- windows and below the other override-redirect windows (menus, tooltips,
- the screen locker stay above it), shaped to the animated area before it
- is mapped: nothing is exposed when it comes or goes.  It is mapped only
- while something animates.
+ Without a compositor, drawn into an override-redirect window of our own
+ above all managed windows and below the other override-redirect windows
+ (menus, tooltips, the screen locker stay above it), shaped to the
+ animated area before it is mapped: nothing is exposed when it comes or
+ goes.  It is mapped only while something animates.  With KWin's
+ compositor, drawn in its frames where the windows are in the stacking
+ order (Compositor calls prePaint(), replacesWindow(), paintWindow(),
+ paintAbove(), paintOnTop()), with their shadows.
+
+ All drawing goes through Render::Renderer (the compositor's, else an
+ XRender one of our own).
 */
 class Effects : public QObject
     {
@@ -89,6 +102,23 @@ class Effects : public QObject
         // Picture of it at once (it keeps the contents), don't free it
         bool retainedContents( Client* c, Pixmap* pixmap, QSize* size, int* depth, Visual** visual ) const;
 
+        // ---- inside the compositor's frames ----
+        // the animations run inside the compositor's frames
+        bool composited() const { return comp_session; }
+        // the frame shown at time t: the animations move there; the region to
+        // draw anew (screen coordinates)
+        QRegion prePaint( double t );
+        // frame is drawn by an animation instead of by the scene
+        bool replacesWindow( Window frame ) const;
+        // what goes in place of frame, right above window below (None: above
+        // the background), above the topmost managed window; clip: what may
+        // be drawn there (target coordinates, = screen)
+        void paintWindow( Render::Renderer* r, Render::Texture* target, Window frame, const QRegion& clip );
+        void paintAbove( Render::Renderer* r, Render::Texture* target, Window below, const QRegion& clip );
+        void paintOnTop( Render::Renderer* r, Render::Texture* target, const QRegion& clip );
+        // the compositor stops: everything of its renderer goes
+        void compositorStopping();
+
     private slots:
         void frameTimeout();
         void pollTimeout();
@@ -121,13 +151,28 @@ class Effects : public QObject
         void placeWindow();
         void requestFrame();
         void renderFrame( bool immediate = false );
+        void advance( double t0, bool* moving, bool* waiting );
         bool updateAnim( EffectAnim* anim, double t );
-        void drawAnim( EffectAnim* anim, XID dst );
-        void drawPicture( XID dst, EffectPicture& pic, const Compositing::RectF& rect, double alpha, bool shaped,
+        void drawAnim( EffectAnim* anim );
+        void drawPicture( EffectPicture& pic, const Compositing::RectF& rect, double alpha, bool shaped,
             const QValueVector< XRectangle >& shape );
         bool blendTarget( int w, int h );
         void freeBlendTarget();
-        void drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copies, XID dst, double p, double alpha );
+        void drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copies, double p, double alpha );
+        void drawShadow( EffectAnim* anim, bool live, const Compositing::RectF& rect, double alpha );
+        // the renderer: the compositor's, else ours (XRender)
+        Render::Renderer* renderer();
+        Compositor* compositor() const;
+        bool composited_now() const;
+        void captureShadow( EffectAnim* anim );
+        // the target of the frame being drawn, its origin on the screen, the
+        // region it may draw (screen coordinates)
+        void beginDraw( Render::Renderer* r, Render::Texture* target, int ox, int oy, const QRegion& clip );
+        void restoreTarget();
+        void setClip( const QRegion& screen_region );
+        EffectPicture* livePicture( EffectAnim* anim );
+        QRect liveGeometry( EffectAnim* anim );
+        QRect extents( EffectAnim* anim ) const;
         void dumpFrame();
         void report();
 
@@ -164,9 +209,17 @@ class Effects : public QObject
         bool finishing; // the last frame (without animations) is being shown
         bool need_immediate; // our window is new: its first frame is copied at once
         // the scratch picture for blending the downscaled copies
-        Pixmap blend_pixmap;
-        XID blend_picture;
-        int blend_w, blend_h;
+        Render::Texture* blend;
+        // drawing: the renderer, its target and where it is on the screen,
+        // what may be drawn (screen coordinates)
+        Render::Renderer* own_renderer;
+        Render::Renderer* rr;
+        Render::Texture* target;
+        int ox, oy;
+        QRegion clip_base;
+        // the session runs inside the compositor's frames
+        bool comp_session;
+        QRegion comp_drawn; // what the animations covered in the last frame
         double last_frame;
 
         // statistics (KWIN_EFFECTS_DEBUG), per session

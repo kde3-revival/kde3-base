@@ -18,6 +18,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <qregion.h>
 #include <qstring.h>
 #include <qvaluevector.h>
+#include <qsize.h>
 
 #include <X11/Xlib.h>
 #include <fixx11h.h>
@@ -33,6 +34,19 @@ class ShadowCache;
 class SceneWindow;
 class CompositorOutput;
 
+/*
+ What the window animations need to draw a window's shadow with it.
+*/
+struct CompositorShadow
+    {
+    CompositorShadow() : valid( false ), radius( 0 ), dx( 0 ), dy( 0 ), alpha( 0 ) {}
+    bool valid;
+    int radius, dx, dy;
+    double alpha;
+    QRegion shape; // window relative (null: the rectangle)
+    QSize size;
+    };
+
 namespace Render
 {
 class Renderer;
@@ -42,6 +56,7 @@ class Texture;
 namespace Compositing
 {
 class Presenter;
+struct RectF;
 }
 
 /*
@@ -88,6 +103,27 @@ class Compositor : public QObject
         // screen locker, unredirected full screen windows)
         bool isUnredirected( Window w ) const;
         Window overlayWindow() const { return overlay; }
+
+        // ---- for the effects (the window animations, the overview) ----
+        Render::Renderer* renderer() const { return rend; }
+        // a frame even without damage (an animation moves); the effects tell
+        // what they change in their prePaint()
+        void requestFrame();
+        // when the frame drawn now will be shown (ms, CLOCK_MONOTONIC)
+        double nextFrameTime() const;
+        // the contents of a mapped, redirected window (NULL: none)
+        Render::Texture* windowTexture( Window w, QRect* geom );
+        QRegion windowShape( Window w ) const; // window relative, null: the rectangle
+        bool windowGeometry( Window w, QRect* geom ) const; // false: not mapped
+        bool windowShadow( Window w, CompositorShadow* s ) const; // false: none
+        // a shadow drawn for its window drawn into rect (scaled with it)
+        void drawShadow( Render::Renderer* r, const CompositorShadow& s, const Compositing::RectF& rect, double alpha,
+            const QRegion& clip );
+        // the screen locker is mapped
+        bool lockerShown() const;
+        // the shown window right below w (None: w is the bottom one); covered:
+        // a window that is not a panel is above w over area
+        Window windowBelow( Window w, const QRect& area, bool* covered ) const;
     signals:
         void activeChanged( bool active );
     private slots:
@@ -136,6 +172,7 @@ class Compositor : public QObject
         void updateOverlayShape();
         void debugFrame( double start, const QRegion& repaint );
         QString outputStats() const;
+        void dumpFrame( int buffer, const QRegion& repaint );
 
         Workspace* ws;
         Display* dpy;
@@ -147,7 +184,7 @@ class Compositor : public QObject
         int foreign_retries; // another compositing manager when KWin starts
         QString reason; // why it is off
         KSelectionOwner* selection;
-        Render::Renderer* renderer;
+        Render::Renderer* rend;
         ShadowCache* shadows;
         // where frames are presented (see setupOutputs()); presenter is the
         // first one's, which paces the frames
@@ -159,6 +196,8 @@ class Compositor : public QObject
         int latest_buffer; // drawn last
         double hold_until; // no drawing into buffers before (outputs switched)
         int force_mode; // KWIN_COMPOSITOR_PRESENT: 1 overlay, 2 monitors
+        bool frame_requested; // (requestFrame())
+        double last_render; // when the last frame was drawn
         Window overlay;
         // the present buffers and the frame each one shows (buffer age)
         enum { BufferCount = 3 };
@@ -191,8 +230,11 @@ class Compositor : public QObject
         bool immediate_server; // shows them at once (no refreshes to wait for)
         Atom atom_opacity, atom_type, atom_rootpmap, atom_esetroot;
         Atom atom_types[ 12 ];
-        // statistics (KWIN_COMPOSITOR_DEBUG)
+        // statistics (KWIN_COMPOSITOR_DEBUG), frames (KWIN_COMPOSITOR_DUMP)
         bool debug;
+        QString dump_dir;
+        int dump_index;
+        bool dump_frame;
         int stat_frames;
         double stat_render, stat_max_render;
         int stat_skipped, stat_missed, stat_late;

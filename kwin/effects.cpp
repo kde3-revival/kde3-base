@@ -47,6 +47,8 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "overview.h"
 #include "utils.h"
 #include "compositing.h"
+#include "compositor.h"
+#include "render.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -188,19 +190,16 @@ bool mayBeShaped( Client* c )
 
 /*
  A picture with its downscaled copies (made when needed, for contents
- that don't change: the captured ones).
+ that don't change: the captured ones), as renderer textures: a named
+ pixmap of ours, or a window texture of the compositor (external).
 */
 class EffectPicture
     {
     public:
-        EffectPicture() : format( NULL ), alpha( false ), depth( 0 ), visual( NULL ), owned( false ),
-            transformed( false ), opaque_pixmap( None ), opaque_picture( None )
-            {
-            pixmap[ 0 ] = None;
-            picture[ 0 ] = None;
-            w[ 0 ] = h[ 0 ] = 0;
-            }
-        bool isNull() const { return picture[ 0 ] == None; }
+        EffectPicture() : tex( NULL ), opaque( NULL ), pixmap( None ), owned( false ), external( false ),
+            alpha( false ), keep_alpha( false ), depth( 0 ), visual( NULL ), w( 0 ), h( 0 ) {}
+        ~EffectPicture() { dropCopies(); delete opaque; if( !external ) delete tex; }
+        bool isNull() const { return tex == NULL; }
         /*
          The window downscaled by 2^lx across and 2^ly down, for drawing it
          at a scale below a half without aliasing (the text shimmering, thin
@@ -211,15 +210,16 @@ class EffectPicture
          less (in both directions, or in one): 2x2, 2x1 or 1x2 boxes,
          sampled bilinearly between their pixels.  The copies of contents
          that change (a window's own pixmap) are dropped when it changes.
-         None for very large windows (bilinear only).
+         None for very large windows (bilinear only).  *made tells that the
+         renderer drew into a copy (its target must be set again).
         */
-        Picture copy( Display* dpy, int lx, int ly, int* cw, int* ch )
+        Render::Texture* copy( Render::Renderer* r, int lx, int ly, int* cw, int* ch, bool* made )
             {
-            if(( lx == 0 && ly == 0 ) || (long) w[ 0 ] * h[ 0 ] > CopyLimit )
+            if(( lx == 0 && ly == 0 ) || (long) w * h > CopyLimit )
                 {
-                *cw = w[ 0 ];
-                *ch = h[ 0 ];
-                return base( dpy );
+                *cw = w;
+                *ch = h;
+                return base( r, made );
                 }
             const int key = lx * 16 + ly;
             QMap< int, Copy >::ConstIterator it = copies.find( key );
@@ -227,132 +227,131 @@ class EffectPicture
                 {
                 *cw = (*it).w;
                 *ch = (*it).h;
-                return (*it).picture;
+                return (*it).tex;
                 }
             // from the one halved less: in both directions when possible
             const int px = lx > 0 ? lx - 1 : 0;
             const int py = ly > 0 ? ly - 1 : 0;
             int sw, sh;
-            Picture src = copy( dpy, px, py, &sw, &sh );
+            Render::Texture* src = copy( r, px, py, &sw, &sh, made );
             const bool across = px != lx;
             const bool down = py != ly;
             Copy c;
             c.w = across ? QMAX( 1, ( sw + 1 ) / 2 ) : sw;
             c.h = down ? QMAX( 1, ( sh + 1 ) / 2 ) : sh;
-            c.pixmap = XCreatePixmap( dpy, DefaultRootWindow( dpy ), c.w, c.h,
-                alpha ? DefaultDepth( dpy, DefaultScreen( dpy )) : depth );
-            c.picture = XRenderCreatePicture( dpy, c.pixmap, alpha
-                ? XRenderFindVisualFormat( dpy, DefaultVisual( dpy, DefaultScreen( dpy ))) : format, 0, NULL );
-            XRenderPictureAttributes pa;
-            pa.repeat = RepeatPad;
-            XRenderChangePicture( dpy, src, CPRepeat, &pa );
-            setTransform( dpy, src, across ? 2 : 1, down ? 2 : 1, 0, 0 );
-            XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
-            XRenderComposite( dpy, PictOpSrc, src, None, c.picture, 0, 0, 0, 0, 0, 0, c.w, c.h );
-            pa.repeat = RepeatNone;
-            XRenderChangePicture( dpy, src, CPRepeat, &pa );
-            if( src == picture[ 0 ] )
-                transformed = true;
+            c.tex = r->createOffscreen( c.w, c.h, alpha && keep_alpha );
+            if( c.tex == NULL )
+                {
+                *cw = sw;
+                *ch = sh;
+                return src;
+                }
+            r->setTarget( c.tex );
+            r->drawTexture( src, RectF( 0, 0, c.w * ( across ? 2 : 1 ), c.h * ( down ? 2 : 1 )),
+                RectF( 0, 0, c.w, c.h ), 1.0, Render::BilinearFilter, Render::BlendSource, Render::PadRepeat );
+            *made = true;
             copies[ key ] = c;
             *cw = c.w;
             *ch = c.h;
-            return c.picture;
+            return c.tex;
             }
         /*
          What the screen shows of the window: itself, or for an ARGB window
-         its colours without the alpha (the server draws them so, without a
-         compositing manager: Src, the premultiplied colours as they are), in
-         a copy without alpha.  Scaled windows are drawn from this: an ARGB
-         window looks the same while animated as before and after.
+         without a compositor its colours without the alpha (the server draws
+         them so: Src, the premultiplied colours as they are), in a copy
+         without alpha.  Scaled windows are drawn from this: an ARGB window
+         looks the same while animated as before and after.  Composited, the
+         alpha stays (keep_alpha).
         */
-        Picture base( Display* dpy )
+        Render::Texture* base( Render::Renderer* r, bool* made )
             {
-            if( !alpha )
-                return picture[ 0 ];
-            if( opaque_picture == None )
+            if( !alpha || keep_alpha )
+                return tex;
+            if( opaque == NULL )
                 {
-                opaque_pixmap = XCreatePixmap( dpy, DefaultRootWindow( dpy ), w[ 0 ], h[ 0 ],
-                    DefaultDepth( dpy, DefaultScreen( dpy )));
-                opaque_picture = XRenderCreatePicture( dpy, opaque_pixmap,
-                    XRenderFindVisualFormat( dpy, DefaultVisual( dpy, DefaultScreen( dpy ))), 0, NULL );
-                setTransform( dpy, picture[ 0 ], 1, 1, 0, 0 );
-                XRenderSetPictureFilter( dpy, picture[ 0 ], FilterNearest, NULL, 0 );
-                transformed = false;
-                XRenderComposite( dpy, PictOpSrc, picture[ 0 ], None, opaque_picture, 0, 0, 0, 0, 0, 0,
-                    w[ 0 ], h[ 0 ] );
+                opaque = r->createOffscreen( w, h, false );
+                if( opaque == NULL )
+                    return tex;
+                r->setTarget( opaque );
+                r->drawTexture( tex, 0, 0, 1.0, Render::BlendSource );
+                *made = true;
                 }
-            return opaque_picture;
+            return opaque;
             }
-        bool isBase( Picture p ) const { return p == picture[ 0 ] || ( p == opaque_picture && p != None ); }
-        void dropCopies( Display* dpy )
+        bool isBase( Render::Texture* t ) const { return t == tex || ( t == opaque && t != NULL ); }
+        void dropCopies()
             {
-            if( opaque_picture != None )
-                {
-                XRenderFreePicture( dpy, opaque_picture );
-                XFreePixmap( dpy, opaque_pixmap );
-                }
-            opaque_picture = None;
-            opaque_pixmap = None;
+            delete opaque;
+            opaque = NULL;
             for( QMap< int, Copy >::ConstIterator it = copies.begin();
                  it != copies.end();
                  ++it )
-                {
-                XRenderFreePicture( dpy, (*it).picture );
-                XFreePixmap( dpy, (*it).pixmap );
-                }
+                delete (*it).tex;
             copies.clear();
             }
-        // pixmap 0 is owned (a named pixmap) when owned
-        void set( Display* dpy, Pixmap p, const QSize& size, int d, Visual* vis, bool own )
+        // pixmap p is owned (a named pixmap) when own
+        void set( Render::Renderer* r, Pixmap p, const QSize& size, int d, Visual* vis, bool own, bool keep )
             {
-            pixmap[ 0 ] = p;
+            pixmap = p;
             depth = d;
             visual = vis;
             owned = own;
-            format = XRenderFindVisualFormat( dpy, vis );
-            alpha = format != NULL && format->type == PictTypeDirect && format->direct.alphaMask != 0;
-            w[ 0 ] = size.width();
-            h[ 0 ] = size.height();
-            if( format != NULL )
-                picture[ 0 ] = XRenderCreatePicture( dpy, p, format, 0, NULL );
+            external = false;
+            keep_alpha = keep;
+            w = size.width();
+            h = size.height();
+            tex = r != NULL ? r->textureFromPixmap( p, w, h, d, vis ) : NULL;
+            alpha = tex != NULL && tex->hasAlpha();
+            }
+        // the compositor's texture of a window (not owned; its copies are)
+        void setExternal( Render::Texture* t, const QSize& size )
+            {
+            if( t != tex )
+                dropCopies();
+            tex = t;
+            external = true;
+            owned = false;
+            pixmap = None;
+            keep_alpha = true;
+            w = size.width();
+            h = size.height();
+            alpha = t != NULL && t->hasAlpha();
             }
         // releases everything; returns the pixmap when owned and keep is set
         Pixmap release( Display* dpy, bool keep = false )
             {
             Pixmap ret = None;
-            transformed = false;
-            dropCopies( dpy );
-            if( picture[ 0 ] != None )
-                XRenderFreePicture( dpy, picture[ 0 ] );
-            picture[ 0 ] = None;
-            if( pixmap[ 0 ] != None && owned )
+            dropCopies();
+            if( !external )
+                delete tex;
+            tex = NULL;
+            if( pixmap != None && owned )
                 {
                 if( keep )
-                    ret = pixmap[ 0 ];
+                    ret = pixmap;
                 else
-                    XFreePixmap( dpy, pixmap[ 0 ] );
+                    XFreePixmap( dpy, pixmap );
                 }
-            pixmap[ 0 ] = None;
+            pixmap = None;
+            external = false;
             return ret;
             }
-        XRenderPictFormat* format;
-        bool alpha;
-        int depth;
-        Visual* visual;
-        bool owned;
-        bool transformed; // picture 0 not at the identity (drawn scaled)
+        Render::Texture* tex;
+        Render::Texture* opaque; // base() of an ARGB window
         struct Copy
             {
-            Pixmap pixmap;
-            Picture picture;
+            Render::Texture* tex;
             int w, h;
             };
         QMap< int, Copy > copies; // by lx * 16 + ly
-        Pixmap opaque_pixmap; // base() of an ARGB window
-        Picture opaque_picture;
-        Pixmap pixmap[ 1 ];
-        Picture picture[ 1 ];
-        int w[ 1 ], h[ 1 ];
+        Pixmap pixmap;
+        bool owned;
+        bool external;
+        bool alpha;
+        bool keep_alpha;
+        int depth;
+        Visual* visual;
+        int w, h;
     };
 
 class EffectAnim
@@ -364,7 +363,7 @@ class EffectAnim
               style( 1 ), p( 0 ), p_from( 0 ), p_to( 0 ), seg_start( 0 ), seg_duration( 0 ), linear( false ),
               defer( false ), wait( false ), damage( None ), wait_start( 0 ), damage_first( 0 ),
               damage_last( 0 ), ready( true ), fade( 0 ), fade_start( 0 ), grow( false ), moved( false ), max_wait( MaxWait ), on_top( false ), use_below( false ), below( None ),
-              done( false ), fresh( true ), started( 0 )
+              done( false ), fresh( true ), started( 0 ), live_shape_read( false ), live_shaped( false )
             {}
         Kind kind;
         Client* client; // NULL when gone
@@ -403,6 +402,13 @@ class EffectAnim
         bool fresh; // its first frame not drawn yet: the time starts there
         RectF drawn; // where it was drawn last (KWIN_EFFECTS_DUMP)
         double started;
+        // composited: the window's contents now (the compositor's), its shape,
+        // and the shadow it had when its contents were captured
+        EffectPicture live;
+        bool live_shape_read;
+        bool live_shaped;
+        QValueVector< XRectangle > live_shape;
+        CompositorShadow shadow;
     };
 
 /*
@@ -426,7 +432,7 @@ class EffectScene
             XID damage;
             bool seen;
             };
-        EffectScene() : dirty( true ), ok( false ), root_picture( None ), limit( None )
+        EffectScene() : dirty( true ), ok( false ), root_tex( NULL ), limit( None )
             {
             wins.setAutoDelete( true );
             }
@@ -446,7 +452,7 @@ class EffectScene
         QMap< Window, XWindowAttributes > attrs;
         bool dirty;
         bool ok; // nothing below that can't be drawn
-        Picture root_picture; // the root background (tiled), if any
+        Render::Texture* root_tex; // the root background (tiled), if any
         Window limit; // our window goes right above this one
     };
 
@@ -465,10 +471,13 @@ Effects::Effects( Workspace* w )
       frame_wanted( false ),
       finishing( false ),
       need_immediate( false ),
-      blend_pixmap( None ),
-      blend_picture( None ),
-      blend_w( 0 ),
-      blend_h( 0 ),
+      blend( NULL ),
+      own_renderer( NULL ),
+      rr( NULL ),
+      target( NULL ),
+      ox( 0 ),
+      oy( 0 ),
+      comp_session( false ),
       last_frame( 0 ),
       frame_count( 0 ),
       dump_index( 0 ),
@@ -503,6 +512,7 @@ Effects::~Effects()
     retained.clear();
     untrapErrors( dpy );
     delete presenter;
+    delete own_renderer;
     }
 
 void Effects::reconfigure()
@@ -524,7 +534,7 @@ void Effects::reconfigure()
 
 bool Effects::isActive() const
     {
-    return out != None;
+    return out != None || comp_session;
     }
 
 double Effects::duration( double factor ) const
@@ -537,7 +547,11 @@ double Effects::duration( double factor ) const
 
 bool Effects::enabled() const
     {
-    return options->effectsEnabled && have_render && have_composite && !options->useTranslucency
+    // (not under another compositing manager: our window would be its)
+    Compositor* c = compositor();
+    if( c == NULL || ( !c->isActive() && Compositor::foreignCompositor( dpy )))
+        return false;
+    return options->effectsEnabled && have_render && have_composite
         && ws->windowOverview() != NULL && !ws->windowOverview()->isActive();
     }
 
@@ -548,6 +562,9 @@ bool Effects::canAnimate( Client* c, bool need_shown ) const
         return false;
     if( !c->isOnCurrentDesktop() || c->isFullScreen() || ( need_shown && !c->isShown( true )))
         return false;
+    Compositor* comp = compositor();
+    if( comp != NULL && comp->isActive())
+        return !comp->isUnredirected( c->frameId());
     return ws->windowOverview()->isRedirected( c->frameId());
     }
 
@@ -579,8 +596,9 @@ void Effects::freeAnim( EffectAnim* anim )
     if( anim->damage != None )
         XDamageDestroy( dpy, anim->damage );
     anim->damage = None;
-    const int w = anim->snap.w[ 0 ];
-    const int h = anim->snap.h[ 0 ];
+    const int w = anim->snap.w;
+    const int h = anim->snap.h;
+    anim->live.release( dpy );
     Pixmap kept = anim->snap.release( dpy, anim->keep_snap && anim->client != NULL );
     if( kept != None )
         {
@@ -772,8 +790,10 @@ void Effects::unminimize( Client* c, bool animate )
 
 // where anim's frame is in the scene: the window below it; covered: a
 // window that is not a panel above it
-static Window stackedAbove( EffectScene* scene, EffectAnim* anim, bool* covered )
+static Window stackedAbove( Workspace* ws, EffectScene* scene, EffectAnim* anim, bool* covered )
     {
+    if( scene == NULL ) // (composited: the compositor's scene)
+        return ws->compositor()->windowBelow( anim->frame, anim->geom, covered );
     Window prev = None;
     bool found = false;
     *covered = false;
@@ -848,16 +868,17 @@ void Effects::startIconify( Client* c, bool minimizing, const QRect& icon )
             delete anim;
             return;
             }
-        anim->snap.set( dpy, p, geom.size(), depth, visual, true );
+        anim->snap.set( renderer(), p, geom.size(), depth, visual, true, composited_now());
         anim->keep_snap = true;
         anim->geom = geom; // (where the frame really is)
+        captureShadow( anim );
         }
     else
         {
         QMap< Client*, Retained >::Iterator it = retained.find( c );
         if( it != retained.end())
             {
-            anim->snap.set( dpy, (*it).pixmap, (*it).size, (*it).depth, (*it).visual, true );
+            anim->snap.set( renderer(), (*it).pixmap, (*it).size, (*it).depth, (*it).visual, true, composited_now());
             retained_bytes -= QMIN( retained_bytes, (unsigned long) (*it).size.width() * (*it).size.height() * 4 );
             retained.remove( it );
             }
@@ -881,7 +902,7 @@ void Effects::startIconify( Client* c, bool minimizing, const QRect& icon )
     if( minimizing )
         { // below other windows: it stays below them (on top only over the panels)
         bool covered;
-        Window below = stackedAbove( scene, anim, &covered );
+        Window below = stackedAbove( ws, scene, anim, &covered );
         if( covered )
             {
             anim->use_below = true;
@@ -967,10 +988,11 @@ void Effects::morphBegin( Client* c, const QRect& bounds )
         delete anim;
         return;
         }
-    anim->snap.set( dpy, p, geom.size(), depth, visual, true );
+    anim->snap.set( renderer(), p, geom.size(), depth, visual, true, composited_now());
     if( mayBeShaped( c ))
         anim->shaped = readShape( dpy, c->frameId(), geom.size(), anim->shape );
     anim->old_geom = anim->geom = geom;
+    captureShadow( anim );
     anim->p = anim->p_from = 0;
     anim->p_to = 1;
     anim->seg_start = now();
@@ -1101,10 +1123,11 @@ void Effects::windowClosing( Client* c )
         delete anim;
         return;
         }
-    anim->snap.set( dpy, p, geom.size(), depth, visual, true );
+    anim->snap.set( renderer(), p, geom.size(), depth, visual, true, composited_now());
     if( mayBeShaped( c ))
         anim->shaped = readShape( dpy, c->frameId(), geom.size(), anim->shape );
     anim->geom = geom;
+    captureShadow( anim );
     anim->p = anim->p_from = 1;
     anim->p_to = 0;
     anim->seg_start = now();
@@ -1117,7 +1140,7 @@ void Effects::windowClosing( Client* c )
         }
     // where it is in the stacking order
     bool covered;
-    anim->below = stackedAbove( scene, anim, &covered );
+    anim->below = stackedAbove( ws, scene, anim, &covered );
     anim->use_below = true;
     anim->client = NULL; // nothing more from the client
     if( debug )
@@ -1167,9 +1190,28 @@ void Effects::abort()
 
 bool Effects::startSession( const QRect& needed )
     {
-    if( out != None )
+    if( out != None || comp_session )
         return extendArea( needed );
     const double t = now();
+    if( composited_now())
+        { // in the compositor's frames: no window, no scene of our own
+        Compositor* c = compositor();
+        if( c->lockerShown())
+            return false;
+        QRect screen( 0, 0, DisplayWidth( dpy, DefaultScreen( dpy )), DisplayHeight( dpy, DefaultScreen( dpy )));
+        area = needed.intersect( screen );
+        if( area.isEmpty())
+            return false;
+        comp_session = true;
+        comp_drawn = QRegion();
+        frame_count = 0;
+        stat_start = t;
+        stat_render = stat_max_render = 0;
+        stat_skipped = stat_gaps = 0;
+        stat_strips = 0;
+        stat_setup = now() - t;
+        return true;
+        }
     QRect screen( 0, 0, DisplayWidth( dpy, DefaultScreen( dpy )), DisplayHeight( dpy, DefaultScreen( dpy )));
     area = needed.intersect( screen );
     if( area.isEmpty())
@@ -1233,6 +1275,12 @@ void Effects::placeWindow()
 
 bool Effects::extendArea( const QRect& needed )
     {
+    if( comp_session )
+        {
+        area = area.unite( needed ).intersect( QRect( 0, 0, DisplayWidth( dpy, DefaultScreen( dpy )),
+            DisplayHeight( dpy, DefaultScreen( dpy ))));
+        return true;
+        }
     if( out == None )
         return false;
     QRect screen( 0, 0, DisplayWidth( dpy, DefaultScreen( dpy )), DisplayHeight( dpy, DefaultScreen( dpy )));
@@ -1258,6 +1306,9 @@ void Effects::endSession()
     poll_timer.stop();
     frame_wanted = false;
     finishing = false;
+    comp_session = false;
+    comp_drawn = QRegion();
+    target = NULL;
     trapErrors( dpy );
     presenter->stop();
     freeBlendTarget();
@@ -1274,8 +1325,7 @@ void Effects::endSession()
             if( win->damage != None )
                 XDamageDestroy( dpy, win->damage );
             }
-        if( scene->root_picture != None )
-            XRenderFreePicture( dpy, scene->root_picture );
+        delete scene->root_tex;
         delete scene;
         scene = NULL;
         }
@@ -1423,12 +1473,7 @@ bool Effects::buildScene()
         if( win->pic.isNull() && geom.intersects( area ))
             {
             Pixmap p = XCompositeNameWindowPixmap( dpy, w );
-            win->pic.set( dpy, p, geom.size(), attr.depth, attr.visual, true );
-            if( win->pic.picture[ 0 ] != None )
-                {
-                setTransform( dpy, win->pic.picture[ 0 ], 1, 1, 0, 0 );
-                XRenderSetPictureFilter( dpy, win->pic.picture[ 0 ], FilterNearest, NULL, 0 );
-                }
+            win->pic.set( renderer(), p, geom.size(), attr.depth, attr.visual, true, false );
             if( mayBeShaped( c ))
                 win->shaped = readShape( dpy, w, geom.size(), win->shape );
             }
@@ -1453,7 +1498,7 @@ bool Effects::buildScene()
     scene->wins = list;
     scene->wins.setAutoDelete( true );
     // the root background
-    if( scene->root_picture == None )
+    if( scene->root_tex == NULL )
         {
         Atom type;
         int format;
@@ -1464,22 +1509,24 @@ bool Effects::buildScene()
             &data ) == Success && data != NULL && type == XA_PIXMAP && format == 32 && n == 1 )
             {
             Pixmap p = *(Pixmap*) data;
-            XRenderPictureAttributes pa;
-            pa.repeat = RepeatNormal;
-            scene->root_picture = XRenderCreatePicture( dpy, p,
-                XRenderFindVisualFormat( dpy, DefaultVisual( dpy, DefaultScreen( dpy ))), CPRepeat, &pa );
+            Window r;
+            int x, y;
+            unsigned int w, h, bw, depth;
+            if( XGetGeometry( dpy, p, &r, &x, &y, &w, &h, &bw, &depth ) && renderer() != NULL )
+                scene->root_tex = renderer()->textureFromPixmap( p, w, h, depth,
+                    DefaultVisual( dpy, DefaultScreen( dpy )));
             }
         if( data != NULL )
             XFree( data );
         }
     if( untrapErrors( dpy ) > 0 )
         {
-        if( scene->root_picture != None )
+        if( scene->root_tex != NULL )
             { // (a stale root pixmap: none)
             trapErrors( dpy );
-            XRenderFreePicture( dpy, scene->root_picture );
+            delete scene->root_tex;
             untrapErrors( dpy );
-            scene->root_picture = None;
+            scene->root_tex = NULL;
             }
         if( debug )
             kdWarning( 1212 ) << "effects: X errors while reading the windows" << endl;
@@ -1505,6 +1552,11 @@ void Effects::showFirstFrame()
 
 void Effects::requestFrame()
     {
+    if( comp_session )
+        {
+        compositor()->requestFrame();
+        return;
+        }
     if( out == None )
         return;
     if( finishing && anims.isEmpty())
@@ -1536,7 +1588,9 @@ void Effects::frameTimeout()
 // waiting for a window to repaint, nothing moves
 void Effects::pollTimeout()
     {
-    if( out != None && !frame_timer.isActive())
+    if( comp_session )
+        compositor()->requestFrame();
+    else if( out != None && !frame_timer.isActive())
         {
         frame_wanted = true;
         frameTimeout();
@@ -1572,9 +1626,12 @@ bool Effects::updateAnim( EffectAnim* anim, double t )
     // the real geometry: of the mapped frame as the server has it, else KWin's
     if( anim->kind != EffectAnim::Close && ( anim->kind != EffectAnim::Iconify || anim->p_to == 0 ))
         {
-        EffectScene::Win* win = scene->find( anim->frame );
+        EffectScene::Win* win = scene != NULL ? scene->find( anim->frame ) : NULL;
+        QRect g;
         if( win != NULL )
             anim->geom = win->geom;
+        else if( comp_session && compositor()->windowGeometry( anim->frame, &g ))
+            anim->geom = g;
         else if( anim->client != NULL && ws->hasClient( anim->client ))
             anim->geom = anim->client->geometry();
         }
@@ -1636,7 +1693,6 @@ bool Effects::updateAnim( EffectAnim* anim, double t )
     return moving;
     }
 
-// draws pic (w x h) into rect, offset by -ox, -oy
 // the level of the copy (see copyLevel()) and how far the scale is from
 // its size towards the next smaller one, 0 .. 1 (log2)
 static int copyLevelFraction( double scale, double* fraction )
@@ -1647,42 +1703,45 @@ static int copyLevelFraction( double scale, double* fraction )
     return level;
     }
 
-// the copy ( lx, ly ) of pic prepared for drawing into rect from the box
-// at dx, dy: the transformation maps with the copy's nominal size (the
-// window's size / 2^level; a copy is rounded up by up to a pixel, which
-// falls outside rect), so that all copies land at the same place, to the
-// subpixel (no rounding, no jitter); true at the identity
-static bool prepareCopy( Display* dpy, EffectPicture& pic, int lx, int ly, const RectF& rect, int dx, int dy,
-    Picture* src_return )
+// the shape rectangles relative to the window (size), scaled into rect
+// (screen coordinates)
+static QRegion scaledShapeRegion( const QValueVector< XRectangle >& shape, const QSize& size, const RectF& rect )
     {
-    int cw, ch;
-    Picture src = pic.copy( dpy, lx, ly, &cw, &ch );
-    // (copy() gives the window itself for windows without copies)
-    const bool base = pic.isBase( src );
-    const double nw = base ? pic.w[ 0 ] : double( pic.w[ 0 ] ) / ( 1 << lx );
-    const double nh = base ? pic.h[ 0 ] : double( pic.h[ 0 ] ) / ( 1 << ly );
-    const double sx = rect.w / nw;
-    const double sy = rect.h / nh;
-    const bool identity = base && fabs( sx - 1 ) < 1e-9 && fabs( sy - 1 ) < 1e-9
-        && rect.x == dx && rect.y == dy;
-    if( identity )
-        {
-        setTransform( dpy, src, 1, 1, 0, 0 );
-        XRenderSetPictureFilter( dpy, src, FilterNearest, NULL, 0 );
-        }
-    else
-        {
-        setTransform( dpy, src, 1 / sx, 1 / sy, ( dx - rect.x ) / sx, ( dy - rect.y ) / sy );
-        XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
-        }
-    if( src == pic.picture[ 0 ] )
-        pic.transformed = !identity;
-    *src_return = src;
-    return identity;
+    QValueVector< XRectangle > clip = scaledShape( shape, size, rect, 0, 0 );
+    QRegion r;
+    for( unsigned int i = 0;
+         i < clip.size();
+         ++i )
+        if( clip[ i ].width > 0 && clip[ i ].height > 0 )
+            r |= QRect( clip[ i ].x, clip[ i ].y, clip[ i ].width, clip[ i ].height );
+    return r;
+    }
+
+void Effects::beginDraw( Render::Renderer* r, Render::Texture* t, int x, int y, const QRegion& clip )
+    {
+    rr = r;
+    target = t;
+    ox = x;
+    oy = y;
+    clip_base = clip;
+    restoreTarget();
+    }
+
+// (after drawing into a copy or the scratch picture)
+void Effects::restoreTarget()
+    {
+    rr->setTarget( target );
+    }
+
+void Effects::setClip( const QRegion& screen_region )
+    {
+    QRegion r = screen_region & clip_base;
+    r.translate( -ox, -oy );
+    rr->setClip( r );
     }
 
 /*
- pic drawn into rect, with alpha, offset by -ox, -oy.
+ pic drawn into rect (screen coordinates), with alpha.
 
  Scaled down, a bilinear filter skips pixels (the text shimmers and
  breaks up as the window moves): drawn from the copies downscaled by at
@@ -1693,22 +1752,22 @@ static bool prepareCopy( Display* dpy, EffectPicture& pic, int lx, int ly, const
  and no jump in sharpness when a level changes.  The blend is composed in
  a scratch picture and drawn with alpha from there: exact also for
  translucent windows.  Scaled up (the old contents of a maximized window),
- bilinear.
+ bilinear.  Each copy is drawn with its nominal size (the window's size /
+ 2^level; a copy is rounded up by up to a pixel, which falls outside
+ rect), so that all copies land at the same place, to the subpixel.
 */
-void Effects::drawPicture( Picture dst, EffectPicture& pic, const RectF& rect, double alpha,
-    bool shaped, const QValueVector< XRectangle >& shape )
+void Effects::drawPicture( EffectPicture& pic, const RectF& rect, double alpha, bool shaped,
+    const QValueVector< XRectangle >& shape )
     {
     if( pic.isNull() || alpha <= 1.0 / 512 || rect.w < 0.5 || rect.h < 0.5 || ( shaped && shape.isEmpty()))
         return;
-    const int ox = area.x();
-    const int oy = area.y();
     double fx, fy;
-    const int lx = copyLevelFraction( rect.w / pic.w[ 0 ], &fx );
-    const int ly = copyLevelFraction( rect.h / pic.h[ 0 ], &fy );
+    const int lx = copyLevelFraction( rect.w / pic.w, &fx );
+    const int ly = copyLevelFraction( rect.h / pic.h, &fy );
     // the copies and their weights
-    struct { int lx, ly; double w; } parts[ 4 ];
+    struct { int lx, ly; double w; Render::Texture* tex; RectF src; } parts[ 4 ];
     int count = 0;
-    const bool copies = (long) pic.w[ 0 ] * pic.h[ 0 ] <= CopyLimit;
+    const bool copies = (long) pic.w * pic.h <= CopyLimit;
     for( int i = 0;
          i < 4;
          ++i )
@@ -1723,84 +1782,159 @@ void Effects::drawPicture( Picture dst, EffectPicture& pic, const RectF& rect, d
         parts[ count ].w = w;
         ++count;
         }
+    if( count == 0 )
+        {
+        parts[ 0 ].lx = lx;
+        parts[ 0 ].ly = ly;
+        parts[ 0 ].w = 1;
+        count = 1;
+        }
     double sum = 0;
     for( int i = 0;
          i < count;
          ++i )
         sum += parts[ i ].w;
+    // the copies first (making one draws into it)
+    bool made = false;
+    for( int i = 0;
+         i < count;
+         ++i )
+        {
+        int cw, ch;
+        parts[ i ].tex = pic.copy( rr, parts[ i ].lx, parts[ i ].ly, &cw, &ch, &made );
+        const bool base = pic.isBase( parts[ i ].tex );
+        parts[ i ].src = RectF( 0, 0, base ? pic.w : double( pic.w ) / ( 1 << parts[ i ].lx ),
+            base ? pic.h : double( pic.h ) / ( 1 << parts[ i ].ly ));
+        }
+    if( made )
+        restoreTarget();
     const int dx = (int) floor( rect.x );
     const int dy = (int) floor( rect.y );
     const int dw = (int) ceil( rect.x + rect.w ) - dx;
     const int dh = (int) ceil( rect.y + rect.h ) - dy;
-    if( shaped && !shape.isEmpty())
-        {
-        QValueVector< XRectangle > clip = scaledShape( shape, QSize( pic.w[ 0 ], pic.h[ 0 ] ), rect, ox, oy );
-        XRenderSetPictureClipRectangles( dpy, dst, 0, 0, &clip[ 0 ], clip.size());
-        }
-    Picture mask = alpha < 1.0 ? solidPicture( dpy, Qt::black, alpha ) : None;
-    if( count <= 1 )
+    const QRegion clip = shaped ? scaledShapeRegion( shape, QSize( pic.w, pic.h ), rect ) : QRegion( dx, dy, dw, dh );
+    const RectF dst( rect.x - ox, rect.y - oy, rect.w, rect.h );
+    if( count == 1 )
         { // one copy (or the window itself): drawn directly
-        Picture src;
-        const bool identity = prepareCopy( dpy, pic, count == 1 ? parts[ 0 ].lx : lx,
-            count == 1 ? parts[ 0 ].ly : ly, rect, dx, dy, &src );
+        const bool identity = pic.isBase( parts[ 0 ].tex ) && fabs( rect.w - pic.w ) < 1e-9
+            && fabs( rect.h - pic.h ) < 1e-9 && rect.x == dx && rect.y == dy;
         // at scale 1 like the server's automatic compositing (Src, also for
-        // ARGB windows), else blended (the edges are anti-aliased)
-        const int op = mask == None && identity ? PictOpSrc : PictOpOver;
-        XRenderComposite( dpy, op, src, mask, dst, 0, 0, 0, 0, dx - ox, dy - oy, dw, dh );
+        // ARGB windows; composited: with their alpha), else blended (the
+        // edges are anti-aliased)
+        const Render::Blend blend = identity && alpha >= 1 && !( pic.alpha && pic.keep_alpha )
+            ? Render::BlendSource : Render::BlendOver;
+        setClip( clip );
+        rr->drawTexture( parts[ 0 ].tex, parts[ 0 ].src, dst, QMIN( 1.0, alpha ),
+            identity ? Render::NearestFilter : Render::BilinearFilter, blend, Render::NoRepeat );
         }
     else if( blendTarget( dw, dh ))
         { // the weighted sum in the scratch picture (premultiplied, also its alpha), then over dst
+        rr->setTarget( blend );
+        rr->fill( RectF( 0, 0, dw, dh ), Qt::black, 0.0, Render::BlendSource );
+        const RectF local( rect.x - dx, rect.y - dy, rect.w, rect.h );
         for( int i = 0;
              i < count;
              ++i )
-            {
-            Picture src;
-            prepareCopy( dpy, pic, parts[ i ].lx, parts[ i ].ly, rect, dx, dy, &src );
-            Picture weight = solidPicture( dpy, Qt::black, parts[ i ].w / sum );
-            XRenderComposite( dpy, i == 0 ? PictOpSrc : PictOpAdd, src, weight, blend_picture,
-                0, 0, 0, 0, 0, 0, dw, dh );
-            XRenderFreePicture( dpy, weight );
-            }
-        XRenderComposite( dpy, PictOpOver, blend_picture, mask, dst, 0, 0, 0, 0, dx - ox, dy - oy, dw, dh );
-        }
-    if( mask != None )
-        XRenderFreePicture( dpy, mask );
-    if( shaped && !shape.isEmpty())
-        {
-        XRenderPictureAttributes pa;
-        pa.clip_mask = None;
-        XRenderChangePicture( dpy, dst, CPClipMask, &pa );
+            rr->drawTexture( parts[ i ].tex, parts[ i ].src, local, parts[ i ].w / sum, Render::BilinearFilter,
+                Render::BlendAdd, Render::NoRepeat );
+        restoreTarget();
+        setClip( clip );
+        rr->drawTexture( blend, RectF( 0, 0, dw, dh ), RectF( dx - ox, dy - oy, dw, dh ), QMIN( 1.0, alpha ),
+            Render::NearestFilter, Render::BlendOver, Render::NoRepeat );
         }
     }
 
 // the scratch picture for blending copies (ARGB), at least w x h
 bool Effects::blendTarget( int w, int h )
     {
-    if( blend_picture != None && w <= blend_w && h <= blend_h )
+    if( blend != NULL && w <= blend->width() && h <= blend->height())
         return true;
+    const int bw = QMAX( w, blend != NULL ? blend->width() : 0 );
+    const int bh = QMAX( h, blend != NULL ? blend->height() : 0 );
     freeBlendTarget();
-    blend_w = QMAX( w, area.width());
-    blend_h = QMAX( h, area.height());
-    blend_pixmap = XCreatePixmap( dpy, root, blend_w, blend_h, 32 );
-    blend_picture = XRenderCreatePicture( dpy, blend_pixmap, XRenderFindStandardFormat( dpy, PictStandardARGB32 ),
-        0, NULL );
-    return blend_picture != None;
+    blend = rr->createOffscreen( bw, bh, true );
+    return blend != NULL;
     }
 
 void Effects::freeBlendTarget()
     {
-    if( blend_picture != None )
-        XRenderFreePicture( dpy, blend_picture );
-    if( blend_pixmap != None )
-        XFreePixmap( dpy, blend_pixmap );
-    blend_picture = None;
-    blend_pixmap = None;
-    blend_w = blend_h = 0;
+    delete blend;
+    blend = NULL;
     }
 
-void Effects::drawAnim( EffectAnim* anim, Picture dst )
+// the window's contents now (the scene's, the compositor's)
+EffectPicture* Effects::livePicture( EffectAnim* anim )
     {
-    EffectScene::Win* live = scene->find( anim->frame );
+    if( comp_session )
+        {
+        Compositor* c = compositor();
+        QRect geom;
+        Render::Texture* t = c != NULL ? c->windowTexture( anim->frame, &geom ) : NULL;
+        if( t == NULL )
+            {
+            anim->live.setExternal( NULL, QSize());
+            return NULL;
+            }
+        anim->live.setExternal( t, geom.size());
+        if( !anim->live_shape_read )
+            { // (with the compositor's shape: the same as it draws)
+            QRegion shape = c->windowShape( anim->frame );
+            anim->live_shaped = !shape.isNull();
+            anim->live_shape.clear();
+            QMemArray< QRect > rects = shape.rects();
+            for( unsigned int i = 0;
+                 i < rects.size();
+                 ++i )
+                {
+                XRectangle xr;
+                xr.x = rects[ i ].x();
+                xr.y = rects[ i ].y();
+                xr.width = rects[ i ].width();
+                xr.height = rects[ i ].height();
+                anim->live_shape.append( xr );
+                }
+            anim->live_shape_read = true;
+            }
+        return &anim->live;
+        }
+    EffectScene::Win* live = scene != NULL ? scene->find( anim->frame ) : NULL;
+    if( live == NULL || live->pic.isNull())
+        return NULL;
+    anim->live_shaped = live->shaped;
+    anim->live_shape = live->shape;
+    return &live->pic;
+    }
+
+// the window's shadow (composited only), scaled into rect with alpha;
+// live: the window's shadow now, else the one captured with its contents
+void Effects::drawShadow( EffectAnim* anim, bool live, const RectF& rect, double alpha )
+    {
+    if( !comp_session || alpha <= 1.0 / 512 )
+        return;
+    Compositor* c = compositor();
+    if( c == NULL )
+        return;
+    CompositorShadow s;
+    if( live )
+        {
+        if( !c->windowShadow( anim->frame, &s ))
+            return;
+        }
+    else
+        s = anim->shadow;
+    if( !s.valid )
+        return;
+    // (outside the window: below a translucent one it would show)
+    QRegion clip = clip_base - ( anim->shaped && !live ? scaledShapeRegion( anim->shape, s.size, rect )
+        : QRegion( rect.bounds()));
+    clip.translate( -ox, -oy );
+    if( clip.isEmpty())
+        return;
+    c->drawShadow( rr, s, RectF( rect.x - ox, rect.y - oy, rect.w, rect.h ), alpha, clip );
+    }
+
+void Effects::drawAnim( EffectAnim* anim )
+    {
     switch( anim->kind )
         {
         case EffectAnim::Iconify:
@@ -1808,40 +1942,49 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
             EffectPicture* pic = &anim->snap;
             const QValueVector< XRectangle >* shape = &anim->shape;
             bool shaped = anim->shaped;
+            bool live = false;
             if( pic->isNull())
                 {
-                if( live == NULL || live->pic.isNull())
+                pic = livePicture( anim );
+                if( pic == NULL )
                     return;
-                pic = &live->pic;
-                shape = &live->shape;
-                shaped = live->shaped;
+                shape = &anim->live_shape;
+                shaped = anim->live_shaped;
+                live = true;
                 }
             if( anim->p <= 0 && anim->p_to == 0 )
                 { // restored, waiting for the repaint
-                drawPicture( dst, *pic, RectF( anim->geom ), 1.0, shaped, *shape );
+                drawShadow( anim, live, RectF( anim->geom ), 1.0 );
+                drawPicture( *pic, RectF( anim->geom ), 1.0, shaped, *shape );
                 return;
                 }
             if( anim->style == Genie )
                 {
-                drawGenie( anim, *pic, true, dst, anim->p, 1.0 );
-                pic->transformed = true;
+                // (the shadow goes at once: the funnel has none)
+                drawShadow( anim, live, RectF( anim->geom ), 1 - clamp01( anim->p / 0.15 ));
+                drawGenie( anim, *pic, true, anim->p, 1.0 );
                 return;
                 }
-            RectF target = fitInto( anim->geom.width(), anim->geom.height(), anim->icon );
-            RectF rect = mix( RectF( anim->geom ), target, anim->p );
+            RectF target_rect = fitInto( anim->geom.width(), anim->geom.height(), anim->icon );
+            RectF rect = mix( RectF( anim->geom ), target_rect, anim->p );
             anim->drawn = rect;
             const double alpha = 1 - anim->p * anim->p * anim->p * anim->p;
-            drawPicture( dst, *pic, rect, alpha, shaped, *shape );
+            drawShadow( anim, live, rect, alpha * ( 1 - anim->p ));
+            drawPicture( *pic, rect, alpha, shaped, *shape );
             break;
             }
         case EffectAnim::Morph:
             {
             RectF rect = mix( RectF( anim->old_geom ), RectF( anim->geom ), anim->p );
             anim->drawn = rect;
+            // the shadow before and after (maximized: none) crossfade
+            drawShadow( anim, false, rect, 1 - anim->p );
+            drawShadow( anim, true, rect, anim->p );
+            EffectPicture* live = anim->fade > 0 ? livePicture( anim ) : NULL;
             if( anim->fade < 1 || ( anim->moved && live == NULL ))
-                drawPicture( dst, anim->snap, rect, 1.0, anim->shaped, anim->shape );
-            if( anim->fade > 0 && live != NULL )
-                drawPicture( dst, live->pic, rect, anim->fade, live->shaped, live->shape );
+                drawPicture( anim->snap, rect, 1.0, anim->shaped, anim->shape );
+            if( live != NULL )
+                drawPicture( *live, rect, anim->fade, anim->live_shaped, anim->live_shape );
             break;
             }
         case EffectAnim::Open:
@@ -1850,20 +1993,24 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
             EffectPicture* pic = &anim->snap;
             const QValueVector< XRectangle >* shape = &anim->shape;
             bool shaped = anim->shaped;
-            if( anim->kind == EffectAnim::Open )
+            const bool live = anim->kind == EffectAnim::Open;
+            if( live )
                 {
-                if( live == NULL || !anim->ready )
+                if( !anim->ready )
                     return;
-                pic = &live->pic;
-                shape = &live->shape;
-                shaped = live->shaped;
+                pic = livePicture( anim );
+                if( pic == NULL )
+                    return;
+                shape = &anim->live_shape;
+                shaped = anim->live_shaped;
                 }
             const double s = anim->kind == EffectAnim::Open ? 0.9 + 0.1 * anim->p : 0.85 + 0.15 * anim->p;
             RectF g( anim->geom );
             RectF rect( g.cx() - g.w * s / 2, g.cy() - g.h * s / 2, g.w * s, g.h * s );
             if( anim->p >= 1 )
                 rect = g;
-            drawPicture( dst, *pic, rect, anim->p, shaped, *shape );
+            drawShadow( anim, live, rect, anim->p );
+            drawPicture( *pic, rect, anim->p, shaped, *shape );
             break;
             }
         }
@@ -1889,11 +2036,10 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
  Computed along the main axis m (the direction of travel, negated for up
  and left so that it increases towards the button) and the cross axis.
 */
-void Effects::drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copies, Picture dst, double p,
-    double alpha )
+void Effects::drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copies, double p, double alpha )
     {
-    const int sw = pic.w[ 0 ];
-    const int sh = pic.h[ 0 ];
+    const int sw = pic.w;
+    const int sh = pic.h;
     const QRect& wg = anim->geom;
     const QRect& ic = anim->icon;
     // the direction
@@ -1945,8 +2091,6 @@ void Effects::drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copie
     if( bottom - top < 0.5 )
         return;
     const double sy = ( bottom - top ) / len; // along, the same for all strips
-    const int ox = area.x();
-    const int oy = area.y();
     // the funnel's edges at m
 #define GENIE_F( m ) ( s1 * smoothstep((( m ) - m0 ) / ( i0 - m0 )))
 #define GENIE_L( m ) mix( wc0, ic0, GENIE_F( m ))
@@ -1980,10 +2124,28 @@ void Effects::drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copie
     int level_along = 0;
     if( scaled_copies )
         level_along = copyLevel( sy );
-    Picture mask = alpha < 1.0 ? solidPicture( dpy, Qt::black, alpha ) : None;
-    Picture last = None;
-    int strips = 0;
+    // the copies first (making one draws into it)
+    bool made = false;
     int m = begin;
+    for( unsigned int i = 0;
+         i < heights.size();
+         m += heights[ i ], ++i )
+        {
+        const double sx = ( GENIE_R( m + heights[ i ] / 2.0 ) - GENIE_L( m + heights[ i ] / 2.0 )) / width;
+        if( sx <= 0.0005 )
+            continue;
+        const int level_across = scaled_copies ? copyLevel( sx ) : 0;
+        int gw, gh;
+        if( horizontal )
+            pic.copy( rr, level_along, level_across, &gw, &gh, &made );
+        else
+            pic.copy( rr, level_across, level_along, &gw, &gh, &made );
+        }
+    if( made )
+        restoreTarget();
+    setClip( QRegion( 0, 0, DisplayWidth( dpy, DefaultScreen( dpy )), DisplayHeight( dpy, DefaultScreen( dpy ))));
+    int strips = 0;
+    m = begin;
     for( unsigned int i = 0;
          i < heights.size();
          ++i )
@@ -1994,17 +2156,11 @@ void Effects::drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copie
         const double sx = ( cr - cl ) / width; // across
         if( sx > 0.0005 )
             {
-            int level_across = 0;
-            if( scaled_copies )
-                level_across = copyLevel( sx );
+            const int level_across = scaled_copies ? copyLevel( sx ) : 0;
             int gw, gh;
-            Picture src = horizontal ? pic.copy( dpy, level_along, level_across, &gw, &gh )
-                : pic.copy( dpy, level_across, level_along, &gw, &gh );
-            if( src != last )
-                {
-                XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
-                last = src;
-                }
+            bool dummy = false;
+            Render::Texture* src = horizontal ? pic.copy( rr, level_along, level_across, &gw, &gh, &dummy )
+                : pic.copy( rr, level_across, level_along, &gw, &gh, &dummy );
             // the copy's pixels per window pixel
             const double fa = horizontal ? double( gh ) / sh : double( gw ) / sw; // across
             const double fl = horizontal ? double( gw ) / sw : double( gh ) / sh; // along
@@ -2014,24 +2170,19 @@ void Effects::drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copie
             // from the far edge (sign > 0), len - that (sign < 0); across: ( c0 + b - cl ) / sx
             const double along_off = sign > 0 ? ( m - top ) / sy : len - ( m + h - top ) / sy;
             const double across_off = ( c0 - cl ) / sx;
-            int dx, dy, dw, dh;
+            RectF src_rect, dst_rect;
             if( !horizontal )
                 {
-                setTransform( dpy, src, fa / sx, fl / sy, fa * across_off, fl * along_off );
-                dx = c0;
-                dw = c1 - c0;
-                dy = sign > 0 ? m : -( m + h );
-                dh = h;
+                dst_rect = RectF( c0 - ox, ( sign > 0 ? m : -( m + h )) - oy, c1 - c0, h );
+                src_rect = RectF( fa * across_off, fl * along_off, dst_rect.w * fa / sx, dst_rect.h * fl / sy );
                 }
             else
                 {
-                setTransform( dpy, src, fl / sy, fa / sx, fl * along_off, fa * across_off );
-                dy = c0;
-                dh = c1 - c0;
-                dx = sign > 0 ? m : -( m + h );
-                dw = h;
+                dst_rect = RectF(( sign > 0 ? m : -( m + h )) - ox, c0 - oy, h, c1 - c0 );
+                src_rect = RectF( fl * along_off, fa * across_off, dst_rect.w * fl / sy, dst_rect.h * fa / sx );
                 }
-            XRenderComposite( dpy, PictOpOver, src, mask, dst, 0, 0, 0, 0, dx - ox, dy - oy, dw, dh );
+            rr->drawTexture( src, src_rect, dst_rect, alpha, Render::BilinearFilter, Render::BlendOver,
+                Render::NoRepeat );
             ++strips;
             }
         m += h;
@@ -2039,37 +2190,16 @@ void Effects::drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copie
 #undef GENIE_F
 #undef GENIE_L
 #undef GENIE_R
-    if( mask != None )
-        XRenderFreePicture( dpy, mask );
     if( strips > stat_strips )
         stat_strips = strips;
     }
 
-void Effects::renderFrame( bool immediate )
+// the animations at time t0 (finished ones freed); *moving: something
+// moves, *waiting: something waits for a window's repaint
+void Effects::advance( double t0, bool* moving, bool* waiting )
     {
-    if( out == None || scene == NULL )
-        return;
-    if( need_immediate )
-        immediate = true; // a new window: nothing shown in it yet
-    if( scene->dirty )
-        {
-        buildScene();
-        if( !scene->ok )
-            { // something that can't be drawn appeared (the screen locker)
-            abort();
-            return;
-            }
-        }
-    Picture dst = presenter->beginFrame();
-    if( dst == None )
-        { // all still used by the server, wait for an idle event
-        frame_wanted = true;
-        return;
-        }
-    const double t_start = now();
-    const double t0 = immediate ? t_start : presenter->frameTime( t_start );
-    bool moving = false;
-    bool waiting = false;
+    *moving = false;
+    *waiting = false;
     for( QPtrListIterator< EffectAnim > it( anims );
          it.current() != NULL;
          )
@@ -2083,7 +2213,7 @@ void Effects::renderFrame( bool immediate )
             anim->fresh = false;
             }
         if( updateAnim( anim, t0 ))
-            moving = true;
+            *moving = true;
         if( anim->done )
             {
             if( debug )
@@ -2095,11 +2225,49 @@ void Effects::renderFrame( bool immediate )
                     : anim->kind == EffectAnim::Open ? "open" : "close" ).arg( anim->caption.left( 24 ));
             freeAnim( anim );
             }
-        else if( !moving )
-            waiting = true;
+        else if( !*moving )
+            *waiting = true;
         }
-    const int ox = area.x();
-    const int oy = area.y();
+    }
+
+void Effects::renderFrame( bool immediate )
+    {
+    if( comp_session )
+        { // (the compositor draws: a frame there)
+        compositor()->requestFrame();
+        return;
+        }
+    if( out == None || scene == NULL )
+        return;
+    if( need_immediate )
+        immediate = true; // a new window: nothing shown in it yet
+    if( scene->dirty )
+        {
+        buildScene();
+        if( !scene->ok )
+            { // something that can't be drawn appeared (the screen locker)
+            abort();
+            return;
+            }
+        }
+    if( presenter->beginFrame() == None )
+        { // all still used by the server, wait for an idle event
+        frame_wanted = true;
+        return;
+        }
+    Render::Renderer* r = renderer();
+    Render::Texture* t = r != NULL ? r->textureFromPixmap( presenter->framePixmap(), area.width(), area.height(),
+        DefaultDepth( dpy, DefaultScreen( dpy )), DefaultVisual( dpy, DefaultScreen( dpy ))) : NULL;
+    if( t == NULL )
+        {
+        abort();
+        return;
+        }
+    const double t_start = now();
+    const double t0 = immediate ? t_start : presenter->frameTime( t_start );
+    bool moving, waiting;
+    advance( t0, &moving, &waiting );
+    beginDraw( r, t, area.x(), area.y(), QRegion( area ));
     // the topmost window that covers the whole area, opaque, not animated:
     // nothing below it is drawn (maximized windows below a maximized one)
     EffectScene::Win* cover = NULL;
@@ -2121,20 +2289,19 @@ void Effects::renderFrame( bool immediate )
         }
     if( cover == NULL )
         { // the background
-        if( scene->root_picture != None )
-            XRenderComposite( dpy, PictOpSrc, scene->root_picture, None, dst, ox, oy, 0, 0, 0, 0,
-                area.width(), area.height());
+        setClip( QRegion( area ));
+        if( scene->root_tex != NULL )
+            r->drawTexture( scene->root_tex, RectF( ox, oy, area.width(), area.height()),
+                RectF( 0, 0, area.width(), area.height()), 1.0, Render::NearestFilter, Render::BlendSource,
+                Render::TileRepeat );
         else
-            {
-            XRenderColor black = { 0, 0, 0, 0xffff };
-            XRenderFillRectangle( dpy, PictOpSrc, dst, &black, 0, 0, area.width(), area.height());
-            }
+            r->fill( RectF( 0, 0, area.width(), area.height()), Qt::black, 1.0, Render::BlendSource );
         // closing windows above the bottom one
         for( EffectAnim* anim = anims.first();
              anim != NULL;
              anim = anims.next())
             if( anim->use_below && anim->below == None )
-                drawAnim( anim, dst );
+                drawAnim( anim );
         }
     bool covered = cover != NULL;
     for( QPtrListIterator< EffectScene::Win > wit( scene->wins );
@@ -2160,37 +2327,19 @@ void Effects::renderFrame( bool immediate )
                     in_place = anim;
                 }
         if( in_place != NULL )
-            drawAnim( in_place, dst );
+            drawAnim( in_place );
         else if( !animated && win->geom.intersects( area ) && !win->pic.isNull()
             && !( win->shaped && win->shape.isEmpty()))
             {
-            Picture src = win->pic.picture[ 0 ];
-            if( win->pic.transformed )
-                { // (drawn scaled while it was animated)
-                setTransform( dpy, src, 1, 1, 0, 0 );
-                XRenderSetPictureFilter( dpy, src, FilterNearest, NULL, 0 );
-                win->pic.transformed = false;
-                }
-            if( win->shaped )
-                {
-                QValueVector< XRectangle > clip = scaledShape( win->shape, win->geom.size(), RectF( win->geom ),
-                    ox, oy );
-                XRenderSetPictureClipRectangles( dpy, dst, 0, 0, &clip[ 0 ], clip.size());
-                }
-            XRenderComposite( dpy, PictOpSrc, src, None, dst, 0, 0, 0, 0, win->geom.x() - ox, win->geom.y() - oy,
-                win->geom.width(), win->geom.height());
-            if( win->shaped )
-                {
-                XRenderPictureAttributes pa;
-                pa.clip_mask = None;
-                XRenderChangePicture( dpy, dst, CPClipMask, &pa );
-                }
+            setClip( win->shaped ? scaledShapeRegion( win->shape, win->geom.size(), RectF( win->geom ))
+                : QRegion( win->geom ));
+            r->drawTexture( win->pic.tex, win->geom.x() - ox, win->geom.y() - oy, 1.0, Render::BlendSource );
             }
         for( EffectAnim* anim = anims.first();
              anim != NULL;
              anim = anims.next())
             if( anim->use_below && anim->below == win->id )
-                drawAnim( anim, dst );
+                drawAnim( anim );
         }
     // on top: minimized and restored windows, closed ones whose neighbour went
     for( EffectAnim* anim = anims.first();
@@ -2200,11 +2349,14 @@ void Effects::renderFrame( bool immediate )
         if( anim->use_below )
             {
             if( anim->below != None && scene->find( anim->below ) == NULL )
-                drawAnim( anim, dst );
+                drawAnim( anim );
             }
         else if( anim->on_top )
-            drawAnim( anim, dst );
+            drawAnim( anim );
         }
+    r->finish();
+    delete t;
+    target = NULL;
     if( !dump_dir.isEmpty())
         dumpFrame();
     presenter->endFrame( immediate );
@@ -2213,9 +2365,9 @@ void Effects::renderFrame( bool immediate )
     if( debug )
         {
         XSync( dpy, False );
-        double t = now() - t_start;
-        stat_render += t;
-        stat_max_render = QMAX( stat_max_render, t );
+        double tr = now() - t_start;
+        stat_render += tr;
+        stat_max_render = QMAX( stat_max_render, tr );
         }
     last_frame = t_start;
     if( anims.isEmpty())
@@ -2233,6 +2385,144 @@ void Effects::renderFrame( bool immediate )
         frame_wanted = true;
     else if( waiting && !poll_timer.isActive())
         poll_timer.start( 10, true );
+    }
+
+//****************************************
+// inside the compositor's frames
+//****************************************
+
+Compositor* Effects::compositor() const
+    {
+    return ws->compositor();
+    }
+
+bool Effects::composited_now() const
+    {
+    return ws->compositor() != NULL && ws->compositor()->isActive();
+    }
+
+// the window's shadow as it is now (composited), drawn with its captured contents
+void Effects::captureShadow( EffectAnim* anim )
+    {
+    anim->shadow = CompositorShadow();
+    if( composited_now())
+        compositor()->windowShadow( anim->frame, &anim->shadow );
+    }
+
+Render::Renderer* Effects::renderer()
+    {
+    Compositor* c = compositor();
+    if( c != NULL && c->isActive())
+        return c->renderer();
+    if( own_renderer == NULL )
+        own_renderer = Render::Renderer::create( dpy, Render::Renderer::XRender, NULL );
+    return own_renderer;
+    }
+
+// where an animation draws, as far as it can get (with its shadow)
+QRect Effects::extents( EffectAnim* anim ) const
+    {
+    QRect r = anim->geom;
+    if( anim->kind == EffectAnim::Iconify )
+        r = r.unite( anim->icon );
+    else if( anim->kind == EffectAnim::Morph )
+        r = r.unite( anim->old_geom );
+    const int margin = 2 * options->compositingShadowSize + QMAX( QABS( options->compositingShadowOffsetX ),
+        QABS( options->compositingShadowOffsetY )) + 2;
+    return QRect( r.x() - margin, r.y() - margin, r.width() + 2 * margin, r.height() + 2 * margin );
+    }
+
+QRegion Effects::prePaint( double t )
+    {
+    if( !comp_session )
+        return QRegion();
+    QRegion r = comp_drawn;
+    bool moving, waiting;
+    advance( t, &moving, &waiting );
+    comp_drawn = QRegion();
+    for( QPtrListIterator< EffectAnim > it( anims );
+         it.current() != NULL;
+         ++it )
+        comp_drawn |= extents( it.current());
+    r |= comp_drawn;
+    ++frame_count;
+    last_frame = t;
+    if( anims.isEmpty())
+        { // (the plain scene there in this frame)
+        endSession();
+        return r;
+        }
+    if( moving )
+        compositor()->requestFrame();
+    else if( waiting && !poll_timer.isActive())
+        poll_timer.start( 10, true );
+    return r;
+    }
+
+bool Effects::replacesWindow( Window frame ) const
+    {
+    if( !comp_session )
+        return false;
+    for( QPtrListIterator< EffectAnim > it( anims );
+         it.current() != NULL;
+         ++it )
+        if( it.current()->frame == frame )
+            return true;
+    return false;
+    }
+
+void Effects::paintWindow( Render::Renderer* r, Render::Texture* t, Window frame, const QRegion& clip )
+    {
+    if( !comp_session )
+        return;
+    beginDraw( r, t, 0, 0, clip );
+    for( EffectAnim* anim = anims.first();
+         anim != NULL;
+         anim = anims.next())
+        if( anim->frame == frame && !anim->on_top && !anim->use_below )
+            drawAnim( anim );
+    r->clearClip();
+    }
+
+void Effects::paintAbove( Render::Renderer* r, Render::Texture* t, Window below, const QRegion& clip )
+    {
+    if( !comp_session )
+        return;
+    beginDraw( r, t, 0, 0, clip );
+    for( EffectAnim* anim = anims.first();
+         anim != NULL;
+         anim = anims.next())
+        if( anim->use_below && anim->below == below )
+            drawAnim( anim );
+    r->clearClip();
+    }
+
+void Effects::paintOnTop( Render::Renderer* r, Render::Texture* t, const QRegion& clip )
+    {
+    if( !comp_session )
+        return;
+    Compositor* c = compositor();
+    beginDraw( r, t, 0, 0, clip );
+    for( EffectAnim* anim = anims.first();
+         anim != NULL;
+         anim = anims.next())
+        {
+        if( anim->use_below )
+            {
+            QRect g;
+            if( anim->below != None && !c->windowGeometry( anim->below, &g ))
+                drawAnim( anim ); // (its neighbour went)
+            }
+        else if( anim->on_top )
+            drawAnim( anim );
+        }
+    r->clearClip();
+    }
+
+void Effects::compositorStopping()
+    {
+    abort();
+    freeBlendTarget();
     }
 
 void Effects::dumpFrame()
@@ -2278,7 +2568,7 @@ void Effects::dumpFrame()
 
 bool Effects::x11Event( XEvent* e )
     {
-    if( out == None )
+    if( out == None && !comp_session )
         return false;
     if( e->type == damage_event + XDamageNotify )
         {
@@ -2292,7 +2582,8 @@ bool Effects::x11Event( XEvent* e )
                 // (the captured contents of a morph are the window's own pixmap
                 // until it is resized: their copies change with it)
                 if( anim->kind == EffectAnim::Morph && anim->geom.size() == anim->old_geom.size())
-                    anim->snap.dropCopies( dpy );
+                    anim->snap.dropCopies();
+                anim->live.dropCopies(); // (the window's contents now)
                 const double t = now();
                 if( t >= anim->wait_start )
                     {
@@ -2303,18 +2594,20 @@ bool Effects::x11Event( XEvent* e )
                 requestFrame();
                 return true;
                 }
-        for( EffectScene::Win* win = scene->wins.first();
+        for( EffectScene::Win* win = scene != NULL ? scene->wins.first() : NULL;
              win != NULL;
              win = scene->wins.next())
             if( win->damage == de->damage )
                 {
                 XDamageSubtract( dpy, de->damage, None, None );
-                win->pic.dropCopies( dpy ); // (downscaled copies of what it was)
+                win->pic.dropCopies(); // (downscaled copies of what it was)
                 requestFrame();
                 return true;
                 }
         return false;
         }
+    if( scene == NULL )
+        return false; // (composited: the compositor has the scene)
     // the top-level windows change: read them again in the next frame
     switch( e->type )
         {
