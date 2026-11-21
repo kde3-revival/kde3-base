@@ -210,6 +210,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent* event);
     void dropEvent(QDropEvent* event);
     void doDrag();
+    void sendDroppedText(const QString& text);
     enum DragState { diNone, diPending, diDragging };
 
     struct _dragInfo {

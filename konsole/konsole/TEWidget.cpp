@@ -2006,6 +2006,36 @@ void TEWidget::emitText(QString text)
   }
 }
 
+/*!
+    Remove ESC and the C1 controls (U+0080..U+009F, which include the 8-bit
+    CSI) from text that is pasted in bracketed paste mode: they are what
+    control sequences are made of, so without them the text cannot end the
+    paste early (ESC[201~) however it is split or nested, nor inject other
+    sequences into the application's input. Qt keeps bytes that are not
+    valid UTF-8 as U+10FE00 + byte and writes them back unchanged when
+    encoding UTF-8; drop those of 0x80..0x9F as well.
+*/
+
+static QString sanitizedPaste(const QString& text)
+{
+  QString result;
+  result.reserve(text.length());
+  for (uint i = 0; i < text.length(); i++)
+  {
+    ushort u = text[i].unicode();
+    if (u == 0x1b || (u >= 0x80 && u <= 0x9f))
+      continue;
+    if (u == 0xdbff && i + 1 < text.length() &&
+        text[i+1].unicode() >= 0xde80 && text[i+1].unicode() <= 0xde9f)
+    {
+      i++;
+      continue;
+    }
+    result += text[i];
+  }
+  return result;
+}
+
 void TEWidget::emitSelection(bool useXselection,bool appendReturn)
 // Paste Clipboard by simulating keypress events
 {
@@ -2015,8 +2045,7 @@ void TEWidget::emitSelection(bool useXselection,bool appendReturn)
   {
     // Tell the application which text is pasted (e.g. so that an editor
     // does not auto-indent it, or a shell does not run it line by line).
-    // The text must not end the paste early.
-    text.remove("\033[201~");
+    text = sanitizedPaste(text);
     text.prepend("\033[200~");
     text.append("\033[201~");
   }
@@ -2475,9 +2504,22 @@ void TEWidget::dropEvent(QDropEvent* event)
   }
   if(justPaste && QTextDrag::decode(event, dropText)) {
     kdDebug(1211) << "Drop:" << dropText.local8Bit() << "\n";
-    emit sendStringToEmu(dropText.local8Bit());
     // Paste it
+    sendDroppedText(dropText);
   }
+}
+
+// Send dropped text like pasted text, bracketed in bracketed paste mode.
+void TEWidget::sendDroppedText(const QString& text)
+{
+  if (m_bracketedPaste)
+  {
+    emit sendStringToEmu("\033[200~");
+    emit sendStringToEmu(sanitizedPaste(text).local8Bit());
+    emit sendStringToEmu("\033[201~");
+  }
+  else
+    emit sendStringToEmu(text.local8Bit());
 }
 
 void TEWidget::doDrag()
@@ -2495,7 +2537,7 @@ void TEWidget::drop_menu_activated(int item)
    case paste:
       if (m_dnd_file_count==1)
         KRun::shellQuote(dropText);
-      emit sendStringToEmu(dropText.local8Bit());
+      sendDroppedText(dropText);
       setActiveWindow();
       break;
    case cd:
