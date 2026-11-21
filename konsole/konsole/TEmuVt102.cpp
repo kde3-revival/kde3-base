@@ -331,7 +331,7 @@ void TEmuVt102::onRcvChar(int cc)
     // X-off protocol, which comes really below this level.
     // Strings end with ST (<ESC>'\\'); the other controls inside them
     // are ignored. An OSC may also end with BEL (see Xte).
-    if (cc == ESC && Xpe) XtermHack();
+    if (cc == ESC && Xpe) XtermHack(true);
     if (Xstr && cc != CNTL('X') && cc != CNTL('Z') && cc != ESC) return;
     if (cc == CNTL('X') || cc == CNTL('Z') || cc == ESC) resetToken(); //VT100: CAN or SUB
     if (cc != ESC)    { tau( TY_CTL(cc+'@' ),    0,   0); return; }
@@ -347,7 +347,7 @@ void TEmuVt102::onRcvChar(int cc)
     if (lec(1,0,ESC)) {                                                       return; }
     if (lec(1,0,ESC+128)) { s[0] = ESC; onRcvChar('[');                       return; }
     if (les(2,1,GRP)) {                                                       return; }
-    if (Xte         ) { XtermHack();                            resetToken(); return; }
+    if (Xte         ) { XtermHack(false);                       resetToken(); return; }
     if (Xpe         ) {                                                       return; }
     if (Xstr        ) { /* IGNORED: DCS, APC, PM, SOS strings */              return; }
     if (lec(3,2,'?')) {                                                       return; }
@@ -516,14 +516,17 @@ void TEmuVt102::setCursorStyle(int ps)
     gui->setCursorStyle((ps - 1) / 2, ps % 2);
 }
 
-void TEmuVt102::XtermHack()
+// Run the OSC in pbuf; `st' tells whether it ended with ST (not pushed to
+// the buffer) or BEL (the last character in the buffer).
+void TEmuVt102::XtermHack(bool st)
 { int i,arg = 0;
   for (i = 2; i < ppos && '0'<=pbuf[i] && pbuf[i]<='9' ; i++)
     arg = 10*arg + (pbuf[i]-'0');
   if (pbuf[i] != ';') { ReportErrorToken(); return; }
   if (arg == 8) return; // IGNORED: OSC 8 hyperlink, the text follows as usual
   QString unistr;
-  for (int j = 0; j < ppos-i-2; j++)
+  int len = ppos - i - (st ? 1 : 2);
+  for (int j = 0; j < len; j++)
   {
     int c = pbuf[i+1+j];
     if (c > 0xffff)

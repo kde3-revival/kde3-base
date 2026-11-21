@@ -118,7 +118,7 @@ private:
   void ReportErrorToken();   //FIXME: rename
 
   void tau(int code, int p, int q);
-  void XtermHack();
+  void XtermHack(bool st);
   bool csiHasIntermediate();
   void csiExtended(int cc);
 
