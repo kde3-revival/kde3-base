@@ -20,9 +20,11 @@
 #include <qpopupmenu.h>
 #include <qtooltip.h>
 
+#include <kapplication.h>
 #include <kglobal.h>
 #include <kglobalaccel.h>
 #include <kiconloader.h>
+#include <kipc.h>
 #include <klocale.h>
 #include <kpopupmenu.h>
 #include <krun.h>
@@ -235,17 +237,23 @@ void VolumeApplet::takeKeys()
     s_keyOwner = this;
 
     m_keys = new KGlobalAccel(this);
-    m_keys->insert("Increase volume", i18n("Increase Volume"),
-                   QString::null, Key_VolumeUp, Key_VolumeUp,
-                   this, SLOT(increaseVolume()));
-    m_keys->insert("Decrease volume", i18n("Decrease Volume"),
-                   QString::null, Key_VolumeDown, Key_VolumeDown,
-                   this, SLOT(decreaseVolume()));
-    m_keys->insert("Toggle mute", i18n("Toggle Mute"),
-                   QString::null, Key_VolumeMute, Key_VolumeMute,
-                   this, SLOT(toggleMute()));
+    KGlobalAccel *keys = m_keys;
+#include "volumebindings.cpp"
     m_keys->readSettings();
     m_keys->updateConnections();
+
+    // changed in the Keyboard Shortcuts module
+    kapp->addKipcEventMask(KIPC::SettingsChanged);
+    connect(kapp, SIGNAL(settingsChanged(int)), SLOT(slotSettingsChanged(int)));
+}
+
+void VolumeApplet::slotSettingsChanged(int category)
+{
+    if (category == KApplication::SETTINGS_SHORTCUTS && m_keys)
+    {
+        m_keys->readSettings();
+        m_keys->updateConnections();
+    }
 }
 
 void VolumeApplet::showOSD()

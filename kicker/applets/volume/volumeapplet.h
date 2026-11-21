@@ -72,6 +72,7 @@ private slots:
     void deviceMenuAboutToShow();
     void deviceSelected(int id);
     void runMixer();
+    void slotSettingsChanged(int category);
 
 private:
     void checkMixer();

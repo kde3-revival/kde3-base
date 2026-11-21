@@ -112,6 +112,7 @@ void ShortcutsModule::initGUI()
 #include "../../kdesktop/kdesktopbindings.cpp"
 #include "../../klipper/klipperbindings.cpp"
 #include "../../kxkb/kxkbbindings.cpp"
+#include "../../kicker/applets/volume/volumebindings.cpp"
 
 	kdDebug(125) << "B-----------" << endl;
 	m_actionsSequence.init( m_actionsGeneral );
