@@ -73,12 +73,16 @@ class Overview : public QObject
         void stackingChanged();
         // keep the hot corners above the electric borders
         void raiseCorners();
+        // KWin moves or resizes a window: its grab keeps the barrier events
+        // away, so the barriers would hold the pointer
+        void setBarriersEnabled( bool enable );
 
     private slots:
         void frameTimeout();
         void settleTimeout();
         void cornerTimeout();
         void presentWatchdog();
+        void monitorsChanged();
 
     private:
         enum State { Hidden, Settling, Showing, Shown, Hiding, Finishing };
@@ -88,7 +92,10 @@ class Overview : public QObject
         bool grabInput();
         void ungrabInput();
         void createCorners();
+        void addCorner( const QRect& area );
         void destroyCorners();
+        void selectXI2();
+        bool handleXI2( XEvent* e );
         bool cornerHit( const QPoint& p ) const;
         bool cornerAllowed( const QPoint& corner, unsigned int buttonState ) const;
         bool blocked() const;
@@ -168,11 +175,21 @@ class Overview : public QObject
         double last_frame;
         bool frame_wanted;
 
-        // hot corners
+        // hot corners: 1x1 windows in the outer corners of the monitors, and
+        // a strip along the edge in the primary monitor's corner when that
+        // touches another monitor (the pointer stopped there by a barrier)
         QValueList< Window > corners;
-        QValueList< QPoint > corner_points;
+        QValueList< QRect > corner_areas;
         QValueList< bool > corner_mapped;
+        struct BarrierLine
+            {
+            int x1, y1, x2, y2, directions;
+            };
+        QValueList< BarrierLine > barrier_lines;
+        QValueList< XID > barriers; // created from barrier_lines when enabled
+        bool barriers_enabled;
         QTimer corner_timer;
+        QTimer monitors_timer; // RandR changes, several at once
         bool corner_armed;
 
         // statistics (KWIN_OVERVIEW_DEBUG)

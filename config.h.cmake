@@ -157,6 +157,8 @@
 #cmakedefine HAVE_XPRESENT 1
 /* Define if KWin can tell several X screens joined by Xinerama (Xinerama and Xrandr libraries) */
 #cmakedefine KWIN_PANORAMIX_CHECK 1
+/* Define if the KWin overview can use XInput 2.3, XFixes 5 barriers and RandR 1.5 monitors */
+#cmakedefine KWIN_OVERVIEW_XI2 1
 
 /* ---- kdesktop ----------------------------------------------------- */
 

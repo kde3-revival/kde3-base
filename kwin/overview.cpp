@@ -73,6 +73,12 @@ License. See the file "COPYING" for the exact licensing terms.
 #define OVERVIEW_PRESENT
 #include <X11/extensions/Xpresent.h>
 #endif
+#if defined( OVERVIEW_COMPOSITE ) && defined( KWIN_OVERVIEW_XI2 )
+#define OVERVIEW_XI2
+#include <X11/XKBlib.h>
+#include <X11/extensions/XInput2.h>
+#include <X11/extensions/Xrandr.h>
+#endif
 #include <fixx11h.h>
 
 #include <math.h>
@@ -97,11 +103,22 @@ bool have_composite = false;
 int damage_event = 0;
 bool have_present = false;
 int present_opcode = 0;
+// XInput 2.3 barrier events and XFixes 5 pointer barriers
+bool have_barriers = false;
+// RandR 1.5 monitors
+bool have_monitors = false;
+#ifdef OVERVIEW_XI2
+int xi_opcode = 0;
+int randr_event = 0;
+#endif
 
 // the duration of the filter fades and of the title fade-in
 const double FadeTime = 150.0;
 // background dimming in the overview
 const double DimAlpha = 0.45;
+// the length of the hot corner strip of the primary monitor along an
+// edge shared with another monitor (and of its pointer barrier)
+const int CornerStrip = 32;
 // layout metrics
 const int Spacing = 28;
 const int TitleGap = 10;
@@ -406,6 +423,7 @@ Overview::Overview( Workspace* w )
       last_damage( 0 ),
       last_frame( 0 ),
       frame_wanted( false ),
+      barriers_enabled( true ),
       corner_armed( true ),
       frame_count( 0 ),
       stat_render( 0 ),
@@ -422,7 +440,12 @@ Overview::Overview( Workspace* w )
     connect( &watchdog_timer, SIGNAL( timeout()), SLOT( presentWatchdog()));
     connect( &settle_timer, SIGNAL( timeout()), SLOT( settleTimeout()));
     connect( &corner_timer, SIGNAL( timeout()), SLOT( cornerTimeout()));
+    connect( &monitors_timer, SIGNAL( timeout()), SLOT( monitorsChanged()));
     checkExtensions();
+#ifdef OVERVIEW_XI2
+    if( have_monitors ) // monitors arranged anew without a new screen size
+        XRRSelectInput( dpy, root, RRScreenChangeNotifyMask | RRCrtcChangeNotifyMask | RROutputChangeNotifyMask );
+#endif
     reconfigure();
     }
 
@@ -507,6 +530,26 @@ bool Overview::checkExtensions()
             }
         }
 #endif
+#ifdef OVERVIEW_XI2
+    if( have_render )
+        {
+        int xi_event, xi_error;
+        int xi_major = 2, xi_minor = 3;
+        if( XQueryExtension( dpy, "XInputExtension", &xi_opcode, &xi_event, &xi_error )
+            && XIQueryVersion( dpy, &xi_major, &xi_minor ) == Success && xi_major >= 2 )
+            {
+            int fixes_event, fixes_error;
+            int fixes_major = 0, fixes_minor = 0;
+            have_barriers = ( xi_major > 2 || xi_minor >= 3 )
+                && XFixesQueryExtension( dpy, &fixes_event, &fixes_error )
+                && XFixesQueryVersion( dpy, &fixes_major, &fixes_minor ) && fixes_major >= 5;
+            }
+        int rr_error;
+        int rr_major = 0, rr_minor = 0;
+        have_monitors = XRRQueryExtension( dpy, &randr_event, &rr_error )
+            && XRRQueryVersion( dpy, &rr_major, &rr_minor ) && ( rr_major > 1 || rr_minor >= 5 );
+        }
+#endif
 #ifdef OVERVIEW_PRESENT
     if( have_composite && getenv( "KWIN_OVERVIEW_NO_PRESENT" ) == NULL )
         {
@@ -525,7 +568,8 @@ bool Overview::checkExtensions()
         kdWarning( 1212 ) << "Window overview without window contents: no Composite 0.3/Damage/XFixes 2" << endl;
     if( debug )
         kdWarning( 1212 ) << "overview: render " << have_render << " composite " << have_composite
-            << " present " << have_present << endl;
+            << " present " << have_present << " barriers " << have_barriers
+            << " monitors " << have_monitors << endl;
     return have_render;
     }
 
@@ -544,6 +588,7 @@ void Overview::reconfigure()
     destroyCorners();
     if( have_render && options->overviewHotCorner )
         createCorners();
+    selectXI2();
     if( state == Hidden )
         setKeepRedirected( options->overviewKeepRedirected );
     // else when the overview closes
@@ -631,48 +676,168 @@ void Overview::stackingChanged()
 // hot corners
 //****************************************
 
+/*
+ A corner is a 1x1 InputOnly window in the chosen corner of every monitor
+ where nothing is beyond it, horizontally or vertically: the pointer stops
+ there by itself.  The top left corner of the right one of two monitors
+ side by side is no such corner, the pointer passes on to the left monitor;
+ for the primary monitor (where GNOME has its hot corner) it is a hot
+ corner nevertheless: a strip of CornerStrip pixels along the shared edge,
+ with a pointer barrier (XFixes 5) on that edge stopping the pointer there,
+ like GNOME does.  Below the strip the pointer passes freely; the barrier
+ lets it through when the pointer is grabbed by another client (something
+ being dragged) and when the corner is off (a full screen window), and
+ KWin's own moves and resizes switch the barriers off (their grab keeps
+ the barrier events away).  GNOME measures the pressure against the barrier;
+ here the pointer is simply held in the strip and the usual corner delay
+ applies, so that the hot corner of the primary monitor works like all the
+ others.  The monitors are RandR's (with the primary one), else Qt's.
+*/
 void Overview::createCorners()
     {
-    QDesktopWidget* desktop = QApplication::desktop();
+    QValueList< QRect > screens;
+    int primary = -1;
+#ifdef OVERVIEW_XI2
+    if( have_monitors )
+        {
+        int count = 0;
+        XRRMonitorInfo* info = XRRGetMonitors( dpy, root, True, &count );
+        for( int i = 0;
+             info != NULL && i < count;
+             ++i )
+            {
+            screens.append( QRect( info[ i ].x, info[ i ].y, info[ i ].width, info[ i ].height ));
+            if( info[ i ].primary )
+                primary = i;
+            }
+        if( info != NULL )
+            XRRFreeMonitors( info );
+        }
+#endif
+    if( screens.isEmpty())
+        {
+        QDesktopWidget* desktop = QApplication::desktop();
+        for( int i = 0;
+             i < desktop->numScreens();
+             ++i )
+            screens.append( desktop->screenGeometry( i ));
+        primary = desktop->primaryScreen();
+        }
+    if( primary < 0 || primary >= int( screens.count()))
+        primary = 0; // no primary output: the first monitor, like RandR's Xinerama
     const int pos = options->overviewHotCornerPosition;
     const bool right = pos == 1 || pos == 3;
     const bool bottom = pos == 2 || pos == 3;
     for( int i = 0;
-         i < desktop->numScreens();
+         i < int( screens.count());
          ++i )
         {
-        QRect g = desktop->screenGeometry( i );
+        QRect g = screens[ i ];
         QPoint p( right ? g.right() : g.left(), bottom ? g.bottom() : g.top());
         // only real corners: nothing beyond them horizontally or vertically
-        // (the top left corner of the right monitor is no corner)
         QPoint outx( right ? p.x() + 1 : p.x() - 1, p.y());
         QPoint outy( p.x(), bottom ? p.y() + 1 : p.y() - 1 );
-        bool real = true;
+        bool beyondx = false;
+        bool beyondy = false;
         for( int j = 0;
-             j < desktop->numScreens();
+             j < int( screens.count());
              ++j )
             {
-            QRect g2 = desktop->screenGeometry( j );
-            if( g2.contains( outx ) || g2.contains( outy ))
-                real = false;
+            if( screens[ j ].contains( outx ))
+                beyondx = true;
+            if( screens[ j ].contains( outy ))
+                beyondy = true;
             }
         if( debug )
-            kdWarning( 1212 ) << "overview: screen " << i << " " << g.x() << "," << g.y() << " "
-                << g.width() << "x" << g.height() << ( i == desktop->primaryScreen() ? " primary" : "" )
-                << ", corner " << p.x() << "," << p.y() << ( real ? "" : " (not a real corner)" ) << endl;
-        if( !real || corner_points.contains( p ))
+            kdWarning( 1212 ) << "overview: monitor " << i << " " << g.x() << "," << g.y() << " "
+                << g.width() << "x" << g.height() << ( i == primary ? " primary" : "" ) << ", corner "
+                << p.x() << "," << p.y() << ( beyondx ? " monitor beside it" : "" )
+                << ( beyondy ? " monitor above/below it" : "" ) << endl;
+        if( !beyondx && !beyondy )
+            {
+            addCorner( QRect( p, QSize( 1, 1 )));
             continue;
-        XSetWindowAttributes attr;
-        attr.override_redirect = True;
-        // a click in the corner opens the overview too (it would be lost anyway)
-        attr.event_mask = EnterWindowMask | LeaveWindowMask | ButtonPressMask;
-        Window w = XCreateWindow( dpy, root, p.x(), p.y(), 1, 1, 0, CopyFromParent, InputOnly,
-            CopyFromParent, CWOverrideRedirect | CWEventMask, &attr );
-        corners.append( w );
-        corner_points.append( p );
-        corner_mapped.append( false );
+            }
+        if( i != primary )
+            continue;
+        const int strip = QMIN( CornerStrip, QMIN( g.width(), g.height()));
+        if( beyondx )
+            { // along the vertical edge, the barrier on the line between the monitors
+            QRect area( p.x(), bottom ? p.y() - strip + 1 : p.y(), 1, strip );
+            addCorner( area );
+#ifdef OVERVIEW_XI2
+            BarrierLine line;
+            line.x1 = line.x2 = right ? p.x() + 1 : p.x();
+            line.y1 = area.top();
+            line.y2 = area.bottom();
+            line.directions = right ? BarrierNegativeX : BarrierPositiveX;
+            barrier_lines.append( line );
+#endif
+            }
+        if( beyondy )
+            {
+            QRect area( right ? p.x() - strip + 1 : p.x(), p.y(), strip, 1 );
+            addCorner( area );
+#ifdef OVERVIEW_XI2
+            BarrierLine line;
+            line.x1 = area.left();
+            line.x2 = area.right();
+            line.y1 = line.y2 = bottom ? p.y() + 1 : p.y();
+            line.directions = bottom ? BarrierNegativeY : BarrierPositiveY;
+            barrier_lines.append( line );
+#endif
+            }
         }
     updateCorners();
+    setBarriersEnabled( barriers_enabled );
+    }
+
+void Overview::setBarriersEnabled( bool enable )
+    {
+    barriers_enabled = enable;
+#ifdef OVERVIEW_XI2
+    if( !have_barriers )
+        return;
+    if( enable && barriers.isEmpty())
+        {
+        for( QValueList< BarrierLine >::ConstIterator it = barrier_lines.begin();
+             it != barrier_lines.end();
+             ++it )
+            {
+            barriers.append( XFixesCreatePointerBarrier( dpy, root, (*it).x1, (*it).y1, (*it).x2, (*it).y2,
+                (*it).directions, 0, NULL ));
+            if( debug )
+                kdWarning( 1212 ) << "overview: barrier " << (*it).x1 << "," << (*it).y1 << " - "
+                    << (*it).x2 << "," << (*it).y2 << endl;
+            }
+        }
+    else if( !enable )
+        {
+        for( QValueList< XID >::ConstIterator it = barriers.begin();
+             it != barriers.end();
+             ++it )
+            XFixesDestroyPointerBarrier( dpy, *it );
+        barriers.clear();
+        }
+#endif
+    }
+
+void Overview::addCorner( const QRect& area )
+    {
+    if( corner_areas.contains( area ))
+        return;
+    XSetWindowAttributes attr;
+    attr.override_redirect = True;
+    // a click in the corner opens the overview too (it would be lost anyway)
+    attr.event_mask = EnterWindowMask | LeaveWindowMask | ButtonPressMask;
+    Window w = XCreateWindow( dpy, root, area.x(), area.y(), area.width(), area.height(), 0,
+        CopyFromParent, InputOnly, CopyFromParent, CWOverrideRedirect | CWEventMask, &attr );
+    corners.append( w );
+    corner_areas.append( area );
+    corner_mapped.append( false );
+    if( debug )
+        kdWarning( 1212 ) << "overview: hot corner " << area.x() << "," << area.y() << " "
+            << area.width() << "x" << area.height() << endl;
     }
 
 // no corner above a full screen window: it would eat its clicks there
@@ -681,17 +846,17 @@ void Overview::updateCorners()
     const ClientList& clients = ws->stackingOrder();
     bool mapped_now = false;
     QValueList< bool >::Iterator mapped = corner_mapped.begin();
-    QValueList< QPoint >::ConstIterator p = corner_points.begin();
+    QValueList< QRect >::ConstIterator area = corner_areas.begin();
     for( QValueList< Window >::ConstIterator it = corners.begin();
          it != corners.end();
-         ++it, ++mapped, ++p )
+         ++it, ++mapped, ++area )
         {
         bool covered = false;
         for( ClientList::ConstIterator c = clients.begin();
              c != clients.end() && !covered;
              ++c )
             if( (*c)->isFullScreen() && (*c)->isOnCurrentDesktop() && (*c)->isShown( true )
-                && (*c)->geometry().contains( *p ))
+                && (*c)->geometry().intersects( *area ))
                 covered = true;
         // mapped again where it was: not above override-redirect windows
         // (menus) that appeared since (above the electric borders and the
@@ -736,13 +901,34 @@ void Overview::destroyCorners()
          ++it )
         XDestroyWindow( dpy, *it );
     corners.clear();
-    corner_points.clear();
+    corner_areas.clear();
     corner_mapped.clear();
+    // the barriers go, enabled or not (stays as it is for new ones)
+    const bool enabled = barriers_enabled;
+    setBarriersEnabled( false );
+    barriers_enabled = enabled;
+    barrier_lines.clear();
+    }
+
+// the monitors were arranged anew (RandR)
+void Overview::monitorsChanged()
+    {
+    if( debug )
+        kdWarning( 1212 ) << "overview: the monitors changed" << endl;
+    destroyCorners();
+    if( have_render && options->overviewHotCorner )
+        createCorners();
+    selectXI2();
     }
 
 bool Overview::cornerHit( const QPoint& p ) const
     {
-    return corner_points.contains( p );
+    for( QValueList< QRect >::ConstIterator it = corner_areas.begin();
+         it != corner_areas.end();
+         ++it )
+        if( (*it).contains( p ))
+            return true;
+    return false;
     }
 
 bool Overview::cornerAllowed( const QPoint& corner, unsigned int button_state ) const
@@ -2524,10 +2710,10 @@ void Overview::handleMotion( const QPoint& p )
         else
             {
             bool near = false;
-            for( QValueList< QPoint >::ConstIterator it = corner_points.begin();
-                 it != corner_points.end();
+            for( QValueList< QRect >::ConstIterator it = corner_areas.begin();
+                 it != corner_areas.end();
                  ++it )
-                if(( p - *it ).manhattanLength() < 3 )
+                if( QRect( (*it).x() - 2, (*it).y() - 2, (*it).width() + 4, (*it).height() + 4 ).contains( p ))
                     near = true;
             if( !near )
                 corner_armed = true;
@@ -2536,6 +2722,60 @@ void Overview::handleMotion( const QPoint& p )
     OverviewItem* item = itemAt( p );
     if( item != NULL )
         select( item );
+    }
+
+//****************************************
+// XInput 2: the barriers
+//****************************************
+
+void Overview::selectXI2()
+    {
+#ifdef OVERVIEW_XI2
+    if( !have_barriers )
+        return;
+    XIEventMask mask;
+    unsigned char bits[ XIMaskLen( XI_LASTEVENT ) ] = { 0 };
+    if( !barrier_lines.isEmpty())
+        XISetMask( bits, XI_BarrierHit );
+    mask.deviceid = XIAllMasterDevices;
+    mask.mask_len = sizeof( bits );
+    mask.mask = bits;
+    XISelectEvents( dpy, root, &mask, 1 );
+#endif
+    }
+
+bool Overview::handleXI2( XEvent* e )
+    {
+#ifdef OVERVIEW_XI2
+    XGenericEventCookie* cookie = &e->xcookie;
+    if( !XGetEventData( dpy, cookie ))
+        return true;
+    switch( cookie->evtype )
+        {
+        case XI_BarrierHit:
+            {
+            // through the barrier when the corner doesn't apply: a window
+            // (or anything else) being dragged, a full screen window there
+            // (while the overview is shown, its grab keeps these events
+            // away: the corner stays, to close it again)
+            XIBarrierEvent* ev = (XIBarrierEvent*) cookie->data;
+            QPoint p( int( ev->root_x ), int( ev->root_y ));
+            bool release = ( ev->flags & XIBarrierDeviceIsGrabbed ) || !cornerAllowed( p, 0 );
+            if( debug )
+                kdWarning( 1212 ) << "overview: barrier hit " << p.x() << "," << p.y() << " flags " << ev->flags
+                    << " state " << state << ( release ? " released" : "" ) << endl;
+            if( release )
+                XIBarrierReleasePointer( dpy, ev->deviceid, ev->barrier, ev->eventid );
+            break;
+            }
+        default:
+            break;
+        }
+    XFreeEventData( dpy, cookie );
+#else
+    Q_UNUSED( e );
+#endif
+    return true;
     }
 
 bool Overview::x11Event( XEvent* e )
@@ -2585,6 +2825,15 @@ bool Overview::x11Event( XEvent* e )
             }
         return true;
         }
+#ifdef OVERVIEW_XI2
+    if( e->type == GenericEvent && e->xgeneric.extension == xi_opcode && xi_opcode != 0 )
+        return handleXI2( e );
+    if( have_monitors && ( e->type == randr_event + RRScreenChangeNotify || e->type == randr_event + RRNotify ))
+        {
+        monitors_timer.start( 200, true );
+        return false; // Qt needs RRScreenChangeNotify too
+        }
+#endif
 #ifdef OVERVIEW_PRESENT
     // also the late ones after the overview closed: nobody else uses Present here
     if( have_present && e->type == GenericEvent && e->xgeneric.extension == present_opcode )
@@ -2645,10 +2894,12 @@ void Overview::abort() {}
 void Overview::frameTimeout() {}
 void Overview::settleTimeout() {}
 void Overview::cornerTimeout() {}
+void Overview::monitorsChanged() {}
 void Overview::presentWatchdog() {}
 void Overview::frameCreated( Window ) {}
 void Overview::stackingChanged() {}
 void Overview::raiseCorners() {}
+void Overview::setBarriersEnabled( bool ) {}
 
 #endif // HAVE_XRENDER
 

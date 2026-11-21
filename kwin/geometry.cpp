@@ -597,6 +597,8 @@ void Workspace::setClientIsMoving( Client *c )
         ++block_focus;
     else
         --block_focus;
+    if( overview != NULL )
+        overview->setBarriersEnabled( movingClient == NULL ); // the move's grab keeps the barrier events away
     }
 
 /*!

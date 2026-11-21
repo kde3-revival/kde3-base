@@ -321,6 +321,22 @@ if(KDE3_WITH_COMPOSITE AND X11_Xcomposite_FOUND AND X11_Xdamage_FOUND
     set(KWIN_PANORAMIX_CHECK 1)
     list(APPEND LIB_KWIN_OVERVIEW X11::Xinerama X11::Xrandr)
   endif()
+  # XInput 2.3 (libXi 1.7) and XFixes 5: the pointer barriers of the
+  # primary monitor's hot corner; RandR 1.5 (libXrandr 1.5) tells the
+  # monitors and the primary one
+  if(X11_Xi_FOUND AND X11_Xrandr_FOUND)
+    cmake_push_check_state(RESET)
+    set(CMAKE_REQUIRED_INCLUDES ${X11_INCLUDE_DIR})
+    set(CMAKE_REQUIRED_LIBRARIES ${X11_Xi_LIB} ${X11_Xrandr_LIB} ${X11_Xfixes_LIB} ${X11_X11_LIB})
+    check_symbol_exists(XIBarrierReleasePointer "X11/Xlib.h;X11/extensions/XInput2.h" _have_xibarrier)
+    check_symbol_exists(XRRGetMonitors "X11/Xlib.h;X11/extensions/Xrandr.h" _have_xrrmonitors)
+    check_symbol_exists(XFixesCreatePointerBarrier "X11/Xlib.h;X11/extensions/Xfixes.h" _have_xfixesbarrier)
+    cmake_pop_check_state()
+    if(_have_xibarrier AND _have_xrrmonitors AND _have_xfixesbarrier)
+      set(KWIN_OVERVIEW_XI2 1)
+      list(APPEND LIB_KWIN_OVERVIEW X11::Xi X11::Xrandr)
+    endif()
+  endif()
 endif()
 
 # ---- ksysguard (ksysguard/configure.in.in, ksysguardd/configure.in.in) ---
@@ -874,6 +890,7 @@ foreach(_what
     "HAVE_XCOMPOSITE:KDE3_WITH_COMPOSITE:Xcomposite (taskmanager)"
     "HAVE_XDAMAGE:KDE3_WITH_COMPOSITE:Xcomposite, Xdamage and Xfixes (window contents in the KWin overview)"
     "HAVE_XPRESENT:-:Xpresent (tear-free KWin overview)"
+    "KWIN_OVERVIEW_XI2:-:Xi 1.7 and Xrandr 1.5 (KWin overview: hot corner of the primary monitor)"
     "HAVE_XINERAMA:KDE3_WITH_XINERAMA:Xinerama (ksplashsimple)"
     "HAVE_DPMS:KDE3_WITH_DPMS:DPMS (power saving)"
     "HAVE_LOGIND_SLEEP:KDEBASE_LOGIND_SLEEP:Sleep and hibernate in the logout dialog (GIO, systemd-logind)"
