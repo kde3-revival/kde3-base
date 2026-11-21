@@ -225,7 +225,18 @@
                         </widget>
                     </hbox>
                 </widget>
-                <spacer row="3" column="0">
+                <widget class="QCheckBox" row="3" column="0">
+                    <property name="name">
+                        <cstring>m_everyScreenCheckBox</cstring>
+                    </property>
+                    <property name="text">
+                        <string>Show on &amp;every screen</string>
+                    </property>
+                    <property name="whatsThis" stdset="0">
+                        <string>When this option is enabled, a copy of the main panel is shown on every other screen. The copies follow the main panel: they have its position, size and hiding settings and the same applets and buttons, except those that can exist only once, such as the system tray. The taskbars show only the windows of their own screen.</string>
+                    </property>
+                </widget>
+                <spacer row="4" column="0">
                     <property name="name">
                         <cstring>Spacer61</cstring>
                     </property>

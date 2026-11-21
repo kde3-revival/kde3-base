@@ -61,6 +61,7 @@ protected slots:
     void sizeChanged(int);
     void switchPanel(int);
     void jumpToPanel(int);
+    void updateEveryScreen();
 
 private:
     QFrame* m_pretendPanel;

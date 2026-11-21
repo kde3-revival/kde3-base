@@ -36,6 +36,7 @@
 #include <kstandarddirs.h>
 #include <kwin.h>
 
+#include "kickerSettings.h"
 #include "main.h"
 #include "../background/bgrender.h"
 
@@ -106,6 +107,8 @@ PositionTab::PositionTab(QWidget *parent, const char* name)
     // connections
     connect(m_locationGroup, SIGNAL(clicked(int)), SIGNAL(changed()));
     connect(m_xineramaScreenComboBox, SIGNAL(highlighted(int)), SIGNAL(changed()));
+    connect(m_xineramaScreenComboBox, SIGNAL(activated(int)), SLOT(updateEveryScreen()));
+    connect(m_everyScreenCheckBox, SIGNAL(clicked()), SIGNAL(changed()));
 
     connect(m_identifyButton,SIGNAL(clicked()),SLOT(showIdentify()));
 
@@ -121,6 +124,7 @@ PositionTab::PositionTab(QWidget *parent, const char* name)
         m_identifyButton->hide();
         m_xineramaScreenComboBox->hide();
         m_xineramaScreenLabel->hide();
+        m_everyScreenCheckBox->hide();
     }
 
     connect(m_percentSlider, SIGNAL(valueChanged(int)), SIGNAL(changed()));
@@ -164,6 +168,14 @@ PositionTab::~PositionTab()
 
 void PositionTab::load()
 {
+    // only this entry: KickerSettings is shared by the other modules
+    KConfigSkeletonItem* item = KickerSettings::self()->findItem("MainPanelOnEveryScreen");
+    if (item)
+    {
+        item->readConfig(KickerSettings::self()->config());
+    }
+    m_everyScreenCheckBox->setChecked(KickerSettings::mainPanelOnEveryScreen());
+
     m_panelInfo = 0;
     KickerConfig::the()->populateExtensionInfoList(m_panelList);
     m_panelsGroupBox->setHidden(m_panelList->count() < 2);
@@ -183,6 +195,27 @@ void PositionTab::save()
 {
     storeInfo();
     KickerConfig::the()->saveExtentionInfo();
+
+    // written alone (KickerSettings is shared by the other modules), and
+    // always: the item would revert an entry equal to the default, which
+    // does not remove a value of the user's file; kicker is told by the
+    // module (notifyKicker())
+    bool everyScreen = m_everyScreenCheckBox->isChecked();
+    KickerSettings::setMainPanelOnEveryScreen(everyScreen);
+    KConfig* config = KickerSettings::self()->config();
+    KConfigGroup(config, "General").writeEntry("MainPanelOnEveryScreen", everyScreen);
+    config->sync();
+}
+
+void PositionTab::updateEveryScreen()
+{
+    // a setting of the main panel, which must be on a single screen
+    bool mainPanel = m_panelInfo &&
+                     !KickerConfig::the()->extensionsInfo().isEmpty() &&
+                     KickerConfig::the()->extensionsInfo().first() == m_panelInfo;
+    bool allScreens = m_xineramaScreenComboBox->currentItem() ==
+                      m_xineramaScreenComboBox->count() - 1;
+    m_everyScreenCheckBox->setEnabled(mainPanel && !allScreens);
 }
 
 void PositionTab::defaults()
@@ -192,6 +225,7 @@ void PositionTab::defaults()
     m_percentSpinBox->setValue( 100 ); // use all space available
     m_expandCheckBox->setChecked( true ); // expand as required
     m_xineramaScreenComboBox->setCurrentItem(QApplication::desktop()->primaryScreen());
+    m_everyScreenCheckBox->setChecked(true);
 
     if (QApplication::reverseLayout())
     {
@@ -572,6 +606,7 @@ void PositionTab::switchPanel(int panelItem)
     m_percentSpinBox->setValue(m_panelInfo->_sizePercentage);
 
     m_expandCheckBox->setChecked(m_panelInfo->_expandSize);
+    updateEveryScreen();
 
     lengthenPanel(m_panelInfo->_sizePercentage);
     blockSignals(false);
