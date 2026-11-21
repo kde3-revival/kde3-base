@@ -238,6 +238,7 @@ private:
   QLabel* overviewCornerPositionLabel;
   KIntNumInput* overviewCornerDelay;
   KIntNumInput* overviewAnimationTime;
+  QCheckBox* overviewSuperKey;
 };
 
 class KProcess;

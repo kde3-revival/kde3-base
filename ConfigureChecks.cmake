@@ -321,9 +321,9 @@ if(KDE3_WITH_COMPOSITE AND X11_Xcomposite_FOUND AND X11_Xdamage_FOUND
     set(KWIN_PANORAMIX_CHECK 1)
     list(APPEND LIB_KWIN_OVERVIEW X11::Xinerama X11::Xrandr)
   endif()
-  # XInput 2.3 (libXi 1.7) and XFixes 5: the pointer barriers of the
-  # primary monitor's hot corner; RandR 1.5 (libXrandr 1.5) tells the
-  # monitors and the primary one
+  # XInput 2.3 (libXi 1.7): the Super key alone (raw key events) and the
+  # pointer barriers (XFixes 5) of the primary monitor's hot corner;
+  # RandR 1.5 (libXrandr 1.5) tells the monitors and the primary one
   if(X11_Xi_FOUND AND X11_Xrandr_FOUND)
     cmake_push_check_state(RESET)
     set(CMAKE_REQUIRED_INCLUDES ${X11_INCLUDE_DIR})
@@ -890,7 +890,7 @@ foreach(_what
     "HAVE_XCOMPOSITE:KDE3_WITH_COMPOSITE:Xcomposite (taskmanager)"
     "HAVE_XDAMAGE:KDE3_WITH_COMPOSITE:Xcomposite, Xdamage and Xfixes (window contents in the KWin overview)"
     "HAVE_XPRESENT:-:Xpresent (tear-free KWin overview)"
-    "KWIN_OVERVIEW_XI2:-:Xi 1.7 and Xrandr 1.5 (KWin overview: hot corner of the primary monitor)"
+    "KWIN_OVERVIEW_XI2:-:Xi 1.7 and Xrandr 1.5 (KWin overview: Super key, hot corner of the primary monitor)"
     "HAVE_XINERAMA:KDE3_WITH_XINERAMA:Xinerama (ksplashsimple)"
     "HAVE_DPMS:KDE3_WITH_DPMS:DPMS (power saving)"
     "HAVE_LOGIND_SLEEP:KDEBASE_LOGIND_SLEEP:Sleep and hibernate in the logout dialog (GIO, systemd-logind)"

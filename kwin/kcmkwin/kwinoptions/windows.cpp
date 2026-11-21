@@ -591,7 +591,7 @@ KAdvancedConfig::KAdvancedConfig (bool _standAlone, KConfig *_config, QWidget *p
 
     QGroupBox* overviewBox = new QGroupBox(i18n("Window Overview"), this);
     overviewBox->setColumnLayout(0, Qt::Vertical);
-    QGridLayout* overviewLay = new QGridLayout(overviewBox->layout(), 4, 1, KDialog::spacingHint());
+    QGridLayout* overviewLay = new QGridLayout(overviewBox->layout(), 5, 1, KDialog::spacingHint());
     overviewCorner = new QCheckBox(i18n("Show the overview when the mouse pointer &touches a screen corner"), overviewBox);
     overviewLay->addWidget(overviewCorner, 0, 0);
     overviewCornerPositionLabel = new QLabel(i18n("Co&rner:"), overviewBox);
@@ -616,6 +616,8 @@ KAdvancedConfig::KAdvancedConfig (bool _standAlone, KConfig *_config, QWidget *p
     overviewAnimationTime->setSuffix(i18n(" msec"));
     overviewAnimationTime->setLabel(i18n("A&nimation duration:"));
     overviewLay->addWidget(overviewAnimationTime, 3, 0);
+    overviewSuperKey = new QCheckBox(i18n("Show the overview when the &Super (Windows) key is pressed alone"), overviewBox);
+    overviewLay->addWidget(overviewSuperKey, 4, 0);
     QWhatsThis::add(overviewBox, i18n("The window overview shows all windows of the current desktop"
        " side by side; click one (or choose it with the arrow keys, or type a part of its title, and"
        " press Enter) to activate it, or press Escape. It can also be shown with a keyboard shortcut"
@@ -625,6 +627,9 @@ KAdvancedConfig::KAdvancedConfig (bool _standAlone, KConfig *_config, QWidget *p
        " Nothing happens while a mouse button is pressed or when the active window is full screen."));
     QWhatsThis::add(overviewCornerDelay, i18n("How long the mouse pointer must stay in the corner"
        " before the overview is shown."));
+    QWhatsThis::add(overviewSuperKey, i18n("If this option is enabled, pressing and releasing the Super"
+       " key (the key with the Windows logo) without any other key shows the window overview, or hides"
+       " it. Shortcuts with the Super key (Meta in KDE) still work."));
     QWhatsThis::add(overviewAnimationTime, i18n("The duration of the zoom out and zoom in animations;"
        " 0 disables them."));
     connect(overviewCorner, SIGNAL(toggled(bool)), this, SLOT(overviewCornerChanged(bool)));
@@ -632,6 +637,7 @@ KAdvancedConfig::KAdvancedConfig (bool _standAlone, KConfig *_config, QWidget *p
     connect(overviewCornerPosition, SIGNAL(activated(int)), SLOT(changed()));
     connect(overviewCornerDelay, SIGNAL(valueChanged(int)), SLOT(changed()));
     connect(overviewAnimationTime, SIGNAL(valueChanged(int)), SLOT(changed()));
+    connect(overviewSuperKey, SIGNAL(toggled(bool)), SLOT(changed()));
     lay->addWidget(overviewBox);
 
     QHBoxLayout* focusStealingLayout = new QHBoxLayout( lay,KDialog::spacingHint());
@@ -735,6 +741,7 @@ void KAdvancedConfig::load( void )
         : corner == "BottomRight" ? 3 : 0 );
     overviewCornerDelay->setValue( config->readNumEntry( "HotCornerDelay", 50 ));
     overviewAnimationTime->setValue( config->readNumEntry( "AnimationTime", 250 ));
+    overviewSuperKey->setChecked( config->readBoolEntry( "SuperKey", true ));
     overviewCornerChanged( overviewCorner->isChecked());
 
     emit KCModule::changed(false);
@@ -767,6 +774,7 @@ void KAdvancedConfig::save( void )
     config->writeEntry( "HotCornerPosition", corners[ overviewCornerPosition->currentItem() & 3 ] );
     config->writeEntry( "HotCornerDelay", overviewCornerDelay->value());
     config->writeEntry( "AnimationTime", overviewAnimationTime->value());
+    config->writeEntry( "SuperKey", overviewSuperKey->isChecked());
     config->setGroup( "Windows" );
 
     if (standAlone)
@@ -794,6 +802,7 @@ void KAdvancedConfig::defaults()
     overviewCornerPosition->setCurrentItem( 0 );
     overviewCornerDelay->setValue( 50 );
     overviewAnimationTime->setValue( 250 );
+    overviewSuperKey->setChecked( true );
     overviewCornerChanged( true );
     emit KCModule::changed(true);
 }

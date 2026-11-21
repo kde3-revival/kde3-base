@@ -309,6 +309,7 @@ class Options : public KDecorationOptions
         int overviewHotCornerDelay; // ms
         int overviewAnimationTime; // ms
         bool overviewKeepRedirected;
+        bool overviewSuperKey; // Super pressed and released alone toggles it
 
     private:
         WindowOperation OpTitlebarDblClick;

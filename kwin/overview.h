@@ -42,7 +42,9 @@ class OverviewRenderer;
  mapping and unmapping the overlay can't be seen.
 
  Triggers: a hot corner (InputOnly windows, like the electric borders),
- a global shortcut and the DCOP call KWinInterface::showOverview().
+ the Super key pressed and released alone (watched with XInput 2 raw key
+ events, never grabbed), a global shortcut and the DCOP call
+ KWinInterface::showOverview().
 */
 class Overview : public QObject
     {
@@ -127,6 +129,7 @@ class Overview : public QObject
         void moveSelection( int dx, int dy );
         bool handleKey( XKeyEvent* e );
         bool handleButton( XButtonEvent* e );
+        bool superKey( XKeyEvent* e );
         void handleMotion( const QPoint& p );
         bool handleDamage( XEvent* e );
         bool handlePresent( XEvent* e );
@@ -191,6 +194,11 @@ class Overview : public QObject
         QTimer corner_timer;
         QTimer monitors_timer; // RandR changes, several at once
         bool corner_armed;
+
+        // the Super key pressed alone (XInput 2 raw events)
+        bool super_down; // pressed, not released yet
+        bool super_alone; // no other key or button since (nor before)
+        Time super_time;
 
         // statistics (KWIN_OVERVIEW_DEBUG)
         bool debug;

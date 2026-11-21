@@ -38,6 +38,9 @@
   <entry key="KeepRedirected" type="Bool" >
    <default>true</default>
   </entry>
+  <entry key="SuperKey" type="Bool" >
+   <default>true</default>
+  </entry>
  </group>
  <group name="Style" >
   <entry key="ButtonsOnLeft" type="String" />

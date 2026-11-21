@@ -103,6 +103,8 @@ bool have_composite = false;
 int damage_event = 0;
 bool have_present = false;
 int present_opcode = 0;
+// XInput 2.1 raw key events (also while another client has a grab)
+bool have_xi_raw = false;
 // XInput 2.3 barrier events and XFixes 5 pointer barriers
 bool have_barriers = false;
 // RandR 1.5 monitors
@@ -116,6 +118,8 @@ int randr_event = 0;
 const double FadeTime = 150.0;
 // background dimming in the overview
 const double DimAlpha = 0.45;
+// the Super key opens the overview when released within this time (ms)
+const unsigned int SuperTapTime = 600;
 // the length of the hot corner strip of the primary monitor along an
 // edge shared with another monitor (and of its pointer barrier)
 const int CornerStrip = 32;
@@ -425,6 +429,9 @@ Overview::Overview( Workspace* w )
       frame_wanted( false ),
       barriers_enabled( true ),
       corner_armed( true ),
+      super_down( false ),
+      super_alone( false ),
+      super_time( 0 ),
       frame_count( 0 ),
       stat_render( 0 ),
       stat_max_render( 0 ),
@@ -538,6 +545,7 @@ bool Overview::checkExtensions()
         if( XQueryExtension( dpy, "XInputExtension", &xi_opcode, &xi_event, &xi_error )
             && XIQueryVersion( dpy, &xi_major, &xi_minor ) == Success && xi_major >= 2 )
             {
+            have_xi_raw = xi_major > 2 || xi_minor >= 1;
             int fixes_event, fixes_error;
             int fixes_major = 0, fixes_minor = 0;
             have_barriers = ( xi_major > 2 || xi_minor >= 3 )
@@ -568,7 +576,7 @@ bool Overview::checkExtensions()
         kdWarning( 1212 ) << "Window overview without window contents: no Composite 0.3/Damage/XFixes 2" << endl;
     if( debug )
         kdWarning( 1212 ) << "overview: render " << have_render << " composite " << have_composite
-            << " present " << have_present << " barriers " << have_barriers
+            << " present " << have_present << " xi2 raw " << have_xi_raw << " barriers " << have_barriers
             << " monitors " << have_monitors << endl;
     return have_render;
     }
@@ -2667,6 +2675,40 @@ bool Overview::handleKey( XKeyEvent* e )
     return true;
     }
 
+// the Super key alone while the overview is shown: its grab keeps the raw
+// events away (see handleXI2()), the key events come instead
+bool Overview::superKey( XKeyEvent* e )
+    {
+#ifdef OVERVIEW_XI2
+    if( !options->overviewSuperKey )
+        return false;
+    KeySym sym = XkbKeycodeToKeysym( dpy, e->keycode, 0, 0 );
+    bool super = sym == XK_Super_L || sym == XK_Super_R;
+    if( e->type == KeyPress )
+        {
+        if( !super )
+            super_alone = false;
+        else if( !super_down ) // else autorepeat
+            {
+            super_down = true;
+            super_alone = !( e->state & ( ShiftMask | ControlMask | Mod1Mask ));
+            super_time = e->time;
+            }
+        return super;
+        }
+    if( super && super_down )
+        {
+        super_down = false;
+        if( super_alone && e->time - super_time < SuperTapTime )
+            hide();
+        }
+    return super;
+#else
+    Q_UNUSED( e );
+    return false;
+#endif
+    }
+
 bool Overview::handleButton( XButtonEvent* e )
     {
     if( state == Hiding || state == Finishing )
@@ -2674,6 +2716,7 @@ bool Overview::handleButton( XButtonEvent* e )
     QPoint p( e->x_root, e->y_root );
     if( e->type == ButtonPress )
         {
+        super_alone = false; // Super+click
         if( e->button == Button1 && pressed_button == 0 )
             {
             pressed = itemAt( p );
@@ -2725,22 +2768,42 @@ void Overview::handleMotion( const QPoint& p )
     }
 
 //****************************************
-// XInput 2: the barriers
+// XInput 2: the Super key, the barriers
 //****************************************
 
+/*
+ The Super key pressed and released alone toggles the overview, like
+ GNOME's overlay key.  The key is not grabbed (a passive grab of a
+ modifier would take every Meta+X shortcut from the applications and
+ KGlobalAccel): XInput 2.1 raw key and button events on the root window
+ tell the presses and releases of all keys, also while another client has
+ a grab, without changing what anybody else gets.  The overview opens on
+ the release when nothing else was pressed meanwhile (Meta+E, Meta+click,
+ Meta+wheel), no other key was held at the press (Shift+Super) and the key
+ was held shorter than SuperTapTime.  When another client has the keyboard
+ grabbed (a menu, the screen locker), show() can't grab it and nothing
+ happens.
+*/
 void Overview::selectXI2()
     {
 #ifdef OVERVIEW_XI2
-    if( !have_barriers )
+    if( !have_xi_raw )
         return;
     XIEventMask mask;
     unsigned char bits[ XIMaskLen( XI_LASTEVENT ) ] = { 0 };
+    if( options->overviewSuperKey )
+        {
+        XISetMask( bits, XI_RawKeyPress );
+        XISetMask( bits, XI_RawKeyRelease );
+        XISetMask( bits, XI_RawButtonPress );
+        }
     if( !barrier_lines.isEmpty())
         XISetMask( bits, XI_BarrierHit );
     mask.deviceid = XIAllMasterDevices;
     mask.mask_len = sizeof( bits );
     mask.mask = bits;
     XISelectEvents( dpy, root, &mask, 1 );
+    super_down = false;
 #endif
     }
 
@@ -2750,8 +2813,51 @@ bool Overview::handleXI2( XEvent* e )
     XGenericEventCookie* cookie = &e->xcookie;
     if( !XGetEventData( dpy, cookie ))
         return true;
+    bool tap = false;
     switch( cookie->evtype )
         {
+        case XI_RawKeyPress:
+            {
+            XIRawEvent* ev = (XIRawEvent*) cookie->data;
+            if( ev->flags & XIKeyRepeat )
+                break;
+            KeySym sym = XkbKeycodeToKeysym( dpy, ev->detail, 0, 0 );
+            if(( sym == XK_Super_L || sym == XK_Super_R ) && !super_down )
+                {
+                super_down = true;
+                super_time = ev->time;
+                // nothing else held (Shift+Super is no tap)
+                char keys[ 32 ];
+                XQueryKeymap( dpy, keys );
+                keys[ ev->detail / 8 ] &= ~( 1 << ( ev->detail % 8 ));
+                super_alone = true;
+                for( int i = 0;
+                     i < 32;
+                     ++i )
+                    if( keys[ i ] != 0 )
+                        super_alone = false;
+                }
+            else
+                super_alone = false;
+            break;
+            }
+        case XI_RawKeyRelease:
+            {
+            XIRawEvent* ev = (XIRawEvent*) cookie->data;
+            KeySym sym = XkbKeycodeToKeysym( dpy, ev->detail, 0, 0 );
+            if(( sym == XK_Super_L || sym == XK_Super_R ) && super_down )
+                {
+                super_down = false;
+                tap = super_alone && ev->time - super_time < SuperTapTime;
+                if( debug )
+                    kdWarning( 1212 ) << "overview: Super released after " << ev->time - super_time
+                        << " ms, alone " << super_alone << endl;
+                }
+            break;
+            }
+        case XI_RawButtonPress:
+            super_alone = false;
+            break;
         case XI_BarrierHit:
             {
             // through the barrier when the corner doesn't apply: a window
@@ -2772,6 +2878,8 @@ bool Overview::handleXI2( XEvent* e )
             break;
         }
     XFreeEventData( dpy, cookie );
+    if( tap && options->overviewSuperKey )
+        toggle();
 #else
     Q_UNUSED( e );
 #endif
@@ -2848,8 +2956,11 @@ bool Overview::x11Event( XEvent* e )
     switch( e->type )
         {
         case KeyPress:
+            if( superKey( &e->xkey ))
+                return true;
             return handleKey( &e->xkey );
         case KeyRelease:
+            superKey( &e->xkey );
             return true;
         case ButtonPress:
         case ButtonRelease:

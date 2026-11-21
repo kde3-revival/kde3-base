@@ -197,6 +197,7 @@ unsigned long Options::updateSettings()
     overviewHotCornerDelay = QMAX( 0, QMIN( 2000, config->readNumEntry( "HotCornerDelay", 50 )));
     overviewAnimationTime = QMAX( 0, QMIN( 2000, config->readNumEntry( "AnimationTime", 250 )));
     overviewKeepRedirected = config->readBoolEntry( "KeepRedirected", true );
+    overviewSuperKey = config->readBoolEntry( "SuperKey", true );
     
     
     
