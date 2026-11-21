@@ -132,6 +132,7 @@ private:
   void reportTerminalParms(int p);
 
   void setCursorStyle(int ps);
+  void reportMode(int m, bool dec);
   void setMouseTracking(int mode);
   void saveMouseTracking();
   void restoreMouseTracking();

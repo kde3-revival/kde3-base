@@ -448,6 +448,53 @@ void TEmuVt102::csiExtended(int cc)
   {
     if (inter == ' ' && cc == 'q') { setCursorStyle(argv[0]); return; } // DECSCUSR
   }
+  if (pbuf[2] != '<' && pbuf[2] != '=' && pbuf[2] != '>')
+  {
+    if (inter == '$' && cc == 'p') { reportMode(argv[0], pbuf[2] == '?'); return; } // DECRQM
+  }
+}
+
+/*!
+    DECRQM: answer whether mode `m' (a DEC private mode if `dec') is set
+    (1), reset (2) or not recognized (0).
+*/
+
+void TEmuVt102::reportMode(int m, bool dec)
+{
+  int state = -1; // not recognized
+  if (dec)
+  {
+    switch (m)
+    {
+      case    1: state = getMode(MODE_AppCuKeys);       break;
+      case    5: state = scr->getMode(MODE_Screen);     break;
+      case    6: state = scr->getMode(MODE_Origin);     break;
+      case    7: state = scr->getMode(MODE_Wrap);       break;
+      case   25: state = scr->getMode(MODE_Cursor);     break;
+      case   47:
+      case 1047:
+      case 1049: state = getMode(MODE_AppScreen);       break;
+      case 1000: state = getMode(MODE_Mouse1000) && !getMode(MODE_Mouse1002)
+                         && !getMode(MODE_Mouse1003);   break;
+      case 1002: state = getMode(MODE_Mouse1002);       break;
+      case 1003: state = getMode(MODE_Mouse1003);       break;
+      case 1004: state = getMode(MODE_FocusEvents);     break;
+      case 1006: state = getMode(MODE_Mouse1006);       break;
+      case 2004: state = getMode(MODE_BracketedPaste);  break;
+      case 2026: state = synchronizedUpdate();          break;
+    }
+  }
+  else
+  {
+    switch (m)
+    {
+      case    4: state = scr->getMode(MODE_Insert);     break;
+      case   20: state = scr->getMode(MODE_NewLine);    break;
+    }
+  }
+  char tmp[40];
+  sprintf(tmp, "\033[%s%d;%d$y", dec ? "?" : "", m, state < 0 ? 0 : (state ? 1 : 2));
+  sendString(tmp);
 }
 
 /*!
