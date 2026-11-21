@@ -74,10 +74,6 @@ FaviconsModule::FaviconsModule(const QCString &obj)
 
 FaviconsModule::~FaviconsModule()
 {
-    // Running downloads would report to a module that is gone.
-    QMap<KIO::Job *, FaviconsModulePrivate::DownloadInfo>::Iterator it;
-    for (it = d->downloads.begin(); it != d->downloads.end(); ++it)
-        it.key()->kill(true);
     delete d;
 }
 
@@ -239,6 +235,8 @@ void FaviconsModule::slotResult(KIO::Job *job)
 {
     FaviconsModulePrivate::DownloadInfo download = d->downloads[job];
     d->downloads.remove(job);
+    // A new job could get this address before slotKill() runs.
+    d->killJobs.removeRef(job);
     KIO::TransferJob *transfer = static_cast<KIO::TransferJob *>(job);
     KURL iconURL = download.iconURL;
     QString iconName;
@@ -257,10 +255,21 @@ void FaviconsModule::slotResult(KIO::Job *job)
         if (download.iconData.size() >= 6 && data[0] == 0 && data[1] == 0 &&
             (data[2] == 1 || data[2] == 2) && data[3] == 0 && (data[4] || data[5]))
             io.setFormat("ICO");
+        // A small PNG may say it is 30000 x 30000 pixels: gigabytes for
+        // kded.  No icon is larger than 1024 pixels.
+        static const char pngSignature[] = "\x89PNG\r\n\x1a\n";
+        bool tooLarge = false;
+        if (download.iconData.size() >= 24 && memcmp(data, pngSignature, 8) == 0)
+        {
+            const unsigned char *u = reinterpret_cast<const unsigned char *>(data);
+            unsigned long w = (u[16] << 24) | (u[17] << 16) | (u[18] << 8) | u[19];
+            unsigned long h = (u[20] << 24) | (u[21] << 16) | (u[22] << 8) | u[23];
+            tooLarge = w > 1024 || h > 1024;
+        }
         // Check here too, the job might have had no error, but the downloaded
         // file contains just a 404 message sent with a 200 status.
         // microsoft.com does that... (malte)
-        if (io.read() && qstrcmp(io.format(), "TGA") != 0 && !io.image().isNull())
+        if (!tooLarge && io.read() && qstrcmp(io.format(), "TGA") != 0 && !io.image().isNull())
         {
             // Some sites have nasty 32x32 icons, according to the MS docs
             // IE ignores them, well, we scale them, otherwise the location
