@@ -155,7 +155,13 @@ public:
 /* --| main |------------------------------------------------------ */
 extern "C" int KDE_EXPORT kdemain(int argc, char* argv[])
 {
-  setgid(getgid()); setuid(getuid()); // drop privileges
+  // drop the privileges of a set-id installation (the supplementary
+  // groups are those of the user who ran it, no setgroups() needed)
+  if (setgid(getgid()) < 0 || getegid() != getgid() ||
+      setuid(getuid()) < 0 || geteuid() != getuid()) {
+    perror("konsole: cannot drop privileges");
+    return 1;
+  }
 
   // deal with shell/command ////////////////////////////
   bool histon = true;

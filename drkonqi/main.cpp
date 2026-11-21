@@ -59,9 +59,11 @@ static const KCmdLineOptions options[] =
 
 int main( int argc, char* argv[] )
 {
-  // Drop privs.
-  setgid(getgid());
-  if (setuid(getuid()) < 0 && geteuid() != getuid())
+  // Drop the privileges of a set-id program.  No setgroups(): exec of a
+  // set-id program keeps the supplementary groups of the user who ran it.
+  if (setgid(getgid()) < 0 || getegid() != getgid())
+     exit (255);
+  if (setuid(getuid()) < 0 || geteuid() != getuid())
      exit (255);
 
   // Make sure that DrKonqi doesn't start DrKonqi when it crashes :-]
