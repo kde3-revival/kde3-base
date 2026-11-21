@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.freedesktop.impl.portal.desktop.kde3
+Exec=@CMAKE_INSTALL_PREFIX@/@KDE3_BIN_INSTALL_DIR@/xdg-desktop-portal-kde3

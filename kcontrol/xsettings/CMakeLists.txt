@@ -31,3 +31,50 @@ kde3_add_executable(xsettingstest NO_INSTALL
     xsettingsdata
 )
 add_test(NAME xsettingstest COMMAND xsettingstest)
+
+# xdg-desktop-portal-kde3: the same settings, and the colours, for the
+# Settings portal (libadwaita, GTK 4 on Wayland, Flatpak).
+# xdg-desktop-portal finds kde3.portal in <datadir>/xdg-desktop-portal/portals
+# of $XDG_DATA_HOME, $XDG_DATA_DIRS and its own prefix, and the session bus
+# the D-Bus service file in <datadir>/dbus-1/services of the directories
+# it was started with: for KDE installed elsewhere than /usr, both belong
+# in /usr/share too (as the packages do).
+if(KDEBASE_SETTINGS_PORTAL)
+  kde3_add_library(portalsettings STATIC
+    SOURCES
+      portalsettings.cpp
+    LINK
+      xsettingsdata
+      KDE3::kdecore
+      PkgConfig::GIO
+  )
+
+  kde3_add_executable(xdg-desktop-portal-kde3
+    SOURCES
+      xdg-desktop-portal-kde3.cpp
+    LINK
+      portalsettings
+      KDE3::kdecore
+      PkgConfig::GIO
+  )
+
+  configure_file(org.freedesktop.impl.portal.desktop.kde3.service.in
+    org.freedesktop.impl.portal.desktop.kde3.service @ONLY)
+  install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/org.freedesktop.impl.portal.desktop.kde3.service
+    DESTINATION ${KDE3_DATA_ROOT_INSTALL_DIR}/dbus-1/services)
+  install(FILES
+    kde3.portal
+    DESTINATION ${KDE3_DATA_ROOT_INSTALL_DIR}/xdg-desktop-portal/portals)
+
+  # tests of the settings, their filtering and their changes
+  kde3_add_executable(portalsettingstest NO_INSTALL
+    SOURCES
+      tests/portalsettingstest.cpp
+    LINK
+      portalsettings
+      KDE3::kdecore
+      PkgConfig::GIO
+  )
+  add_test(NAME portalsettingstest COMMAND portalsettingstest)
+endif()

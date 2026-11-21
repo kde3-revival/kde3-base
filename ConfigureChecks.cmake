@@ -894,6 +894,18 @@ if(KDEBASE_SYSTRAY_SNI)
   set(HAVE_STATUSNOTIFIER 1)
 endif()
 
+# kcontrol/xsettings: xdg-desktop-portal-kde3, the Settings portal backend
+# that gives KDE's fonts and colours to libadwaita and GTK 4, with GIO's GDBus
+option(KDEBASE_SETTINGS_PORTAL "Build xdg-desktop-portal-kde3, the Settings portal backend (needs GIO)" ON)
+if(KDEBASE_SETTINGS_PORTAL)
+  pkg_check_modules(GIO QUIET IMPORTED_TARGET gio-2.0)
+  if(NOT GIO_FOUND)
+    message(FATAL_ERROR "GIO (gio-2.0, part of GLib) was not found; it is needed "
+      "for xdg-desktop-portal-kde3.  Install it, or configure with "
+      "-DKDEBASE_SETTINGS_PORTAL=OFF to build without it.")
+  endif()
+endif()
+
 # configure.in.bot of kioslave/smb, kcontrol/* etc.: the summary of what
 # is left out.  <result variable>:<option switching it off, or ->:<what>
 foreach(_what
@@ -924,7 +936,8 @@ foreach(_what
     "KDEBASE_VOLUME_APPLET:KDEBASE_VOLUME_APPLET:Volume control panel applet (libpulse)"
     "KDEBASE_POWER_APPLET:KDEBASE_POWER_APPLET:Power panel applet (libupower-glib, GIO)"
     "KDEBASE_NETWORK_APPLET:KDEBASE_NETWORK_APPLET:NetworkManager panel applet (libnm)"
-    "HAVE_STATUSNOTIFIER:KDEBASE_SYSTRAY_SNI:StatusNotifierItem icons in the system tray (GIO)")
+    "HAVE_STATUSNOTIFIER:KDEBASE_SYSTRAY_SNI:StatusNotifierItem icons in the system tray (GIO)"
+    "KDEBASE_SETTINGS_PORTAL:KDEBASE_SETTINGS_PORTAL:Settings portal backend xdg-desktop-portal-kde3 (GIO)")
   string(REPLACE ":" ";" _what "${_what}")
   list(GET _what 0 _var)
   list(GET _what 1 _opt)
