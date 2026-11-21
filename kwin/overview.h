@@ -17,6 +17,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <qvaluelist.h>
 #include <qrect.h>
 #include <qmap.h>
+#include <qregion.h>
 #include <qstring.h>
 #include <kshortcut.h>
 
@@ -35,17 +36,27 @@ class Presenter;
 struct RectF;
 }
 
+namespace Render
+{
+class Renderer;
+class Texture;
+}
+
 /*
  The window overview: all windows of the current desktop zoom out into
  a grid (per screen), the user picks one with the mouse or the keyboard
  and the windows zoom back in, the picked one on top.  Minimized windows
  (ShowMinimized) fade in among them, picking one restores it.
 
- The overview is drawn into the Composite overlay window from the named
- pixmaps of the (temporarily, automatically) redirected top-level
- windows.  The first frame of the zoom-out and the last frame of the
- zoom-in show every window at its real position at scale 1, so that
- mapping and unmapping the overlay can't be seen.
+ Uncomposited, the overview is drawn into the Composite overlay window
+ from the named pixmaps of the (temporarily, automatically) redirected
+ top-level windows.  With KWin's compositor it is drawn in the
+ compositor's frames instead of the scene (paintScreen()), from the
+ compositor's window textures, and the compositor keeps every window
+ redirected meanwhile.  Either way through Render::Renderer, and the first
+ frame of the zoom-out and the last frame of the zoom-in show every window
+ at its real position at scale 1 (composited: with its shadow), so that
+ the start and the end can't be seen.
 
  Triggers: a hot corner (InputOnly windows, like the electric borders),
  the Super key pressed and released alone (watched with XInput 2 raw key
@@ -91,6 +102,19 @@ class Overview : public QObject
         // about kwin's own grab)
         void setBarriersEnabled( bool enable );
 
+        // ---- in the compositor's frames ----
+        // drawn by the compositor: the overview, or its ripples after it
+        bool composited() const;
+        // shown in the compositor's frames: they show the overview, not the scene
+        bool replacesScene() const;
+        // a frame is drawn for time t: the state then, the area it changes
+        QRegion prePaint( double t );
+        // the whole frame (replacesScene()), or the ripples above the scene
+        void paintScreen( Render::Renderer* r, Render::Texture* target, const QRegion& region );
+        void paintOverlay( Render::Renderer* r, Render::Texture* target, const QRegion& region );
+        // the compositor stops: its textures go, so does the overview
+        void compositorStopping();
+
     private slots:
         void frameTimeout();
         void settleTimeout();
@@ -100,6 +124,7 @@ class Overview : public QObject
         void monitorsChanged();
         void dialogTimeout();
         void rippleTimeout();
+        void compositedFinished();
 
     private:
         enum State { Hidden, Settling, Showing, Shown, Hiding, Finishing };
@@ -135,7 +160,15 @@ class Overview : public QObject
         void startTransition( double target );
         void requestFrame();
         void renderFrame();
+        bool advance( double t_start, double t0 );
+        void drawFrame( double t0, bool last, bool* more );
+        void frameDone( double t0, bool more );
         void updateMips( OverviewItem* item, int level );
+        Render::Texture* mipTexture( OverviewItem* item, int level );
+        Render::Renderer* renderer();
+        void resetClip();
+        Render::Texture* offscreenShape( int size );
+        void endOffscreen();
         void present();
         void dumpFrame();
         void finish();
@@ -155,22 +188,22 @@ class Overview : public QObject
         void placeDragged( double t );
         int dropTarget( const QPoint& p ) const;
         QRect layoutArea( int screen ) const;
-        void drawItem( OverviewItem* item, XID dst );
-        void drawCloseButton( OverviewItem* item, XID dst );
-        void drawMinimizedBadge( OverviewItem* item, XID dst );
-        void drawPlaceholder( OverviewItem* item, XID dst, const Compositing::RectF& rect, double alpha );
+        void drawItem( OverviewItem* item );
+        void drawCloseButton( OverviewItem* item );
+        void drawMinimizedBadge( OverviewItem* item );
+        void drawPlaceholder( OverviewItem* item, const Compositing::RectF& rect, double alpha );
         bool closeHit( const OverviewItem* item, const QPoint& p ) const;
         void setHover( OverviewItem* item, bool on_close );
         void updateHover();
         void startRipple( const QPoint& p );
-        bool drawRipples( XID dst, double t, int ox, int oy );
+        bool drawRipples( double t, int ox, int oy );
         QRect rippleBox() const;
-        void saveRippleBackground( XID src );
+        void saveRippleBackground();
         void showRippleWindow();
         void stopRipple();
         void closeItem( OverviewItem* item );
         void forgetItem( OverviewItem* item );
-        void drawBackdrop( XID dst, double dim, double t );
+        void drawBackdrop( double dim, double t );
         bool handleDamage( XEvent* e );
 
         static double now();
@@ -236,6 +269,18 @@ class Overview : public QObject
 
         OverviewRenderer* r;
         Compositing::Presenter* presenter;
+        // drawing: the compositor's renderer (comp: in its frames), else an
+        // XRender renderer of our own into the presenter's buffers
+        bool comp;
+        Render::Renderer* own_renderer;
+        Render::Renderer* rr;
+        Render::Texture* target;
+        QRegion frame_clip; // (null: all)
+        bool made_copy; // drawn into a texture of ours in this frame
+        // the frame the compositor draws now (prePaint())
+        double comp_t0;
+        bool comp_more;
+        bool comp_last;
 
         QTimer frame_timer;
         QTimer settle_timer;

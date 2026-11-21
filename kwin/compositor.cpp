@@ -62,6 +62,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "render.h"
 #include "shadow.h"
 #include "effects.h"
+#include "overview.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
@@ -221,7 +222,7 @@ Compositor::Compositor( Workspace* w )
     : ws( w ), dpy( qt_xdisplay()), root( qt_xrootwin()), screen_w( 0 ), screen_h( 0 ), active( false ),
       suspended( false ), failed_once( false ), foreign_retries( 0 ), selection( NULL ), rend( NULL ),
       shadows( NULL ), presenter( NULL ), per_monitor( false ), flips_failed( false ), copies_in_row( 0 ), latest_buffer( -1 ),
-      force_mode( 0 ), frame_requested( false ), last_render( 0 ), repaint_due( 0 ), overlay( None ), frame_number( 0 ), frame_wanted( false ), root_pixmap( None ),
+      force_mode( 0 ), unredirect_blocked( false ), frame_requested( false ), last_render( 0 ), repaint_due( 0 ), overlay( None ), frame_number( 0 ), frame_wanted( false ), root_pixmap( None ),
       root_texture( NULL ), shape_event( 0 ), asap( false ), render_budget( 3.0 ), min_budget( 3.0 ), on_time( 0 ),
       target_vblank( 0 ), late_at_max( 0 ), late_failed( false ), submit_time( 0 ), shown_index( 0 ),
       immediate_server( false ), stat_frames( 0 ), stat_render( 0 ), stat_max_render( 0 ), stat_skipped( 0 ),
@@ -544,9 +545,11 @@ bool Compositor::start()
 void Compositor::stop( bool failed, const QString& why )
     {
 #ifdef COMPOSITOR_BUILD
-    // (the animations hold textures of the renderer)
+    // (the animations and the overview hold textures of the renderer)
     if( ws->windowEffects() != NULL )
         ws->windowEffects()->compositorStopping();
+    if( ws->windowOverview() != NULL )
+        ws->windowOverview()->compositorStopping();
     const bool was_active = active;
     active = false;
     repaint_timer.stop();
@@ -1061,6 +1064,20 @@ bool Compositor::isUnredirected( Window w ) const
     {
     SceneWindow* sw = findWindow( w );
     return sw != NULL && sw->unredirected;
+    }
+
+// the overview draws every window: none unredirected (but the locker)
+void Compositor::setUnredirectBlocked( bool block )
+    {
+    if( block == unredirect_blocked )
+        return;
+    unredirect_blocked = block;
+    if( !active )
+        return;
+    if( block )
+        checkUnredirect(); // (now: before its first frame)
+    else
+        unredirect_timer.start( 0, true );
     }
 
 CompositorUpdate::~CompositorUpdate()
@@ -1678,7 +1695,10 @@ void Compositor::performRepaint()
     if( !active )
         return;
     Effects* fx = ws->windowEffects();
-    const bool animating = fx != NULL && fx->composited();
+    Overview* ov = ws->windowOverview();
+    const bool fx_on = fx != NULL && fx->composited();
+    const bool ov_on = ov != NULL && ov->composited();
+    const bool animating = fx_on || ov_on;
     pending -= overlay_hole; // (drawn by the unredirected windows themselves)
     if( pending.isEmpty() && !frame_requested && !animating )
         {
@@ -1725,7 +1745,11 @@ void Compositor::performRepaint()
     dump_frame = false;
     if( animating )
         {
-        pending |= fx->prePaint( nextFrameTime()) & QRegion( 0, 0, screen_w, screen_h );
+        const double t = nextFrameTime();
+        if( fx_on )
+            pending |= fx->prePaint( t ) & QRegion( 0, 0, screen_w, screen_h );
+        if( ov_on )
+            pending |= ov->prePaint( t ) & QRegion( 0, 0, screen_w, screen_h );
         pending -= overlay_hole;
         dump_frame = !dump_dir.isEmpty(); // (also the last one, the plain scene)
         }
@@ -1911,6 +1935,15 @@ void Compositor::paint( Render::Texture* target, const QRegion& region )
     {
     if( !rend->setTarget( target ))
         return;
+    Overview* ov = ws->windowOverview();
+    if( ov != NULL && ov->replacesScene())
+        { // its frames instead of the scene
+        ov->paintScreen( rend, target, region );
+        rend->clearClip();
+        return;
+        }
+    if( ov != NULL && !ov->composited())
+        ov = NULL;
     Effects* fx = ws->windowEffects();
     if( fx != NULL && !fx->composited())
         fx = NULL;
@@ -2002,6 +2035,8 @@ void Compositor::paint( Render::Texture* target, const QRegion& region )
         }
     if( fx != NULL && top_managed == NULL )
         fx->paintOnTop( rend, target, region );
+    if( ov != NULL ) // (the ripples of the hot corner)
+        ov->paintOverlay( rend, target, region );
     rend->clearClip();
     }
 
@@ -2038,6 +2073,18 @@ Render::Texture* Compositor::windowTexture( Window id, QRect* geom )
     if( geom != NULL )
         *geom = w->geom;
     return w->texture;
+    }
+
+double Compositor::windowOpacity( Window id ) const
+    {
+    SceneWindow* w = findWindow( id );
+    return w != NULL ? w->opacity : 1.0;
+    }
+
+void Compositor::drawBackground( const QRegion& region )
+    {
+    if( active )
+        paintBackground( region );
     }
 
 QRegion Compositor::windowShape( Window id ) const
@@ -2136,7 +2183,7 @@ bool Compositor::unredirectCandidate( const SceneWindow* w ) const
         return false;
     if( w->locker )
         return true;
-    if( !options->compositingUnredirectFullscreen )
+    if( !options->compositingUnredirectFullscreen || unredirect_blocked )
         return false;
     Client* c = ws->findClient( FrameIdMatchPredicate( w->id ));
     if( c != NULL )

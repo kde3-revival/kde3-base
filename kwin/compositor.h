@@ -114,6 +114,11 @@ class Compositor : public QObject
         // the contents of a mapped, redirected window (NULL: none)
         Render::Texture* windowTexture( Window w, QRect* geom );
         QRegion windowShape( Window w ) const; // window relative, null: the rectangle
+        double windowOpacity( Window w ) const;
+        // the root window's background (into the current target, clipped to region)
+        void drawBackground( const QRegion& region );
+        // no window unredirected but the screen locker (the overview is shown)
+        void setUnredirectBlocked( bool block );
         bool windowGeometry( Window w, QRect* geom ) const; // false: not mapped
         bool windowShadow( Window w, CompositorShadow* s ) const; // false: none
         // a shadow drawn for its window drawn into rect (scaled with it)
@@ -198,6 +203,7 @@ class Compositor : public QObject
         int copies_in_row;
         int latest_buffer; // drawn last
         int force_mode; // KWIN_COMPOSITOR_PRESENT: 1 overlay, 2 monitors
+        bool unredirect_blocked;
         bool frame_requested; // (requestFrame())
         double last_render; // when the last frame was drawn
         double repaint_due; // when the armed repaint timer fires

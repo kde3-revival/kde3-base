@@ -2580,7 +2580,9 @@ void Workspace::compositingChanged( bool on )
         }
     if( on )
         {
-        // the overview and the animations can't draw over a composited screen yet
+        // the overview and the animations started uncomposited draw into their
+        // own presenter buffers, under the compositor's frames: they end, the
+        // next ones run inside the compositor
         if( effects != NULL )
             effects->abort();
         if( overview != NULL )

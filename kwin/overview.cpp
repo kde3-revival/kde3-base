@@ -54,6 +54,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "compositing.h"
 #include "effects.h"
 #include "compositor.h"
+#include "render.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -158,80 +159,148 @@ int mipLevel( double scale )
     return level;
     }
 
-// an anti-aliased rounded rectangle
-void roundedRect( Display* dpy, Picture dst, const RectF& r, double radius, const QColor& c, double alpha )
+/*
+ Anti-aliased shapes as alpha masks, computed on the CPU (4x4 samples per
+ pixel) and drawn through the renderer: rounded rectangles (made once per
+ radius and cached, see fillRounded()), the ripples' quarter discs and
+ rims (small, every frame), the close button's cross (once).  No
+ polygons: glamor rasterizes those on the CPU too and uploads the mask
+ every time, the GLES renderer has none.
+*/
+struct AlphaMask
     {
-    if( alpha <= 1.0 / 512 || r.w <= 0 || r.h <= 0 )
-        return;
-    radius = QMIN( radius, QMIN( r.w, r.h ) / 2 );
-    const int steps = 8;
-    XPointDouble pts[ 4 * ( steps + 1 ) ];
-    int n = 0;
-    const double cx[ 4 ] = { r.x + r.w - radius, r.x + r.w - radius, r.x + radius, r.x + radius };
-    const double cy[ 4 ] = { r.y + radius, r.y + r.h - radius, r.y + r.h - radius, r.y + radius };
-    for( int corner = 0;
-         corner < 4;
-         ++corner )
+    AlphaMask( int w_, int h_ ) : w( QMAX( 1, w_ )), h( QMAX( 1, h_ )), data( w * h ) { data.fill( 0 ); }
+    int w, h;
+    QMemArray< unsigned char > data;
+    // the coverage of inside( x, y ) (pixel coordinates, the mask at ox, oy)
+    template< class Inside > void add( Inside inside, double ox, double oy, double alpha = 1.0 )
         {
-        for( int i = 0;
-             i <= steps;
-             ++i )
-            {
-            double a = ( corner * 90.0 - 90.0 + 90.0 * i / steps ) * M_PI / 180.0;
-            pts[ n ].x = cx[ corner ] + radius * cos( a );
-            pts[ n ].y = cy[ corner ] + radius * sin( a );
-            ++n;
-            }
+        for( int y = 0;
+             y < h;
+             ++y )
+            for( int x = 0;
+                 x < w;
+                 ++x )
+                {
+                int n = 0;
+                for( int sy = 0;
+                     sy < 4;
+                     ++sy )
+                    for( int sx = 0;
+                         sx < 4;
+                         ++sx )
+                        if( inside( ox + x + ( sx + 0.5 ) / 4, oy + y + ( sy + 0.5 ) / 4 ))
+                            ++n;
+                if( n > 0 )
+                    {
+                    const int v = data[ y * w + x ] + (int) floor( n / 16.0 * 255 * alpha + 0.5 );
+                    data[ y * w + x ] = (unsigned char) QMIN( 255, v );
+                    }
+                }
         }
-    Picture src = solidPicture( dpy, c, alpha );
-    XRenderCompositeDoublePoly( dpy, PictOpOver, src, dst,
-        XRenderFindStandardFormat( dpy, PictStandardA8 ), 0, 0, 0, 0, pts, n, WindingRule );
-    XRenderFreePicture( dpy, src );
+    Render::Texture* texture( Render::Renderer* r ) const { return r->textureFromAlpha( data.data(), w, h, w ); }
+    };
+
+struct InRoundedRect
+    {
+    InRoundedRect( const RectF& r_, double radius ) : r( r_ ), rad( radius ) {}
+    bool operator()( double x, double y ) const
+        {
+        if( x < r.x || y < r.y || x >= r.x + r.w || y >= r.y + r.h )
+            return false;
+        const double cx = x < r.x + rad ? r.x + rad : x > r.x + r.w - rad ? r.x + r.w - rad : x;
+        const double cy = y < r.y + rad ? r.y + rad : y > r.y + r.h - rad ? r.y + r.h - rad : y;
+        return ( x - cx ) * ( x - cx ) + ( y - cy ) * ( y - cy ) <= rad * rad;
+        }
+    RectF r;
+    double rad;
+    };
+
+// the quarter of a ring (inner 0: a disc) around cx, cy opening towards dx, dy
+struct InQuarterRing
+    {
+    InQuarterRing( double cx_, double cy_, double dx_, double dy_, double outer_, double inner_ )
+        : cx( cx_ ), cy( cy_ ), dx( dx_ ), dy( dy_ ), outer( outer_ ), inner( inner_ ) {}
+    bool operator()( double x, double y ) const
+        {
+        const double u = ( x - cx ) * dx;
+        const double v = ( y - cy ) * dy;
+        if( u < 0 || v < 0 )
+            return false;
+        const double d = u * u + v * v;
+        return d <= outer * outer && d >= inner * inner;
+        }
+    double cx, cy, dx, dy, outer, inner;
+    };
+
+// a line of width w (a thin parallelogram)
+struct InLine
+    {
+    InLine( double x1_, double y1_, double x2_, double y2_, double w_ ) : x1( x1_ ), y1( y1_ ), w( w_ )
+        {
+        dx = x2_ - x1;
+        dy = y2_ - y1;
+        len = sqrt( dx * dx + dy * dy );
+        }
+    bool operator()( double x, double y ) const
+        {
+        const double along = (( x - x1 ) * dx + ( y - y1 ) * dy ) / len;
+        const double across = (( x - x1 ) * -dy + ( y - y1 ) * dx ) / len;
+        return along >= 0 && along <= len && fabs( across ) <= w / 2;
+        }
+    double x1, y1, dx, dy, len, w;
+    };
+
+// inside either of two lines (a cross)
+struct InCross
+    {
+    InCross( const InLine& a_, const InLine& b_ ) : a( a_ ), b( b_ ) {}
+    bool operator()( double x, double y ) const { return a( x, y ) || b( x, y ); }
+    InLine a, b;
+    };
+
+// an anti-aliased rounded rectangle drawn at once (small ones)
+void roundedRect( Render::Renderer* r, const RectF& rect, double radius, const QColor& c, double alpha )
+    {
+    if( alpha <= 1.0 / 512 || rect.w <= 0 || rect.h <= 0 )
+        return;
+    radius = QMIN( radius, QMIN( rect.w, rect.h ) / 2 );
+    const QRect b = rect.bounds();
+    AlphaMask m( b.width(), b.height());
+    m.add( InRoundedRect( rect, radius ), b.x(), b.y());
+    Render::Texture* t = m.texture( r );
+    if( t == NULL )
+        return;
+    r->fillMasked( RectF( b ), c, alpha, t, RectF( 0, 0, m.w, m.h ));
+    delete t;
     }
 
-// a premultiplied ARGB picture from a QPixmap (icons)
-Picture argbPicture( Display* dpy, const QPixmap& pm, Pixmap* pixmap_return )
+// an alpha texture from text drawn white on black (titles)
+Render::Texture* alphaTexture( Render::Renderer* r, const QPixmap& pm )
     {
-    *pixmap_return = None;
-    if( pm.isNull())
-        return None;
+    if( pm.isNull() || r == NULL )
+        return NULL;
     QImage img = pm.convertToImage().convertDepth( 32 );
-    const int w = img.width();
-    const int h = img.height();
-    const bool alpha = img.hasAlphaBuffer();
-    unsigned int* data = (unsigned int*) malloc( w * h * 4 );
-    if( data == NULL )
-        return None;
+    QMemArray< unsigned char > a( img.width() * img.height());
     for( int y = 0;
-         y < h;
+         y < img.height();
          ++y )
         {
         const QRgb* line = (const QRgb*) img.scanLine( y );
         for( int x = 0;
-             x < w;
+             x < img.width();
              ++x )
-            {
-            QRgb p = line[ x ];
-            unsigned int a = alpha ? qAlpha( p ) : 255;
-            data[ y * w + x ] = ( a << 24 ) | (( qRed( p ) * a / 255 ) << 16 )
-                | (( qGreen( p ) * a / 255 ) << 8 ) | ( qBlue( p ) * a / 255 );
-            }
+            a[ y * img.width() + x ] = qGray( line[ x ] );
         }
-    XImage* xi = XCreateImage( dpy, DefaultVisual( dpy, DefaultScreen( dpy )), 32, ZPixmap, 0,
-        (char*) data, w, h, 32, w * 4 );
-    if( xi == NULL )
-        {
-        free( data );
-        return None;
-        }
-    xi->byte_order = LSBFirst; // the data is in host order, Xlib converts if needed
-    Pixmap p = XCreatePixmap( dpy, DefaultRootWindow( dpy ), w, h, 32 );
-    GC gc = XCreateGC( dpy, p, 0, NULL );
-    XPutImage( dpy, p, gc, xi, 0, 0, 0, 0, w, h );
-    XFreeGC( dpy, gc );
-    XDestroyImage( xi ); // frees data
-    *pixmap_return = p;
-    return XRenderCreatePicture( dpy, p, XRenderFindStandardFormat( dpy, PictStandardARGB32 ), 0, NULL );
+    return r->textureFromAlpha( a.data(), img.width(), img.height(), img.width());
+    }
+
+// a texture from a QPixmap (icons)
+Render::Texture* imageTexture( Render::Renderer* r, const QPixmap& pm )
+    {
+    if( pm.isNull() || r == NULL )
+        return NULL;
+    return r->textureFromImage( pm.convertToImage());
     }
 
 } // namespace
@@ -245,17 +314,16 @@ class OverviewItem
               alpha_format( false ), shaped( false ), pixmap( None ), damage( None ),
               in_layout( false ), screen( 0 ), matches( true ),
               fade_from( 1 ), fade_to( 1 ), fade_start( 0 ), fade( 1 ),
-              title_picture( None ), icon_pixmap( None ), icon_picture( None ), seen( true ),
+              title_tex( NULL ), icon_tex( NULL ), seen( true ),
               snapshot( false ), close_from( 0 ), close_to( 0 ), close_start( 0 ), close_fade( 0 ),
               minimized( false ), kept( false ), placeholder( false ), restored( false ),
-              pending_live( false ), painted( 0 )
+              pending_live( false ), painted( 0 ), external( false ), opacity( 1.0 )
             {
             for( int i = 0;
                  i < MipLevels;
                  ++i )
                 {
-                mip_pixmap[ i ] = None;
-                mip_picture[ i ] = None;
+                mip[ i ] = NULL;
                 mip_dirty[ i ] = true;
                 mip_w[ i ] = mip_h[ i ] = 0;
                 }
@@ -270,8 +338,9 @@ class OverviewItem
         bool shaped;
         QValueVector< XRectangle > shape; // relative to geom
         Pixmap pixmap; // mip level 0 is the named window pixmap
-        Pixmap mip_pixmap[ MipLevels ];
-        Picture mip_picture[ MipLevels ];
+        // the contents and their downscaled copies (renderer textures);
+        // external: level 0 is the compositor's (asked for every frame)
+        Render::Texture* mip[ MipLevels ];
         bool mip_dirty[ MipLevels ];
         int mip_w[ MipLevels ], mip_h[ MipLevels ];
         XID damage;
@@ -283,9 +352,8 @@ class OverviewItem
         double fade_from, fade_to, fade_start, fade;
         QString caption;
         QPixmap title_pixmap;
-        Picture title_picture;
-        Pixmap icon_pixmap;
-        Picture icon_picture;
+        Render::Texture* title_tex; // (alpha)
+        Render::Texture* icon_tex;
         int icon_w, icon_h;
         bool seen;
         bool snapshot; // a copy of the screen, not redirected
@@ -304,6 +372,9 @@ class OverviewItem
         // the time of the last damage then
         bool pending_live;
         double painted;
+        bool external;
+        double opacity; // composited: the window's opacity (_NET_WM_WINDOW_OPACITY)
+        bool hasContents() const { return mip[ 0 ] != NULL || external; }
     };
 
 class OverviewRenderer
@@ -311,49 +382,40 @@ class OverviewRenderer
     public:
         OverviewRenderer()
             : width( 0 ), height( 0 ), format( NULL ),
-              snapshot( None ), snapshot_picture( None ), filter_picture( None )
+              snapshot( None ), snapshot_tex( NULL ), filter_tex( NULL ), badge_tex( NULL )
             {
-            close_pixmap[ 0 ] = close_pixmap[ 1 ] = None;
-            close_picture[ 0 ] = close_picture[ 1 ] = None;
-            badge_pixmap = None;
-            badge_picture = None;
+            close_tex[ 0 ] = close_tex[ 1 ] = NULL;
             }
         int width, height;
         XRenderPictFormat* format;
         Pixmap snapshot; // the screen, without Composite
-        Picture snapshot_picture;
+        Render::Texture* snapshot_tex;
         QPixmap filter_pixmap;
-        Picture filter_picture;
+        Render::Texture* filter_tex; // (alpha)
         // anti-aliased rounded rectangles drawn from cached masks: the corners
         // of a rectangle with this radius (Picture full), its middle column
         // and row (col, row, padded): no polygons in every frame (glamor
         // rasterizes those on the CPU and uploads the mask each time)
         struct RoundMask
             {
-            RoundMask() : ri( 0 ), full_pixmap( None ), full( None ), col_pixmap( None ), col( None ),
-                row_pixmap( None ), row( None ) {}
+            RoundMask() : ri( 0 ), full( NULL ), col( NULL ), row( NULL ) {}
             int ri; // the corner cells, ceil( radius ) + 1
-            Pixmap full_pixmap;
-            Picture full;
-            Pixmap col_pixmap;
-            Picture col;
-            Pixmap row_pixmap;
-            Picture row;
+            Render::Texture* full;
+            Render::Texture* col;
+            Render::Texture* row;
             };
         QMap< int, RoundMask > round_masks; // by radius * 2
         // the close button, normal and hovered (ARGB, made once)
-        Pixmap close_pixmap[ 2 ];
-        Picture close_picture[ 2 ];
+        Render::Texture* close_tex[ 2 ];
         // the badge of minimized windows (ARGB, made once)
-        Pixmap badge_pixmap;
-        Picture badge_picture;
+        Render::Texture* badge_tex;
         QFont font;
         int title_height;
         QColor highlight;
     };
 
 static RectF restRect( const OverviewItem* item );
-static void drawIcon( Display* dpy, OverviewItem* item, Picture dst, const RectF& rect, double max_size,
+static void drawIcon( Render::Renderer* rr, OverviewItem* item, const RectF& rect, double max_size,
     double fraction, double alpha );
 
 
@@ -365,7 +427,7 @@ static void drawIcon( Display* dpy, OverviewItem* item, Picture dst, const RectF
  the middle filled.  hollow leaves the middle out (under an opaque
  window).  Tiny rectangles are polygons.
 */
-static void fillRounded( Display* dpy, OverviewRenderer* r, Picture dst, const RectF& rect, double radius,
+static void fillRounded( Render::Renderer* rr, OverviewRenderer* r, const RectF& rect, double radius,
     const QColor& c, double alpha, bool hollow = false )
     {
     if( alpha <= 1.0 / 512 || rect.w <= 0 || rect.h <= 0 )
@@ -380,7 +442,7 @@ static void fillRounded( Display* dpy, OverviewRenderer* r, Picture dst, const R
     const int y1 = (int) ceil( rect.y + rect.h );
     if( x1 - x0 < 4 || y1 - y0 < 4 )
         {
-        roundedRect( dpy, dst, rect, radius, c, alpha );
+        roundedRect( rr, rect, radius, c, alpha );
         return;
         }
     if( !r->round_masks.contains( key ))
@@ -388,24 +450,27 @@ static void fillRounded( Display* dpy, OverviewRenderer* r, Picture dst, const R
         OverviewRenderer::RoundMask m;
         m.ri = ri;
         const int n = 2 * ri + 4;
-        XRenderPictFormat* a8 = XRenderFindStandardFormat( dpy, PictStandardA8 );
-        Window root = DefaultRootWindow( dpy );
-        XRenderPictureAttributes pa;
-        pa.repeat = RepeatPad;
-        m.full_pixmap = XCreatePixmap( dpy, root, n, n, 8 );
-        m.full = XRenderCreatePicture( dpy, m.full_pixmap, a8, CPRepeat, &pa );
-        m.col_pixmap = XCreatePixmap( dpy, root, 1, n, 8 );
-        m.col = XRenderCreatePicture( dpy, m.col_pixmap, a8, CPRepeat, &pa );
-        m.row_pixmap = XCreatePixmap( dpy, root, n, 1, 8 );
-        m.row = XRenderCreatePicture( dpy, m.row_pixmap, a8, CPRepeat, &pa );
-        XRenderColor clear = { 0, 0, 0, 0 };
-        XRenderFillRectangle( dpy, PictOpSrc, m.full, &clear, 0, 0, n, n );
-        roundedRect( dpy, m.full, RectF( 2, 2, 2 * ri, 2 * ri ), radius, Qt::white, 1.0 );
-        XRenderComposite( dpy, PictOpSrc, m.full, None, m.col, 2 + ri, 0, 0, 0, 0, 0, 1, n );
-        XRenderComposite( dpy, PictOpSrc, m.full, None, m.row, 0, 2 + ri, 0, 0, 0, 0, n, 1 );
-        XRenderSetPictureFilter( dpy, m.full, FilterBilinear, NULL, 0 );
-        XRenderSetPictureFilter( dpy, m.col, FilterBilinear, NULL, 0 );
-        XRenderSetPictureFilter( dpy, m.row, FilterBilinear, NULL, 0 );
+        AlphaMask full( n, n );
+        full.add( InRoundedRect( RectF( 2, 2, 2 * ri, 2 * ri ), radius ), 0, 0 );
+        AlphaMask col( 1, n );
+        AlphaMask row( n, 1 );
+        for( int i = 0;
+             i < n;
+             ++i )
+            {
+            col.data[ i ] = full.data[ i * n + 2 + ri ];
+            row.data[ i ] = full.data[ ( 2 + ri ) * n + i ];
+            }
+        m.full = full.texture( rr );
+        m.col = col.texture( rr );
+        m.row = row.texture( rr );
+        if( m.full == NULL || m.col == NULL || m.row == NULL )
+            {
+            delete m.full;
+            delete m.col;
+            delete m.row;
+            return;
+            }
         r->round_masks[ key ] = m;
         }
     const OverviewRenderer::RoundMask& m = r->round_masks[ key ];
@@ -417,7 +482,6 @@ static void fillRounded( Display* dpy, OverviewRenderer* r, Picture dst, const R
     const int ym = ( y0 + y1 ) / 2;
     const int cx[ 4 ] = { x0, QMIN( x0 + ri, xm ), QMAX( x1 - ri, xm ), x1 };
     const int cy[ 4 ] = { y0, QMIN( y0 + ri, ym ), QMAX( y1 - ri, ym ), y1 };
-    Picture src = solidPicture( dpy, c, alpha );
     for( int j = 0;
          j < 3;
          ++j )
@@ -425,15 +489,27 @@ static void fillRounded( Display* dpy, OverviewRenderer* r, Picture dst, const R
              i < 3;
              ++i )
             {
-            Picture mask = i == 1 ? ( j == 1 ? None : m.col ) : ( j == 1 ? m.row : m.full );
+            Render::Texture* mask = i == 1 ? ( j == 1 ? NULL : m.col ) : ( j == 1 ? m.row : m.full );
             if(( i == 1 && j == 1 && hollow ) || cx[ i + 1 ] <= cx[ i ] || cy[ j + 1 ] <= cy[ j ] )
                 continue;
-            if( mask != None )
-                setTransform( dpy, mask, 1, 1, tx[ i ], ty[ j ] );
-            XRenderComposite( dpy, PictOpOver, src, mask, dst, 0, 0, cx[ i ], cy[ j ],
-                cx[ i ], cy[ j ], cx[ i + 1 ] - cx[ i ], cy[ j + 1 ] - cy[ j ] );
+            const RectF cell( cx[ i ], cy[ j ], cx[ i + 1 ] - cx[ i ], cy[ j + 1 ] - cy[ j ] );
+            if( mask == NULL )
+                rr->fill( cell, c, alpha );
+            else
+                { // (the column and the row are padded along their edge)
+                const RectF src( i == 1 ? 0 : cell.x + tx[ i ], j == 1 ? 0 : cell.y + ty[ j ],
+                    i == 1 ? 1 : cell.w, j == 1 ? 1 : cell.h );
+                Render::Draw d;
+                d.color = c;
+                d.color_alpha = alpha;
+                d.dst = cell;
+                d.mask = mask;
+                d.mask_src = src;
+                d.mask_filter = Render::BilinearFilter;
+                d.mask_repeat = Render::PadRepeat;
+                rr->draw( d );
+                }
             }
-    XRenderFreePicture( dpy, src );
     }
 
 Overview::Overview( Workspace* w )
@@ -474,6 +550,14 @@ Overview::Overview( Workspace* w )
       temp_redirected( false ),
       r( NULL ),
       presenter( NULL ),
+      comp( false ),
+      own_renderer( NULL ),
+      rr( NULL ),
+      target( NULL ),
+      made_copy( false ),
+      comp_t0( 0 ),
+      comp_more( false ),
+      comp_last( false ),
       settle_start( 0 ),
       last_damage( 0 ),
       last_frame( 0 ),
@@ -522,6 +606,7 @@ Overview::~Overview()
     destroyCorners();
     setKeepRedirected( false );
     delete presenter;
+    delete own_renderer;
     }
 
 double Overview::now()
@@ -1016,7 +1101,7 @@ QRect Overview::rippleBox() const
     }
 
 // the ripples at time t, drawn offset by ox, oy; false when they are over
-bool Overview::drawRipples( XID dst, double t, int ox, int oy )
+bool Overview::drawRipples( double t, int ox, int oy )
     {
     if( ripple_start <= 0 || t - ripple_start >= RippleTime )
         return false;
@@ -1026,7 +1111,6 @@ bool Overview::drawRipples( XID dst, double t, int ox, int oy )
     const double cy = ripple_point.y() + ( pos == 2 || pos == 3 ? 1 : 0 ) - oy;
     const double dx = pos == 1 || pos == 3 ? -1 : 1;
     const double dy = pos == 2 || pos == 3 ? -1 : 1;
-    XRenderPictFormat* a8 = XRenderFindStandardFormat( dpy, PictStandardA8 );
     for( int i = 0;
          i < 3;
          ++i )
@@ -1038,50 +1122,32 @@ bool Overview::drawRipples( XID dst, double t, int ox, int oy )
         const double opacity = Ripples[ i ].opacity * ( 1 - f );
         if( radius < 1 || opacity <= 1.0 / 512 )
             continue;
-        // a quarter disc, brighter at its rim
-        const int steps = 12;
-        XPointDouble pts[ 2 * ( steps + 1 ) + 1 ];
-        pts[ 0 ].x = cx;
-        pts[ 0 ].y = cy;
-        for( int j = 0;
-             j <= steps;
-             ++j )
-            {
-            double a = M_PI / 2 * j / steps;
-            pts[ j + 1 ].x = cx + dx * radius * cos( a );
-            pts[ j + 1 ].y = cy + dy * radius * sin( a );
-            }
-        Picture fill = solidPicture( dpy, Qt::white, 0.22 * opacity );
-        XRenderCompositeDoublePoly( dpy, PictOpOver, fill, dst, a8, 0, 0, 0, 0, pts, steps + 2, WindingRule );
-        XRenderFreePicture( dpy, fill );
-        const double inner = QMAX( 0.0, radius - 2.0 );
-        int n = 0;
-        for( int j = 0;
-             j <= steps;
-             ++j, ++n )
-            {
-            double a = M_PI / 2 * j / steps;
-            pts[ n ].x = cx + dx * radius * cos( a );
-            pts[ n ].y = cy + dy * radius * sin( a );
-            }
-        for( int j = steps;
-             j >= 0;
-             --j, ++n )
-            {
-            double a = M_PI / 2 * j / steps;
-            pts[ n ].x = cx + dx * inner * cos( a );
-            pts[ n ].y = cy + dy * inner * sin( a );
-            }
-        Picture rim = solidPicture( dpy, Qt::white, 0.35 * opacity );
-        XRenderCompositeDoublePoly( dpy, PictOpOver, rim, dst, a8, 0, 0, 0, 0, pts, n, WindingRule );
-        XRenderFreePicture( dpy, rim );
+        // a quarter disc, brighter at its rim (masks of the quarter's square)
+        const int n = (int) ceil( radius ) + 1;
+        const double mx = dx > 0 ? cx : cx - n;
+        const double my = dy > 0 ? cy : cy - n;
+        const int ix = (int) floor( mx );
+        const int iy = (int) floor( my );
+        AlphaMask disc( n + 1, n + 1 );
+        disc.add( InQuarterRing( cx, cy, dx, dy, radius, 0 ), ix, iy );
+        AlphaMask rim( n + 1, n + 1 );
+        rim.add( InQuarterRing( cx, cy, dx, dy, radius, QMAX( 0.0, radius - 2.0 )), ix, iy );
+        Render::Texture* m = disc.texture( rr );
+        if( m != NULL )
+            rr->fillMasked( RectF( ix, iy, n + 1, n + 1 ), Qt::white, 0.22 * opacity, m, RectF( 0, 0, n + 1, n + 1 ));
+        delete m;
+        m = rim.texture( rr );
+        if( m != NULL )
+            rr->fillMasked( RectF( ix, iy, n + 1, n + 1 ), Qt::white, 0.35 * opacity, m, RectF( 0, 0, n + 1, n + 1 ));
+        delete m;
         }
     return true;
     }
 
-void Overview::saveRippleBackground( XID src )
+// (uncomposited) the screen there in the last frame, without the ripples
+void Overview::saveRippleBackground()
     {
-    if( ripple_bg != None || !keep_redirected || r == NULL )
+    if( ripple_bg != None || !keep_redirected || r == NULL || comp )
         return; // below a window there the client would get exposed when it goes
     QRect box = rippleBox();
     // nor above windows that are not redirected (full screen ones)
@@ -1092,10 +1158,11 @@ void Overview::saveRippleBackground( XID src )
         if( (*it)->isOnCurrentDesktop() && (*it)->isShown( true ) && (*it)->geometry().intersects( box )
             && !redirected.contains( (*it)->frameId()))
             return;
+    rr->finish(); // (what is drawn so far)
     ripple_bg = XCreatePixmap( dpy, root, box.width(), box.height(), DefaultDepth( dpy, DefaultScreen( dpy )));
-    Picture bg = XRenderCreatePicture( dpy, ripple_bg, r->format, 0, NULL );
-    XRenderComposite( dpy, PictOpSrc, src, None, bg, box.x(), box.y(), 0, 0, 0, 0, box.width(), box.height());
-    XRenderFreePicture( dpy, bg );
+    GC gc = XCreateGC( dpy, ripple_bg, 0, NULL );
+    XCopyArea( dpy, presenter->framePixmap(), ripple_bg, gc, box.x(), box.y(), box.width(), box.height(), 0, 0 );
+    XFreeGC( dpy, gc );
     }
 
 // the overview goes, the ripples aren't over: on in a window of their own
@@ -1104,7 +1171,7 @@ void Overview::showRippleWindow()
     if( debug )
         kdWarning( 1212 ) << "overview: ripples at " << now() - ripple_start << " ms, background "
             << ( ripple_bg != None ) << endl;
-    if( ripple_bg == None || r == NULL || now() - ripple_start >= RippleTime )
+    if( ripple_bg == None || now() - ripple_start >= RippleTime )
         {
         stopRipple();
         return;
@@ -1136,19 +1203,27 @@ void Overview::rippleTimeout()
         return;
         }
     QRect box = rippleBox();
-    XRenderPictFormat* format = XRenderFindVisualFormat( dpy, DefaultVisual( dpy, DefaultScreen( dpy )));
-    Picture bg = XRenderCreatePicture( dpy, ripple_bg, format, 0, NULL );
-    Picture back = XRenderCreatePicture( dpy, ripple_back, format, 0, NULL );
-    XRenderComposite( dpy, PictOpSrc, bg, None, back, 0, 0, 0, 0, 0, 0, box.width(), box.height());
-    bool more = drawRipples( back, now(), box.x(), box.y());
-    XRenderFreePicture( dpy, bg );
-    XRenderFreePicture( dpy, back );
+    GC gc = XCreateGC( dpy, ripple_window, 0, NULL );
+    XCopyArea( dpy, ripple_bg, ripple_back, gc, 0, 0, box.width(), box.height(), 0, 0 );
+    bool more = false;
+    Render::Renderer* rend = renderer();
+    Render::Texture* t = rend != NULL ? rend->textureFromPixmap( ripple_back, box.width(), box.height(),
+        DefaultDepth( dpy, DefaultScreen( dpy )), DefaultVisual( dpy, DefaultScreen( dpy ))) : NULL;
+    if( t != NULL )
+        {
+        rr = rend;
+        rr->setTarget( t );
+        rr->clearClip();
+        more = drawRipples( now(), box.x(), box.y());
+        rr->finish();
+        delete t;
+        }
     if( !more )
         {
+        XFreeGC( dpy, gc );
         stopRipple();
         return;
         }
-    GC gc = XCreateGC( dpy, ripple_window, 0, NULL );
     XCopyArea( dpy, ripple_back, ripple_window, gc, 0, 0, box.width(), box.height(), 0, 0 );
     XFreeGC( dpy, gc );
     XFlush( dpy );
@@ -1232,9 +1307,18 @@ void Overview::show()
             kdWarning( 1212 ) << "overview: not shown, state " << state << " blocked " << blocked() << endl;
         return;
         }
-    // (not over a composited screen yet)
-    if( ws->compositor() != NULL && ws->compositor()->isActive())
+    // with KWin's compositor: in its frames (not over the screen locker,
+    // which it shows directly)
+    Compositor* compositor = ws->compositor();
+    comp = compositor != NULL && compositor->isActive();
+    if( comp && compositor->lockerShown())
         return;
+    rr = renderer();
+    if( rr == NULL )
+        {
+        kdWarning( 1212 ) << "overview: no renderer" << endl;
+        return;
+        }
     // the window animations draw the same windows (and the overview
     // changes their redirection meanwhile)
     if( ws->windowEffects() != NULL )
@@ -1283,7 +1367,9 @@ void Overview::show()
     r->highlight = KGlobalSettings::highlightColor();
 
 #ifdef OVERVIEW_COMPOSITE
-    if( composite )
+    if( comp )
+        compositor->setUnredirectBlocked( true ); // (all windows in its textures)
+    else if( composite )
         {
         // the overlay first: from now on the screen doesn't change
         // until we draw, and the redirection below can't be seen
@@ -1314,10 +1400,12 @@ void Overview::show()
         GC gc = XCreateGC( dpy, r->snapshot, GCSubwindowMode, &gcv );
         XCopyArea( dpy, root, r->snapshot, gc, 0, 0, r->width, r->height, 0, 0 );
         XFreeGC( dpy, gc );
-        r->snapshot_picture = XRenderCreatePicture( dpy, r->snapshot, r->format, 0, NULL );
+        r->snapshot_tex = rr->textureFromPixmap( r->snapshot, r->width, r->height,
+            DefaultDepth( dpy, DefaultScreen( dpy )), DefaultVisual( dpy, DefaultScreen( dpy )));
         }
 
-    presenter->start( overlay, 0, 0, r->width, r->height, composite && have_present );
+    if( !comp )
+        presenter->start( overlay, 0, 0, r->width, r->height, composite && have_present );
 
     buildItems( true );
     computeLayout();
@@ -1338,7 +1426,8 @@ void Overview::show()
     settle_start = last_damage = now();
     if( !temp_redirected )
         settle_start = last_damage = settle_start - 1000; // nothing to wait for
-    settle_timer.start( temp_redirected ? 8 : 0 );
+    if( !comp ) // (composited: once frame 0 is drawn, see frameDone())
+        settle_timer.start( temp_redirected ? 8 : 0 );
     }
 
 void Overview::settleTimeout()
@@ -1358,7 +1447,7 @@ void Overview::settleTimeout()
             for( OverviewItem* item = items.first();
                  item != NULL;
                  item = items.next())
-                if( item->in_layout && item->mip_picture[ 0 ] != None )
+                if( item->in_layout && item->hasContents())
                     updateMips( item, mipLevel( double( item->slot.width()) / item->mip_w[ 0 ] ));
             state = Showing;
             stat_first_frame = t = now();
@@ -1499,37 +1588,34 @@ void Overview::cleanup()
     temp_redirected = false;
 #endif
     presenter->stop();
-    if( r->snapshot_picture != None )
-        XRenderFreePicture( dpy, r->snapshot_picture );
+    // (the textures before the renderer: the compositor's may be stopping)
+    delete r->snapshot_tex;
     if( r->snapshot != None )
         XFreePixmap( dpy, r->snapshot );
-    if( r->filter_picture != None )
-        XRenderFreePicture( dpy, r->filter_picture );
-    for( int i = 0;
-         i < 2;
-         ++i )
-        {
-        if( r->close_picture[ i ] != None )
-            XRenderFreePicture( dpy, r->close_picture[ i ] );
-        if( r->close_pixmap[ i ] != None )
-            XFreePixmap( dpy, r->close_pixmap[ i ] );
-        }
-    if( r->badge_picture != None )
-        XRenderFreePicture( dpy, r->badge_picture );
-    if( r->badge_pixmap != None )
-        XFreePixmap( dpy, r->badge_pixmap );
+    delete r->filter_tex;
+    delete r->close_tex[ 0 ];
+    delete r->close_tex[ 1 ];
+    delete r->badge_tex;
     for( QMap< int, OverviewRenderer::RoundMask >::ConstIterator it = r->round_masks.begin();
          it != r->round_masks.end();
          ++it )
         {
-        XRenderFreePicture( dpy, (*it).full );
-        XRenderFreePicture( dpy, (*it).col );
-        XRenderFreePicture( dpy, (*it).row );
-        XFreePixmap( dpy, (*it).full_pixmap );
-        XFreePixmap( dpy, (*it).col_pixmap );
-        XFreePixmap( dpy, (*it).row_pixmap );
+        delete (*it).full;
+        delete (*it).col;
+        delete (*it).row;
         }
-    if( ripple_start > 0 )
+    if( comp )
+        {
+        Compositor* c = ws->compositor();
+        if( c != NULL )
+            { // (its scene again, as the last frame showed it)
+            c->setUnredirectBlocked( false );
+            c->addRepaintFull();
+            if( ripple_start > 0 )
+                c->requestFrame(); // (the ripples on above the scene)
+            }
+        }
+    else if( ripple_start > 0 )
         showRippleWindow(); // (or no more ripples)
     if( own_overlay )
         XDestroyWindow( dpy, overlay );
@@ -1541,6 +1627,8 @@ void Overview::cleanup()
     untrapErrors( dpy );
     delete r;
     r = NULL;
+    target = NULL;
+    frame_clip = QRegion();
     ungrabInput();
     state = Hidden;
     selected = pressed = dragged = hovered = pressed_close = NULL;
@@ -1640,6 +1728,8 @@ OverviewItem* Overview::createItem( Window w, const XWindowAttributes& attr )
     item->alpha_format = item->format != NULL && item->format->type == PictTypeDirect
         && item->format->direct.alphaMask != 0;
     item->client = ws->findClient( FrameIdMatchPredicate( w ));
+    if( comp && ws->compositor() != NULL )
+        item->opacity = ws->compositor()->windowOpacity( w );
     // frames are shaped only for shaped clients or masked decorations (saves a round trip)
     if( Shape::available() && ( item->client == NULL || item->client->shape()
         || !item->client->mask().isEmpty()))
@@ -1695,15 +1785,15 @@ OverviewItem* Overview::createMinimizedItem( Client* c )
         && ws->windowEffects()->retainedContents( c, &pixmap, &size, &depth, &visual ))
         {
         XRenderPictFormat* format = XRenderFindVisualFormat( dpy, visual );
-        if( format != NULL && format->depth == depth )
-            { // (the picture keeps the contents when Effects frees the pixmap)
+        if( format != NULL && format->depth == depth && renderer() != NULL )
+            { // (the texture keeps the contents when Effects frees the pixmap)
             item->format = format;
             item->depth = depth;
             item->alpha_format = format->type == PictTypeDirect && format->direct.alphaMask != 0;
-            item->mip_picture[ 0 ] = XRenderCreatePicture( dpy, pixmap, format, 0, NULL );
+            item->mip[ 0 ] = renderer()->textureFromPixmap( pixmap, size.width(), size.height(), depth, visual );
             item->mip_w[ 0 ] = size.width();
             item->mip_h[ 0 ] = size.height();
-            item->kept = true;
+            item->kept = item->mip[ 0 ] != NULL;
             }
         }
     // (now: the window may paint as soon as it is restored; an unmapped
@@ -1715,11 +1805,9 @@ OverviewItem* Overview::createMinimizedItem( Client* c )
         {
         item->placeholder = true;
         QPixmap icon = largeIcon( c );
-        item->icon_picture = argbPicture( dpy, icon, &item->icon_pixmap );
+        item->icon_tex = imageTexture( renderer(), icon );
         item->icon_w = icon.width();
         item->icon_h = icon.height();
-        if( item->icon_picture != None )
-            XRenderSetPictureFilter( dpy, item->icon_picture, FilterBilinear, NULL, 0 );
         }
     if( debug )
         kdWarning( 1212 ) << "overview: minimized " << c->caption() << ( item->kept ? " (kept contents)" : "" ) << endl;
@@ -1754,9 +1842,24 @@ void Overview::makeLive( OverviewItem* item )
 bool Overview::bindContents( OverviewItem* item, bool can_copy )
     {
 #ifdef OVERVIEW_COMPOSITE
-    if( !composite || item->format == NULL || item->mip_picture[ 0 ] != None
-        || item->kept || item->placeholder )
+    if( !composite || item->format == NULL || item->hasContents() || item->kept || item->placeholder )
         return true;
+    if( comp )
+        { // the compositor's contents, asked for in every frame
+        Compositor* c = ws->compositor();
+        if( c->windowTexture( item->id, NULL ) == NULL )
+            return false;
+        item->external = true;
+        item->mip_w[ 0 ] = item->geom.width();
+        item->mip_h[ 0 ] = item->geom.height();
+        for( int i = 1;
+             i < MipLevels;
+             ++i )
+            item->mip_dirty[ i ] = true;
+        if( item->damage == None )
+            item->damage = XDamageCreate( dpy, item->id, XDamageReportNonEmpty );
+        return true;
+        }
     // redirected by us, by the temporary redirection or by a compositing manager
     bool named = false;
     if( temp_redirected || redirected.contains( item->id ))
@@ -1793,7 +1896,8 @@ bool Overview::bindContents( OverviewItem* item, bool can_copy )
         item->alpha_format = false;
         item->snapshot = true;
         }
-    item->mip_picture[ 0 ] = XRenderCreatePicture( dpy, item->pixmap, item->format, 0, NULL );
+    item->mip[ 0 ] = renderer()->textureFromPixmap( item->pixmap, item->geom.width(), item->geom.height(),
+        item->depth, NULL );
     item->mip_w[ 0 ] = item->geom.width();
     item->mip_h[ 0 ] = item->geom.height();
     for( int i = 1;
@@ -1817,15 +1921,10 @@ void Overview::releaseContents( OverviewItem* item )
         XDamageDestroy( dpy, item->damage );
 #endif
     item->damage = None;
-    if( item->title_picture != None )
-        XRenderFreePicture( dpy, item->title_picture );
-    item->title_picture = None;
-    if( item->icon_picture != None )
-        XRenderFreePicture( dpy, item->icon_picture );
-    item->icon_picture = None;
-    if( item->icon_pixmap != None )
-        XFreePixmap( dpy, item->icon_pixmap );
-    item->icon_pixmap = None;
+    delete item->title_tex;
+    item->title_tex = NULL;
+    delete item->icon_tex;
+    item->icon_tex = NULL;
     }
 
 // the contents (a kept pixmap of the window animations is not ours)
@@ -1835,13 +1934,11 @@ void Overview::releasePictures( OverviewItem* item )
          i < MipLevels;
          ++i )
         {
-        if( item->mip_picture[ i ] != None )
-            XRenderFreePicture( dpy, item->mip_picture[ i ] );
-        if( item->mip_pixmap[ i ] != None )
-            XFreePixmap( dpy, item->mip_pixmap[ i ] );
-        item->mip_picture[ i ] = None;
-        item->mip_pixmap[ i ] = None;
+        if( i > 0 || !item->external )
+            delete item->mip[ i ];
+        item->mip[ i ] = NULL;
         }
+    item->external = false;
     if( item->pixmap != None )
         XFreePixmap( dpy, item->pixmap );
     item->pixmap = None;
@@ -1882,7 +1979,7 @@ void Overview::buildItems( bool initial )
              ++i )
             {
             Window w = children[ i ];
-            if( w == overlay )
+            if( w == overlay || ( comp && ws->compositor() != NULL && w == ws->compositor()->overlayWindow()))
                 continue;
             XWindowAttributes attr;
             if( !XGetWindowAttributes( dpy, w, &attr ) || attr.map_state != IsViewable
@@ -2383,9 +2480,8 @@ void Overview::updateTitles()
         {
         if( !item->in_layout || item->client == NULL )
             continue;
-        if( item->title_picture != None )
-            XRenderFreePicture( dpy, item->title_picture );
-        item->title_picture = None;
+        delete item->title_tex;
+        item->title_tex = NULL;
         item->caption = item->client->caption();
         const int pad = 10;
         int max_w = QMAX( 60, item->slot.width() + 2 * Spacing / 3 ) - 2 * pad;
@@ -2399,18 +2495,13 @@ void Overview::updateTitles()
         p.setPen( Qt::white );
         p.drawText( 0, 0, w, h, Qt::AlignCenter, text );
         p.end();
-        XRenderPictureAttributes pa;
-        pa.component_alpha = True;
-        item->title_picture = XRenderCreatePicture( dpy, item->title_pixmap.handle(),
-            XRenderFindVisualFormat( dpy, (Visual*) item->title_pixmap.x11Visual()), CPComponentAlpha, &pa );
-        if( !composite && item->icon_picture == None )
+        item->title_tex = alphaTexture( renderer(), item->title_pixmap );
+        if( !composite && item->icon_tex == NULL )
             {
             QPixmap icon = item->client->icon();
-            item->icon_picture = argbPicture( dpy, icon, &item->icon_pixmap );
+            item->icon_tex = imageTexture( renderer(), icon );
             item->icon_w = icon.width();
             item->icon_h = icon.height();
-            if( item->icon_picture != None )
-                XRenderSetPictureFilter( dpy, item->icon_picture, FilterBilinear, NULL, 0 );
             }
         }
     }
@@ -2461,9 +2552,8 @@ void Overview::updateFilter()
     if( !filter.isEmpty() || ( selected != NULL && !selected->matches ))
         select( firstMatch());
     // the text
-    if( r->filter_picture != None )
-        XRenderFreePicture( dpy, r->filter_picture );
-    r->filter_picture = None;
+    delete r->filter_tex;
+    r->filter_tex = NULL;
     if( !filter.isEmpty())
         {
         QFont f = r->font;
@@ -2478,10 +2568,7 @@ void Overview::updateFilter()
         p.setPen( Qt::white );
         p.drawText( 0, 0, w, h, Qt::AlignCenter, filter );
         p.end();
-        XRenderPictureAttributes pa;
-        pa.component_alpha = True;
-        r->filter_picture = XRenderCreatePicture( dpy, r->filter_pixmap.handle(),
-            XRenderFindVisualFormat( dpy, (Visual*) r->filter_pixmap.x11Visual()), CPComponentAlpha, &pa );
+        r->filter_tex = alphaTexture( renderer(), r->filter_pixmap );
         }
     requestFrame();
     }
@@ -2528,6 +2615,12 @@ void Overview::requestFrame()
     {
     if( r == NULL )
         return;
+    if( comp )
+        { // (a frame of the compositor)
+        if( state != Finishing && ws->compositor() != NULL )
+            ws->compositor()->requestFrame();
+        return;
+        }
     frame_wanted = true;
     if( frame_timer.isActive() || state == Finishing )
         return;
@@ -2579,51 +2672,264 @@ void Overview::presentIdle()
 // level 1, 2... of the window, each half of the previous one
 void Overview::updateMips( OverviewItem* item, int level )
     {
+    if( rr == NULL )
+        return;
+    bool drawn = false;
     for( int l = 1;
          l <= level;
          ++l )
         {
-        if( item->mip_picture[ l ] != None && !item->mip_dirty[ l ] )
+        if( item->mip[ l ] != NULL && !item->mip_dirty[ l ] )
             continue;
         int w = QMAX( 1, ( item->mip_w[ l - 1 ] + 1 ) / 2 );
         int h = QMAX( 1, ( item->mip_h[ l - 1 ] + 1 ) / 2 );
-        if( item->mip_picture[ l ] == None )
+        if( item->mip[ l ] == NULL )
             {
-            item->mip_pixmap[ l ] = XCreatePixmap( dpy, root, w, h, item->depth );
-            item->mip_picture[ l ] = XRenderCreatePicture( dpy, item->mip_pixmap[ l ], item->format, 0, NULL );
+            item->mip[ l ] = rr->createOffscreen( w, h, item->alpha_format );
+            if( item->mip[ l ] == NULL )
+                return;
             item->mip_w[ l ] = w;
             item->mip_h[ l ] = h;
             }
-        Picture src = item->mip_picture[ l - 1 ];
+        Render::Texture* src = mipTexture( item, l - 1 );
+        if( src == NULL )
+            return;
         // exactly 2x2 boxes: bilinear sampling between four pixels
-        XRenderPictureAttributes pa;
-        pa.repeat = RepeatPad;
-        XRenderChangePicture( dpy, src, CPRepeat, &pa );
-        setTransform( dpy, src, 2, 2, 0, 0 );
-        XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
-        XRenderComposite( dpy, PictOpSrc, src, None, item->mip_picture[ l ], 0, 0, 0, 0, 0, 0, w, h );
-        pa.repeat = RepeatNone;
-        XRenderChangePicture( dpy, src, CPRepeat, &pa );
+        rr->clearClip();
+        rr->setTarget( item->mip[ l ] );
+        drawn = true;
+        rr->drawTexture( src, RectF( 0, 0, 2 * w, 2 * h ), RectF( 0, 0, w, h ), 1.0, Render::BilinearFilter,
+            Render::BlendSource, Render::PadRepeat );
+        made_copy = true;
         item->mip_dirty[ l ] = false;
         if( l + 1 < MipLevels )
             item->mip_dirty[ l + 1 ] = true;
         }
+    if( drawn && target != NULL )
+        { // (back to the frame)
+        rr->setTarget( target );
+        resetClip();
+        }
+    }
+
+// the contents at a mip level (0: the window's, the compositor's when external)
+Render::Texture* Overview::mipTexture( OverviewItem* item, int level )
+    {
+    if( level == 0 && item->external )
+        {
+        Compositor* c = ws->compositor();
+        QRect g;
+        Render::Texture* t = c != NULL ? c->windowTexture( item->id, &g ) : NULL;
+        if( t != NULL && ( g.width() != item->mip_w[ 0 ] || g.height() != item->mip_h[ 0 ] ))
+            return NULL; // (resized: buildItems() takes the new size)
+        return t;
+        }
+    return item->mip[ level ];
+    }
+
+Render::Renderer* Overview::renderer()
+    {
+    if( comp )
+        {
+        Compositor* c = ws->compositor();
+        return c != NULL && c->isActive() ? c->renderer() : NULL;
+        }
+    if( own_renderer == NULL )
+        own_renderer = Render::Renderer::create( dpy, Render::Renderer::XRender, NULL );
+    return own_renderer;
+    }
+
+// the frame's clip again (after a clip of a window's shape)
+void Overview::resetClip()
+    {
+    if( frame_clip.isNull())
+        rr->clearClip();
+    else
+        rr->setClip( frame_clip );
     }
 
 void Overview::renderFrame()
     {
     if( r == NULL )
         return;
+    if( comp )
+        { // (the compositor draws: a frame there)
+        ws->compositor()->requestFrame();
+        return;
+        }
     // the buffer
-    Picture dst = presenter->beginFrame();
-    if( dst == None )
+    if( presenter->beginFrame() == None )
         { // all still used by the server, wait for an idle event
         frame_wanted = true;
+        return;
+        }
+    Render::Renderer* rend = renderer();
+    Render::Texture* t = rend != NULL ? rend->textureFromPixmap( presenter->framePixmap(), r->width, r->height,
+        DefaultDepth( dpy, DefaultScreen( dpy )), DefaultVisual( dpy, DefaultScreen( dpy ))) : NULL;
+    if( t == NULL )
+        {
+        abort();
         return;
         }
     const double t_start = now();
     // the time when this frame will be seen
     const double t0 = presenter->frameTime( t_start );
+    bool more = advance( t_start, t0 );
+    rr = rend;
+    target = t;
+    rr->setTarget( target );
+    drawFrame( t0, state == Hiding && !more, &more );
+    rr->finish();
+    target = NULL;
+    delete t;
+    if( !dump_dir.isEmpty())
+        dumpFrame();
+    present();
+    if( debug )
+        {
+        XSync( dpy, False );
+        double t = now() - t_start;
+        stat_render += t;
+        stat_max_render = QMAX( stat_max_render, t );
+        }
+    last_frame = t_start;
+    frameDone( t0, more );
+    }
+
+// after a frame (shown at t0; more: the next one differs)
+void Overview::frameDone( double t0, bool more )
+    {
+    ++frame_count;
+    if( state == Hiding && !more )
+        {
+        if( debug )
+            {
+            double t = t0 - stat_first_frame;
+            kdWarning( 1212 ) << "overview: zoom-in " << frame_count << " frames in " << t << " ms, "
+                << ( frame_count > 1 ? frame_count * 1000.0 / t : 0 ) << " fps, render avg "
+                << ( frame_count ? stat_render / frame_count : 0 ) << " max " << stat_max_render << " ms, skipped " << stat_skipped << " missed refreshes " << stat_gaps << endl;
+            }
+        state = Finishing;
+        if( comp )
+            { // the windows back to the scene after this frame
+            QTimer::singleShot( 0, this, SLOT( compositedFinished()));
+            return;
+            }
+        if( !presenter->usesPresent() || presenter->queued() == 0 )
+            {
+            XSync( dpy, False );
+            finish();
+            }
+        // else finish() after the completion of the last presentation
+        return;
+        }
+    if( comp )
+        {
+        if( state == Settling && !settle_timer.isActive())
+            settle_timer.start( 0 ); // (frame 0 drawn: the zoom-out starts)
+        if( more )
+            requestFrame();
+        return;
+        }
+    if( more )
+        frame_wanted = true;
+    }
+
+void Overview::compositedFinished()
+    {
+    if( comp && state == Finishing )
+        finish();
+    }
+
+//****************************************
+// in the compositor's frames
+//****************************************
+
+bool Overview::composited() const
+    {
+    return comp && ( r != NULL || ripple_start > 0 );
+    }
+
+bool Overview::replacesScene() const
+    {
+    return comp && r != NULL;
+    }
+
+QRegion Overview::prePaint( double t0 )
+    {
+    if( !comp )
+        return QRegion();
+    comp_t0 = t0;
+    if( r == NULL )
+        { // the ripples after the overview, above the scene
+        if( ripple_start <= 0 )
+            return QRegion();
+        const QRegion box( rippleBox());
+        if( t0 - ripple_start >= RippleTime )
+            stopRipple(); // (this frame without them)
+        else if( ws->compositor() != NULL )
+            ws->compositor()->requestFrame();
+        return box;
+        }
+    comp_more = advance( now(), t0 );
+    comp_last = state == Hiding && !comp_more;
+    return QRegion( 0, 0, r->width, r->height );
+    }
+
+void Overview::paintScreen( Render::Renderer* rend, Render::Texture* t, const QRegion& region )
+    {
+    if( !comp || r == NULL )
+        return;
+    const double t_start = now();
+    rr = rend;
+    target = t;
+    frame_clip = region == QRegion( 0, 0, r->width, r->height ) ? QRegion() : region;
+    rr->setTarget( target );
+    resetClip();
+    bool more = comp_more;
+    drawFrame( comp_t0, comp_last, &more );
+    rr->clearClip();
+    target = NULL;
+    frame_clip = QRegion();
+    if( debug )
+        {
+        double d = now() - t_start;
+        stat_render += d;
+        stat_max_render = QMAX( stat_max_render, d );
+        }
+    last_frame = t_start;
+    frameDone( comp_t0, more );
+    }
+
+void Overview::paintOverlay( Render::Renderer* rend, Render::Texture* t, const QRegion& region )
+    {
+    if( !comp || r != NULL || ripple_start <= 0 )
+        return;
+    rr = rend;
+    target = t;
+    rr->setTarget( target );
+    frame_clip = region & QRegion( rippleBox());
+    resetClip();
+    drawRipples( comp_t0, 0, 0 );
+    rr->clearClip();
+    target = NULL;
+    frame_clip = QRegion();
+    }
+
+void Overview::compositorStopping()
+    {
+    if( !comp )
+        return;
+    abort();
+    stopRipple();
+    comp = false;
+    rr = NULL;
+    }
+
+
+// the state at time t0 (the frame seen then); true while something moves
+bool Overview::advance( double t_start, double t0 )
+    {
     // the transition
     double lin = trans_duration > 0 ? clamp01(( t0 - trans_start ) / trans_duration ) : 1.0;
     double e = easeOutQuad( lin );
@@ -2698,14 +3004,18 @@ void Overview::renderFrame()
          item = items.next())
         if( item->fade_start > 0 || item->close_start > 0 )
             more = true;
+    return more;
+    }
 
-
+// the whole frame into the renderer's target (last: the last one of the zoom-in)
+void Overview::drawFrame( double t0, bool last, bool* more )
+    {
     // the background
-    XRenderColor black = { 0, 0, 0, 0xffff };
     bool have_desktop = false;
-    if( r->snapshot_picture != None )
+    rr->clearClip();
+    if( r->snapshot_tex != NULL )
         {
-        XRenderComposite( dpy, PictOpSrc, r->snapshot_picture, None, dst, 0, 0, 0, 0, 0, 0, r->width, r->height );
+        rr->drawTexture( r->snapshot_tex, 0, 0, 1.0, Render::BlendSource );
         have_desktop = true;
         }
     else
@@ -2715,8 +3025,13 @@ void Overview::renderFrame()
              item = items.next())
             if( item->kind == OverviewItem::Desktop )
                 have_desktop = true;
-        if( !have_desktop )
-            XRenderFillRectangle( dpy, PictOpSrc, dst, &black, 0, 0, r->width, r->height );
+        if( !have_desktop && comp )
+            { // the compositor's background (the root window's)
+            ws->compositor()->drawBackground( frame_clip.isNull() ? QRegion( 0, 0, r->width, r->height ) : frame_clip );
+            resetClip();
+            }
+        else if( !have_desktop )
+            rr->fill( RectF( 0, 0, r->width, r->height ), Qt::black, 1.0, Render::BlendSource );
         }
     const double dim = progress * ( composite ? DimAlpha : 0.75 );
     // a desktop window covering the screen is drawn dimmed, no full screen
@@ -2725,7 +3040,7 @@ void Overview::renderFrame()
     OverviewItem* first = items.first();
     if( composite && dim > 1.0 / 512 && first != NULL && first->kind == OverviewItem::Desktop
         && first->geom == QRect( 0, 0, r->width, r->height ) && !first->shaped && !first->alpha_format
-        && first->mip_picture[ 0 ] != None )
+        && first->hasContents())
         {
         desktop_dim = dim;
         for( OverviewItem* item = items.next();
@@ -2743,14 +3058,14 @@ void Overview::renderFrame()
         {
         if( !dimmed && item->kind != OverviewItem::Desktop )
             {
-            drawBackdrop( dst, dim, t0 );
+            drawBackdrop( dim, t0 );
             dimmed = true;
             }
         if( item != dragged )
-            drawItem( item, dst );
+            drawItem( item );
         }
     if( !dimmed )
-        drawBackdrop( dst, dim, t0 );
+        drawBackdrop( dim, t0 );
 
     // the titles
     if( title_alpha > 1.0 / 512 )
@@ -2759,17 +3074,15 @@ void Overview::renderFrame()
              item != NULL;
              item = items.next())
             {
-            if( !item->in_layout || item->title_picture == None || item == dragged )
+            if( !item->in_layout || item->title_tex == NULL || item == dragged )
                 continue;
             double a = title_alpha * item->fade;
             int w = item->title_pixmap.width();
             int h = item->title_pixmap.height();
             int x = (int) floor( item->cur.cx() - w / 2.0 + 0.5 );
             int y = (int) floor( item->cur.y + item->cur.h + TitleGap + 0.5 );
-            fillRounded( dpy, r, dst, RectF( x, y, w, h ), h / 2.0, QColor( 24, 24, 24 ), 0.78 * a );
-            Picture white = solidPicture( dpy, Qt::white, a );
-            XRenderComposite( dpy, PictOpOver, white, item->title_picture, dst, 0, 0, 0, 0, x, y, w, h );
-            XRenderFreePicture( dpy, white );
+            fillRounded( rr, r, RectF( x, y, w, h ), h / 2.0, QColor( 24, 24, 24 ), 0.78 * a );
+            rr->fillMasked( RectF( x, y, w, h ), Qt::white, a, item->title_tex, RectF( 0, 0, w, h ));
             }
         }
     if( title_alpha > 1.0 / 512 )
@@ -2777,16 +3090,16 @@ void Overview::renderFrame()
              item != NULL;
              item = items.next())
             if( item->in_layout && item->minimized && item != dragged )
-                drawMinimizedBadge( item, dst );
+                drawMinimizedBadge( item );
     if( title_alpha > 1.0 / 512 && dragged == NULL )
         for( OverviewItem* item = items.first();
              item != NULL;
              item = items.next())
             if( item->in_layout && item->close_fade > 1.0 / 512 )
-                drawCloseButton( item, dst );
+                drawCloseButton( item );
     if( dragged != NULL )
-        drawItem( dragged, dst );
-    if( r->filter_picture != None && progress > 0.5 && state != Hiding && state != Finishing )
+        drawItem( dragged );
+    if( r->filter_tex != NULL && progress > 0.5 && state != Hiding && state != Finishing )
         {
         QDesktopWidget* desktop = QApplication::desktop();
         QRect sg = desktop->screenGeometry( desktop->primaryScreen());
@@ -2795,73 +3108,35 @@ void Overview::renderFrame()
         int h = r->filter_pixmap.height();
         int x = area.x() + ( area.width() - w ) / 2;
         int y = area.y() + 12;
-        fillRounded( dpy, r, dst, RectF( x, y, w, h ), h / 2.0, QColor( 24, 24, 24 ), 0.85 );
-        Picture white = solidPicture( dpy, Qt::white, 1.0 );
-        XRenderComposite( dpy, PictOpOver, white, r->filter_picture, dst, 0, 0, 0, 0, x, y, w, h );
-        XRenderFreePicture( dpy, white );
+        fillRounded( rr, r, RectF( x, y, w, h ), h / 2.0, QColor( 24, 24, 24 ), 0.85 );
+        rr->fillMasked( RectF( x, y, w, h ), Qt::white, 1.0, r->filter_tex, RectF( 0, 0, w, h ));
         }
 
     if( ripple_start > 0 )
         {
-        if( state == Hiding && !more )
-            saveRippleBackground( dst ); // the last frame: the screen when the overlay goes
-        if( drawRipples( dst, t0, 0, 0 ) && !( state == Hiding && !more ))
-            frame_wanted = true;
+        if( last && !comp )
+            saveRippleBackground(); // the last frame: the screen when the overlay goes
+        if( drawRipples( t0, 0, 0 ) && !last )
+            *more = true;
         }
-    if( !dump_dir.isEmpty())
-        dumpFrame();
-    present();
-    ++frame_count;
-    if( debug )
-        {
-        XSync( dpy, False );
-        double t = now() - t_start;
-        stat_render += t;
-        stat_max_render = QMAX( stat_max_render, t );
-        }
-    last_frame = t_start;
-
-    if( state == Hiding && !more )
-        {
-        if( debug )
-            {
-            double t = t0 - stat_first_frame;
-            kdWarning( 1212 ) << "overview: zoom-in " << frame_count << " frames in " << t << " ms, "
-                << ( frame_count > 1 ? frame_count * 1000.0 / t : 0 ) << " fps, render avg "
-                << ( frame_count ? stat_render / frame_count : 0 ) << " max " << stat_max_render << " ms, skipped " << stat_skipped << " missed refreshes " << stat_gaps << endl;
-            }
-        state = Finishing;
-        if( !presenter->usesPresent() || presenter->queued() == 0 )
-            {
-            XSync( dpy, False );
-            finish();
-            }
-        // else finish() after the completion of the last presentation
-        return;
-        }
-    if( more )
-        frame_wanted = true;
     }
 
 // the dimmed background over the desktop, the monitor a thumbnail is
 // dragged to
-void Overview::drawBackdrop( XID dst, double dim, double t )
+void Overview::drawBackdrop( double dim, double t )
     {
     if( dim > 1.0 / 512 && desktop_dim == 0 )
-        {
-        XRenderColor c = renderColor( Qt::black, dim );
-        XRenderFillRectangle( dpy, PictOpOver, dst, &c, 0, 0, r->width, r->height );
-        }
+        rr->fill( RectF( 0, 0, r->width, r->height ), Qt::black, dim );
     if( dragged != NULL && drag_target >= 0 )
         {
         double a = clamp01(( t - drag_target_start ) / FadeTime );
         RectF area( layoutArea( drag_target ));
-        fillRounded( dpy, r, dst, RectF( area.x + 12, area.y + 12, area.w - 24, area.h - 24 ), 16,
+        fillRounded( rr, r, RectF( area.x + 12, area.y + 12, area.w - 24, area.h - 24 ), 16,
             r->highlight, 0.18 * a );
         }
     }
 
-void Overview::drawItem( OverviewItem* item, XID dst )
+void Overview::drawItem( OverviewItem* item )
     {
     double alpha = 1.0;
     RectF rect( item->geom );
@@ -2896,59 +3171,80 @@ void Overview::drawItem( OverviewItem* item, XID dst )
     // minimized windows darkened (until restored at the end of the zoom-in)
     const double dim = item->minimized || ( item->restored && state == Hiding )
         ? MinimizedDim * clamp01( progress ) : 0.0;
+    // composited: the window's own shadow, scaled with it, fading out while
+    // zooming out (frame 0 and the last frame are the compositor's scene)
+    if( comp && !item->minimized && !item->placeholder && !item->kept )
+        {
+        Compositor* c = ws->compositor();
+        CompositorShadow s;
+        const double sa = alpha * ( scaled ? 1.0 - clamp01( progress ) : 1.0 );
+        if( sa > 1.0 / 512 && c->windowShadow( item->id, &s ) && s.valid )
+            {
+            const double fx = rect.w / item->geom.width();
+            const double fy = rect.h / item->geom.height();
+            QRegion shape;
+            if( item->shaped )
+                for( unsigned int i = 0;
+                     i < item->shape.size();
+                     ++i )
+                    {
+                    const XRectangle& sr = item->shape[ i ];
+                    const int x1 = (int) floor( rect.x + sr.x * fx + 0.5 );
+                    const int y1 = (int) floor( rect.y + sr.y * fy + 0.5 );
+                    shape |= QRegion( x1, y1, (int) floor( rect.x + ( sr.x + sr.width ) * fx + 0.5 ) - x1,
+                        (int) floor( rect.y + ( sr.y + sr.height ) * fy + 0.5 ) - y1 );
+                    }
+            else
+                shape = QRegion( rect.bounds());
+            QRegion clip = ( frame_clip.isNull() ? QRegion( 0, 0, r->width, r->height ) : frame_clip ) - shape;
+            if( !clip.isEmpty())
+                c->drawShadow( rr, s, rect, sa, clip );
+            resetClip();
+            }
+        }
     if( scaled && progress > 0.001 )
         { // a soft shadow and the selection (not below an opaque window)
         double a = QMIN( 1.0, progress ) * alpha;
         const bool hollow = composite && alpha >= 1.0 && !item->alpha_format && !item->shaped
-            && item->mip_picture[ 0 ] != None;
-        fillRounded( dpy, r, dst, RectF( rect.x - 3, rect.y - 1, rect.w + 6, rect.h + 7 ), 6, Qt::black, 0.10 * a, hollow );
-        fillRounded( dpy, r, dst, RectF( rect.x - 1, rect.y, rect.w + 2, rect.h + 3 ), 3, Qt::black, 0.18 * a, hollow );
+            && item->hasContents() && item->opacity >= 1.0;
+        fillRounded( rr, r, RectF( rect.x - 3, rect.y - 1, rect.w + 6, rect.h + 7 ), 6, Qt::black, 0.10 * a, hollow );
+        fillRounded( rr, r, RectF( rect.x - 1, rect.y, rect.w + 2, rect.h + 3 ), 3, Qt::black, 0.18 * a, hollow );
         if( item == selected && item != dragged && title_alpha > 0 )
-            fillRounded( dpy, r, dst, RectF( rect.x - 8, rect.y - 8, rect.w + 16, rect.h + 16 ), 10,
+            fillRounded( rr, r, RectF( rect.x - 8, rect.y - 8, rect.w + 16, rect.h + 16 ), 10,
                 r->highlight, 0.75 * title_alpha * alpha, hollow );
         }
     if( !composite )
         { // icons on tiles
         if( !item->in_layout )
             return;
-        fillRounded( dpy, r, dst, rect, 8, QColor( 64, 64, 64 ).dark( 100 + int( dim * 100 )), 0.95 * alpha );
-        drawIcon( dpy, item, dst, rect, 64.0, 0.6, alpha );
+        fillRounded( rr, r, rect, 8, QColor( 64, 64, 64 ).dark( 100 + int( dim * 100 )), 0.95 * alpha );
+        drawIcon( rr, item, rect, 64.0, 0.6, alpha );
         return;
         }
     if( item->placeholder )
         {
-        drawPlaceholder( item, dst, rect, alpha );
+        drawPlaceholder( item, rect, alpha );
         return;
         }
-    if( item->mip_picture[ 0 ] == None )
+    if( !item->hasContents())
         return;
     // the source: the mip level that is downscaled at most by half
     int level = mipLevel( rect.w / item->mip_w[ 0 ] );
     updateMips( item, level );
-    Picture src = item->mip_picture[ level ];
+    Render::Texture* src = NULL;
+    while( level >= 0 && ( src = mipTexture( item, level )) == NULL )
+        --level;
+    if( src == NULL )
+        return;
     const double sw = item->mip_w[ level ];
     const double sh = item->mip_h[ level ];
-    const double sx = rect.w / sw;
-    const double sy = rect.h / sh;
     const int dx = (int) floor( rect.x );
     const int dy = (int) floor( rect.y );
-    const int dw = (int) ceil( rect.x + rect.w ) - dx;
-    const int dh = (int) ceil( rect.y + rect.h ) - dy;
-    const bool identity = level == 0 && fabs( sx - 1 ) < 1e-9 && fabs( sy - 1 ) < 1e-9
+    const bool identity = level == 0 && fabs( rect.w - sw ) < 1e-9 && fabs( rect.h - sh ) < 1e-9
         && rect.x == dx && rect.y == dy;
-    if( identity )
-        {
-        setTransform( dpy, src, 1, 1, 0, 0 );
-        XRenderSetPictureFilter( dpy, src, FilterNearest, NULL, 0 );
-        }
-    else
-        {
-        setTransform( dpy, src, 1 / sx, 1 / sy, ( dx - rect.x ) / sx, ( dy - rect.y ) / sy );
-        XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
-        }
     if( item->shaped )
         {
-        QValueVector< XRectangle > clip( item->shape.size());
+        QRegion clip;
         const double fx = rect.w / item->geom.width();
         const double fy = rect.h / item->geom.height();
         for( unsigned int i = 0;
@@ -2960,43 +3256,41 @@ void Overview::drawItem( OverviewItem* item, XID dst )
             int y1 = (int) floor( rect.y + sr.y * fy + 0.5 );
             int x2 = (int) floor( rect.x + ( sr.x + sr.width ) * fx + 0.5 );
             int y2 = (int) floor( rect.y + ( sr.y + sr.height ) * fy + 0.5 );
-            clip[ i ].x = x1;
-            clip[ i ].y = y1;
-            clip[ i ].width = QMAX( 0, x2 - x1 );
-            clip[ i ].height = QMAX( 0, y2 - y1 );
+            if( x2 > x1 && y2 > y1 )
+                clip |= QRegion( x1, y1, x2 - x1, y2 - y1 );
             }
-        XRenderSetPictureClipRectangles( dpy, dst, 0, 0, &clip[ 0 ], clip.size());
+        if( !frame_clip.isNull())
+            clip &= frame_clip;
+        rr->setClip( clip );
         }
-    Picture mask = None;
-    if( alpha < 1.0 )
-        mask = solidPicture( dpy, Qt::black, alpha );
-    // at scale 1 like the server's automatic compositing (Src, also for
-    // ARGB windows), else blended (the edges are anti-aliased)
-    int op = mask != None || ( item->alpha_format && !identity ) ? PictOpOver : PictOpSrc;
+    const double opacity = alpha * item->opacity;
+    // at scale 1 like the server's automatic compositing (Source, also for
+    // ARGB windows; composited: like the compositor, which blends those),
+    // else blended (the edges are anti-aliased)
+    Render::Blend blend = opacity < 1.0 || ( item->alpha_format && ( !identity || comp ))
+        ? Render::BlendOver : Render::BlendSource;
     if( item->kind == OverviewItem::Desktop && desktop_dim > 0 )
-        op = PictOpSrc; // the background dimmed
-    XRenderComposite( dpy, op, src, mask, dst, 0, 0, 0, 0, dx, dy, dw, dh );
-    if( mask != None )
-        XRenderFreePicture( dpy, mask );
+        blend = Render::BlendSource; // the background dimmed
+    if( identity )
+        rr->drawTexture( src, RectF( 0, 0, sw, sh ), RectF( dx, dy, sw, sh ), opacity, Render::NearestFilter, blend );
+    else
+        rr->drawTexture( src, RectF( 0, 0, sw, sh ), rect, opacity, Render::BilinearFilter, blend );
     if( dim * alpha > 1.0 / 512 )
         { // (inside the shape; the edge pixels a little darker while moving)
-        XRenderColor c = renderColor( Qt::black, dim * alpha );
-        XRenderFillRectangle( dpy, PictOpOver, dst, &c, dx, dy, dw, dh );
+        const int dw = (int) ceil( rect.x + rect.w ) - dx;
+        const int dh = (int) ceil( rect.y + rect.h ) - dy;
+        rr->fill( RectF( dx, dy, dw, dh ), Qt::black, dim * alpha );
         }
     if( item->shaped )
-        {
-        XRenderPictureAttributes pa;
-        pa.clip_mask = None;
-        XRenderChangePicture( dpy, dst, CPClipMask, &pa );
-        }
+        resetClip();
     }
 
 // the icon of the item centered in rect, at most max_size large and
 // fraction of the rectangle
-static void drawIcon( Display* dpy, OverviewItem* item, Picture dst, const RectF& rect, double max_size,
+static void drawIcon( Render::Renderer* rr, OverviewItem* item, const RectF& rect, double max_size,
     double fraction, double alpha )
     {
-    if( item->icon_picture == None || item->icon_w <= 0 || item->icon_h <= 0 )
+    if( item->icon_tex == NULL || item->icon_w <= 0 || item->icon_h <= 0 )
         return;
     double size = QMIN( max_size, QMIN( rect.w, rect.h ) * fraction );
     if( size < 1 )
@@ -3006,52 +3300,63 @@ static void drawIcon( Display* dpy, OverviewItem* item, Picture dst, const RectF
     double ih = item->icon_h * s;
     int x = (int) floor( rect.cx() - iw / 2 );
     int y = (int) floor( rect.cy() - ih / 2 );
-    setTransform( dpy, item->icon_picture, 1 / s, 1 / s, 0, 0 );
-    Picture mask = alpha < 1.0 ? solidPicture( dpy, Qt::black, alpha ) : None;
-    XRenderComposite( dpy, PictOpOver, item->icon_picture, mask, dst, 0, 0, 0, 0, x, y,
-        (int) ceil( iw ), (int) ceil( ih ));
-    if( mask != None )
-        XRenderFreePicture( dpy, mask );
+    rr->drawTexture( item->icon_tex, RectF( 0, 0, item->icon_w, item->icon_h ), RectF( x, y, iw, ih ), alpha,
+        Render::BilinearFilter, Render::BlendOver );
     }
 
 // a minimized window without contents: a card with its icon (its title
 // below it like for all others)
-void Overview::drawPlaceholder( OverviewItem* item, XID dst, const RectF& rect, double alpha )
+void Overview::drawPlaceholder( OverviewItem* item, const RectF& rect, double alpha )
     {
-    fillRounded( dpy, r, dst, rect, 10, QColor( 58, 58, 62 ), alpha );
-    fillRounded( dpy, r, dst, RectF( rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2 ), 9,
+    fillRounded( rr, r, rect, 10, QColor( 58, 58, 62 ), alpha );
+    fillRounded( rr, r, RectF( rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2 ), 9,
         QColor( 255, 255, 255 ), 0.04 * alpha );
-    drawIcon( dpy, item, dst, rect, PlaceholderIcon, 0.45, alpha );
+    drawIcon( rr, item, rect, PlaceholderIcon, 0.45, alpha );
+    }
+
+// a small ARGB texture (transparent) as the target, for drawing a shape
+// into it once; endOffscreen() goes back to the frame
+Render::Texture* Overview::offscreenShape( int size )
+    {
+    Render::Texture* t = rr->createOffscreen( size, size, true );
+    if( t == NULL )
+        return NULL;
+    rr->clearClip();
+    rr->setTarget( t );
+    rr->fill( RectF( 0, 0, size, size ), Qt::black, 0.0, Render::BlendSource );
+    return t;
+    }
+
+void Overview::endOffscreen()
+    {
+    made_copy = true;
+    if( target != NULL )
+        rr->setTarget( target );
+    resetClip();
     }
 
 // the badge of a minimized window: in the top left corner, like the close
 // button in the top right one
-void Overview::drawMinimizedBadge( OverviewItem* item, XID dst )
+void Overview::drawMinimizedBadge( OverviewItem* item )
     {
     const int size = CloseSize + 2;
-    if( r->badge_picture == None )
+    if( r->badge_tex == NULL )
         { // made once: a dark circle with a light rim and a white bar
-        r->badge_pixmap = XCreatePixmap( dpy, root, size, size, 32 );
-        r->badge_picture = XRenderCreatePicture( dpy, r->badge_pixmap,
-            XRenderFindStandardFormat( dpy, PictStandardARGB32 ), 0, NULL );
-        XRenderColor clear = { 0, 0, 0, 0 };
-        XRenderFillRectangle( dpy, PictOpSrc, r->badge_picture, &clear, 0, 0, size, size );
-        roundedRect( dpy, r->badge_picture, RectF( 1, 1, CloseSize, CloseSize ), CloseSize / 2.0, Qt::white, 0.35 );
-        roundedRect( dpy, r->badge_picture, RectF( 2, 2, CloseSize - 2, CloseSize - 2 ), CloseSize / 2.0 - 1,
-            QColor( 40, 40, 40 ), 1.0 );
+        r->badge_tex = offscreenShape( size );
+        if( r->badge_tex == NULL )
+            return;
+        roundedRect( rr, RectF( 1, 1, CloseSize, CloseSize ), CloseSize / 2.0, Qt::white, 0.35 );
+        roundedRect( rr, RectF( 2, 2, CloseSize - 2, CloseSize - 2 ), CloseSize / 2.0 - 1, QColor( 40, 40, 40 ), 1.0 );
         const double c = size / 2.0;
         const double arm = CloseSize * 0.2;
-        roundedRect( dpy, r->badge_picture, RectF( c - arm, c + arm * 0.35, 2 * arm, 2.4 ), 1.2, Qt::white, 1.0 );
+        roundedRect( rr, RectF( c - arm, c + arm * 0.35, 2 * arm, 2.4 ), 1.2, Qt::white, 1.0 );
+        endOffscreen();
         }
     const double a = title_alpha * item->fade;
     if( a <= 1.0 / 512 )
         return;
     const QPoint center( (int) floor( item->cur.x + CloseInset + 0.5 ), (int) floor( item->cur.y + CloseInset + 0.5 ));
-    Picture mask = a < 1.0 ? solidPicture( dpy, Qt::black, a ) : None;
-    XRenderComposite( dpy, PictOpOver, r->badge_picture, mask, dst,
-        0, 0, 0, 0, center.x() - size / 2, center.y() - size / 2, size, size );
-    if( mask != None )
-        XRenderFreePicture( dpy, mask );
+    rr->drawTexture( r->badge_tex, center.x() - size / 2, center.y() - size / 2, a );
     }
 
 // the center of the close button of the thumbnail
@@ -3060,54 +3365,41 @@ static QPoint closeCenter( const RectF& rect )
     return QPoint( (int) floor( rect.x + rect.w - CloseInset + 0.5 ), (int) floor( rect.y + CloseInset + 0.5 ));
     }
 
-// a line with the width w (a thin parallelogram, anti-aliased)
-static void thickLine( Display* dpy, Picture dst, Picture src, double x1, double y1, double x2, double y2, double w )
-    {
-    double dx = x2 - x1;
-    double dy = y2 - y1;
-    double len = sqrt( dx * dx + dy * dy );
-    double nx = -dy / len * w / 2;
-    double ny = dx / len * w / 2;
-    XPointDouble pts[ 4 ] = {{ x1 + nx, y1 + ny }, { x2 + nx, y2 + ny }, { x2 - nx, y2 - ny }, { x1 - nx, y1 - ny }};
-    XRenderCompositeDoublePoly( dpy, PictOpOver, src, dst, XRenderFindStandardFormat( dpy, PictStandardA8 ),
-        0, 0, 0, 0, pts, 4, WindingRule );
-    }
-
-void Overview::drawCloseButton( OverviewItem* item, XID dst )
+void Overview::drawCloseButton( OverviewItem* item )
     {
     const int size = CloseSize + 2;
-    if( r->close_picture[ 0 ] == None )
+    if( r->close_tex[ 0 ] == NULL )
         { // made once: a dark circle with a light rim and a white X
         for( int i = 0;
              i < 2;
              ++i )
             {
-            r->close_pixmap[ i ] = XCreatePixmap( dpy, root, size, size, 32 );
-            r->close_picture[ i ] = XRenderCreatePicture( dpy, r->close_pixmap[ i ],
-                XRenderFindStandardFormat( dpy, PictStandardARGB32 ), 0, NULL );
-            XRenderColor clear = { 0, 0, 0, 0 };
-            XRenderFillRectangle( dpy, PictOpSrc, r->close_picture[ i ], &clear, 0, 0, size, size );
+            r->close_tex[ i ] = offscreenShape( size );
+            if( r->close_tex[ i ] == NULL )
+                break;
             const double c = size / 2.0;
-            roundedRect( dpy, r->close_picture[ i ], RectF( 1, 1, CloseSize, CloseSize ), CloseSize / 2.0,
-                Qt::white, 0.35 );
-            roundedRect( dpy, r->close_picture[ i ], RectF( 2, 2, CloseSize - 2, CloseSize - 2 ), CloseSize / 2.0 - 1,
+            roundedRect( rr, RectF( 1, 1, CloseSize, CloseSize ), CloseSize / 2.0, Qt::white, 0.35 );
+            roundedRect( rr, RectF( 2, 2, CloseSize - 2, CloseSize - 2 ), CloseSize / 2.0 - 1,
                 i == 0 ? QColor( 40, 40, 40 ) : QColor( 96, 96, 96 ), 1.0 );
-            Picture white = solidPicture( dpy, Qt::white, 1.0 );
             const double arm = CloseSize * 0.18;
-            thickLine( dpy, r->close_picture[ i ], white, c - arm, c - arm, c + arm, c + arm, 2.2 );
-            thickLine( dpy, r->close_picture[ i ], white, c - arm, c + arm, c + arm, c - arm, 2.2 );
-            XRenderFreePicture( dpy, white );
+            AlphaMask cross( size, size );
+            cross.add( InCross( InLine( c - arm, c - arm, c + arm, c + arm, 2.2 ),
+                InLine( c - arm, c + arm, c + arm, c - arm, 2.2 )), 0, 0 );
+            Render::Texture* m = cross.texture( rr );
+            if( m != NULL )
+                rr->fillMasked( RectF( 0, 0, size, size ), Qt::white, 1.0, m, RectF( 0, 0, size, size ));
+            delete m;
             }
+        endOffscreen();
+        if( r->close_tex[ 0 ] == NULL || r->close_tex[ 1 ] == NULL )
+            return;
         }
     const QPoint center = closeCenter( item->cur );
     const double a = item->close_fade * title_alpha * item->fade;
     if( a <= 1.0 / 512 )
         return;
-    Picture mask = a < 1.0 ? solidPicture( dpy, Qt::black, a ) : None;
-    XRenderComposite( dpy, PictOpOver, r->close_picture[ item == hovered && close_hover ? 1 : 0 ], mask, dst,
-        0, 0, 0, 0, center.x() - size / 2, center.y() - size / 2, size, size );
-    if( mask != None )
-        XRenderFreePicture( dpy, mask );
+    rr->drawTexture( r->close_tex[ item == hovered && close_hover ? 1 : 0 ], center.x() - size / 2,
+        center.y() - size / 2, a );
     }
 
 bool Overview::closeHit( const OverviewItem* item, const QPoint& p ) const
