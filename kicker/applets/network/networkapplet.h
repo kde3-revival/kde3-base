@@ -73,6 +73,7 @@ private slots:
     void menuActivated(int id);
 
     void connectTo(const QString &ssid);
+    void explainUnsupported();
     void connectHidden();
     void disconnectWifi();
     void setWifiEnabled(bool on);
@@ -124,6 +125,11 @@ private:
 
     // the password dialogs of the agent's requests
     QMap<int, PasswordDialog *> m_requests;
+    // the network explainUnsupported() tells about, and its security
+    QString m_unsupported;
+    QString m_unsupportedSecurity;
+    bool m_explaining;
+
     // the password dialogs of new networks, by SSID
     QMap<QString, QGuardedPtr<PasswordDialog> > m_newPasswords;
     // the network the user did not give a password for, when

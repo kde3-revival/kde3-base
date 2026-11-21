@@ -77,7 +77,8 @@ NetworkApplet::NetworkApplet(const QString &configFile, Type type, int actions,
       m_frame(0),
       m_notifications(true),
       m_airplane(false),
-      m_wifiUsable(false)
+      m_wifiUsable(false),
+      m_explaining(false)
 {
     setBackgroundOrigin(AncestorOrigin);
     readConfig();
@@ -550,27 +551,56 @@ void NetworkApplet::connectTo(const QString &ssid)
             break;
         }
         case NetworkBackend::Unsupported:
-        {
-            QString text = i18n("<qt>The network <b>%1</b> uses %2, which needs "
-                                "to be set up in the network settings.</qt>")
-                               .arg(QStyleSheet::escape(ssid))
-                               .arg(NetworkBackend::securityName(network.security));
-            if (!haveEditor())
+            // Not from within the click on the list: the message box's
+            // event loop may see the applet, and the list, deleted.
+            if (!m_explaining)
             {
-                KMessageBox::sorry(0, text, i18n("Network"));
-            }
-            else if (KMessageBox::questionYesNo(
-                         0, text, i18n("Network"),
-                         KGuiItem(i18n("Open &Settings"), "configure"),
-                         KStdGuiItem::cancel()) == KMessageBox::Yes)
-            {
-                runEditor();
+                m_unsupported = ssid;
+                m_unsupportedSecurity = NetworkBackend::securityName(network.security);
+                QTimer::singleShot(0, this, SLOT(explainUnsupported()));
             }
             break;
-        }
         case NetworkBackend::Failed:
             connectionFailed(ssid, i18n("The network was not found."));
             break;
+    }
+}
+
+void NetworkApplet::explainUnsupported()
+{
+    if (m_explaining || m_unsupported.isEmpty())
+    {
+        return;
+    }
+    QString text = i18n("<qt>The network <b>%1</b> uses %2, which needs "
+                        "to be set up in the network settings.</qt>")
+                       .arg(QStyleSheet::escape(m_unsupported))
+                       .arg(m_unsupportedSecurity);
+    m_unsupported = QString::null;
+
+    m_explaining = true;
+    QGuardedPtr<NetworkApplet> self(this);
+    bool openEditor = false;
+    if (!haveEditor())
+    {
+        KMessageBox::sorry(0, text, i18n("Network"));
+    }
+    else
+    {
+        openEditor = KMessageBox::questionYesNo(
+                         0, text, i18n("Network"),
+                         KGuiItem(i18n("Open &Settings"), "configure"),
+                         KStdGuiItem::cancel()) == KMessageBox::Yes;
+    }
+    // removed from the panel meanwhile?
+    if (!self)
+    {
+        return;
+    }
+    m_explaining = false;
+    if (openEditor)
+    {
+        runEditor();
     }
 }
 
