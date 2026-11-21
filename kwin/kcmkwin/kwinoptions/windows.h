@@ -194,6 +194,7 @@ public:
 
 private slots:
   void shadeHoverChanged(bool);
+  void overviewCornerChanged(bool);
 
   //copied from kcontrol/konq/kwindesktop, aleXXX
   void setEBorders();
@@ -231,6 +232,12 @@ private:
 
   QComboBox* focusStealing;
   QCheckBox* hideUtilityWindowsForInactive;
+
+  QCheckBox* overviewCorner;
+  QComboBox* overviewCornerPosition;
+  QLabel* overviewCornerPositionLabel;
+  KIntNumInput* overviewCornerDelay;
+  KIntNumInput* overviewAnimationTime;
 };
 
 class KProcess;

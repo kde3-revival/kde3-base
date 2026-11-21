@@ -25,6 +25,7 @@
 
 #include <qdir.h>
 #include <qlayout.h>
+#include <qgroupbox.h>
 #include <qslider.h>
 #include <qwhatsthis.h>
 #include <qvbuttongroup.h>
@@ -588,6 +589,51 @@ KAdvancedConfig::KAdvancedConfig (bool _standAlone, KConfig *_config, QWidget *p
 
     lay->addWidget(electricBox);
 
+    QGroupBox* overviewBox = new QGroupBox(i18n("Window Overview"), this);
+    overviewBox->setColumnLayout(0, Qt::Vertical);
+    QGridLayout* overviewLay = new QGridLayout(overviewBox->layout(), 4, 1, KDialog::spacingHint());
+    overviewCorner = new QCheckBox(i18n("Show the overview when the mouse pointer &touches a screen corner"), overviewBox);
+    overviewLay->addWidget(overviewCorner, 0, 0);
+    overviewCornerPositionLabel = new QLabel(i18n("Co&rner:"), overviewBox);
+    overviewCornerPosition = new QComboBox(overviewBox);
+    overviewCornerPosition->insertItem(i18n("Top left"));
+    overviewCornerPosition->insertItem(i18n("Top right"));
+    overviewCornerPosition->insertItem(i18n("Bottom left"));
+    overviewCornerPosition->insertItem(i18n("Bottom right"));
+    overviewCornerPositionLabel->setBuddy(overviewCornerPosition);
+    QHBoxLayout* cornerLay = new QHBoxLayout(KDialog::spacingHint());
+    cornerLay->addWidget(overviewCornerPositionLabel);
+    cornerLay->addWidget(overviewCornerPosition);
+    cornerLay->addStretch();
+    overviewLay->addLayout(cornerLay, 1, 0);
+    overviewCornerDelay = new KIntNumInput(50, overviewBox);
+    overviewCornerDelay->setRange(0, 1000, 10, true);
+    overviewCornerDelay->setSuffix(i18n(" msec"));
+    overviewCornerDelay->setLabel(i18n("Corner &delay:"));
+    overviewLay->addWidget(overviewCornerDelay, 2, 0);
+    overviewAnimationTime = new KIntNumInput(250, overviewBox);
+    overviewAnimationTime->setRange(0, 1000, 10, true);
+    overviewAnimationTime->setSuffix(i18n(" msec"));
+    overviewAnimationTime->setLabel(i18n("A&nimation duration:"));
+    overviewLay->addWidget(overviewAnimationTime, 3, 0);
+    QWhatsThis::add(overviewBox, i18n("The window overview shows all windows of the current desktop"
+       " side by side; click one (or choose it with the arrow keys, or type a part of its title, and"
+       " press Enter) to activate it, or press Escape. It can also be shown with a keyboard shortcut"
+       " (\"Show Window Overview\" in the Keyboard Shortcuts module)."));
+    QWhatsThis::add(overviewCorner, i18n("If this option is enabled, moving the mouse pointer into the"
+       " chosen corner of the screen shows the window overview; moving it there again hides it."
+       " Nothing happens while a mouse button is pressed or when the active window is full screen."));
+    QWhatsThis::add(overviewCornerDelay, i18n("How long the mouse pointer must stay in the corner"
+       " before the overview is shown."));
+    QWhatsThis::add(overviewAnimationTime, i18n("The duration of the zoom out and zoom in animations;"
+       " 0 disables them."));
+    connect(overviewCorner, SIGNAL(toggled(bool)), this, SLOT(overviewCornerChanged(bool)));
+    connect(overviewCorner, SIGNAL(toggled(bool)), SLOT(changed()));
+    connect(overviewCornerPosition, SIGNAL(activated(int)), SLOT(changed()));
+    connect(overviewCornerDelay, SIGNAL(valueChanged(int)), SLOT(changed()));
+    connect(overviewAnimationTime, SIGNAL(valueChanged(int)), SLOT(changed()));
+    lay->addWidget(overviewBox);
+
     QHBoxLayout* focusStealingLayout = new QHBoxLayout( lay,KDialog::spacingHint());
     QLabel* focusStealingLabel = new QLabel( i18n( "Focus stealing prevention level:" ), this );
     focusStealing = new QComboBox( this );
@@ -682,6 +728,15 @@ void KAdvancedConfig::load( void )
     setFocusStealing( config->readNumEntry(KWIN_FOCUS_STEALING, 1 ));
     setHideUtilityWindowsForInactive( config->readBoolEntry( KWIN_HIDE_UTILITY, true ));
 
+    config->setGroup( "Overview" );
+    overviewCorner->setChecked( config->readBoolEntry( "HotCorner", true ));
+    QString corner = config->readEntry( "HotCornerPosition", "TopLeft" );
+    overviewCornerPosition->setCurrentItem( corner == "TopRight" ? 1 : corner == "BottomLeft" ? 2
+        : corner == "BottomRight" ? 3 : 0 );
+    overviewCornerDelay->setValue( config->readNumEntry( "HotCornerDelay", 50 ));
+    overviewAnimationTime->setValue( config->readNumEntry( "AnimationTime", 250 ));
+    overviewCornerChanged( overviewCorner->isChecked());
+
     emit KCModule::changed(false);
 }
 
@@ -706,6 +761,14 @@ void KAdvancedConfig::save( void )
     config->writeEntry(KWIN_FOCUS_STEALING, focusStealing->currentItem());
     config->writeEntry(KWIN_HIDE_UTILITY, hideUtilityWindowsForInactive->isChecked());
 
+    config->setGroup( "Overview" );
+    static const char* const corners[] = { "TopLeft", "TopRight", "BottomLeft", "BottomRight" };
+    config->writeEntry( "HotCorner", overviewCorner->isChecked());
+    config->writeEntry( "HotCornerPosition", corners[ overviewCornerPosition->currentItem() & 3 ] );
+    config->writeEntry( "HotCornerDelay", overviewCornerDelay->value());
+    config->writeEntry( "AnimationTime", overviewAnimationTime->value());
+    config->setGroup( "Windows" );
+
     if (standAlone)
     {
         config->sync();
@@ -727,7 +790,19 @@ void KAdvancedConfig::defaults()
     // TODO default to low for now
     setFocusStealing(1);
     setHideUtilityWindowsForInactive( true );
+    overviewCorner->setChecked( true );
+    overviewCornerPosition->setCurrentItem( 0 );
+    overviewCornerDelay->setValue( 50 );
+    overviewAnimationTime->setValue( 250 );
+    overviewCornerChanged( true );
     emit KCModule::changed(true);
+}
+
+void KAdvancedConfig::overviewCornerChanged( bool on )
+{
+    overviewCornerPositionLabel->setEnabled( on );
+    overviewCornerPosition->setEnabled( on );
+    overviewCornerDelay->setEnabled( on );
 }
 
 void KAdvancedConfig::setEBorders()
