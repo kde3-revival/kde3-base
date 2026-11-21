@@ -1,0 +1,7 @@
+# The background drawn identically on each screen ("On Each Screen") was
+# read from Desktop<N>Screen0; it is now the background of the desktop,
+# Desktop<N>.
+Id=kde3.5-bgperscreen
+File=kdesktoprc
+Options=overwrite
+Script=kdesktop_bgperscreen.sh,sh

@@ -543,6 +543,7 @@ void KBackgroundSettings::copyConfig(const KBackgroundSettings *settings)
     m_bShm = settings->m_bShm;
     m_MultiMode = settings->m_MultiMode;
     m_Interval = settings->m_Interval;
+    m_LastChange = settings->m_LastChange;
     m_CurrentWallpaper = settings->m_CurrentWallpaper;
     m_CurrentWallpaperName = settings->m_CurrentWallpaperName;
 

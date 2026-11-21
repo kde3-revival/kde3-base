@@ -291,6 +291,17 @@ void BGDialog::deleteScreenGroups(int desk)
       if (isNumber)
          config->deleteGroup(*it);
    }
+
+   // the renderers of the screens forget their own settings too: they
+   // start again from the background of the desktop
+   for (unsigned d = 0; d < m_renderer.size(); ++d)
+   {
+      if ((d > 0 ? int(d)-1 : 0) != desk)
+         continue;
+      for (unsigned screen = FirstScreen; screen < m_renderer[d].size(); ++screen)
+         m_renderer[d][screen]->load( desk, screen-FirstScreen, true, false, false );
+   }
+   m_copyAllScreens = true;
 }
 
 void BGDialog::makeReadOnly()
@@ -1105,8 +1116,11 @@ void BGDialog::slotSelectScreen(int screen)
    // with these settings too.
    if (m_eScreen < FirstScreen && (screen < FirstScreen || m_copyAllScreens))
    {
+      // the desktops whose way of drawing the screens changes (below)
       for (unsigned desk = 0; desk < m_numDesks+1; ++desk )
       {
+         if (m_eDesk != 0 && int(desk) != m_eDesk)
+            continue;
          KBackgroundRenderer *master = m_renderer[desk][m_eScreen];
          if (screen < FirstScreen)
             m_renderer[desk][screen]->copyConfig(master);

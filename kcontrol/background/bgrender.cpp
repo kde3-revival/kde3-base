@@ -1118,6 +1118,16 @@ bool KVirtualBGRenderer::needWallpaperChange()
 
 void KVirtualBGRenderer::changeWallpaper()
 {
+    // the same background on each screen: one renderer picks the next
+    // picture for all (in a random slide show each would pick another)
+    if (m_bDrawBackgroundPerScreen && m_bCommonScreen && m_numRenderers > 1)
+    {
+        m_renderer[0]->changeWallpaper();
+        for (unsigned i=1; i<m_numRenderers; ++i)
+            m_renderer[i]->copyConfig(m_renderer[0]);
+        return;
+    }
+
     for (unsigned i=0; i<m_numRenderers; ++i)
     {
         m_renderer[i]->changeWallpaper();

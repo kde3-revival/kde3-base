@@ -84,6 +84,14 @@ install(FILES
   DESTINATION ${KDE3_DATA_INSTALL_DIR}/konqueror/servicemenus)
 
 install(FILES
+  kdesktop_bgperscreen.upd
+  DESTINATION ${KDE3_DATA_INSTALL_DIR}/kconf_update)
+
+install(PROGRAMS
+  kdesktop_bgperscreen.sh
+  DESTINATION ${KDE3_DATA_INSTALL_DIR}/kconf_update)
+
+install(FILES
   kdesktop.kcfg
   klaunch.kcfg
   DESTINATION ${KDE3_KCFG_INSTALL_DIR})
