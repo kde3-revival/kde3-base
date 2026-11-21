@@ -101,6 +101,7 @@ TEmulation::TEmulation(TEWidget* w)
   m_codec(0),
   decoder(0),
   keytrans(0),
+  m_syncUpdate(false),
   m_findPos(-1)
 {
 
@@ -108,8 +109,9 @@ TEmulation::TEmulation(TEWidget* w)
   screen[1] = new TEScreen(gui->Lines(),gui->Columns());
   scr = screen[0];
 
-  QObject::connect(&bulk_timer1, SIGNAL(timeout()), this, SLOT(showBulk()) );
-  QObject::connect(&bulk_timer2, SIGNAL(timeout()), this, SLOT(showBulk()) );
+  QObject::connect(&bulk_timer1, SIGNAL(timeout()), this, SLOT(bulkTimeout()) );
+  QObject::connect(&bulk_timer2, SIGNAL(timeout()), this, SLOT(bulkTimeout()) );
+  QObject::connect(&sync_timer, SIGNAL(timeout()), this, SLOT(syncTimeout()) );
   connectGUI();
   setKeymap(0); // Default keymap
 }
@@ -491,6 +493,44 @@ void TEmulation::showBulk()
     gui->setScroll(scr->getHistCursor(),scr->getHistLines());
     //kdDebug(1211)<<"TEmulation::showBulk(): setScroll() done"<<endl;
   }
+}
+
+void TEmulation::bulkTimeout()
+{
+  if (!m_syncUpdate)
+    showBulk();
+}
+
+#define SYNC_TIMEOUT 150
+
+/*!
+    While the application redraws the screen in synchronized update mode
+    (DECSET 2026), the widget keeps showing the previous frame, so that a
+    redraw does not flicker or tear. The new frame is shown when the mode
+    is reset, or after SYNC_TIMEOUT ms in case the application never
+    resets it. Setting the mode again does not extend the timeout.
+*/
+
+void TEmulation::setSynchronizedUpdate(bool on)
+{
+  if (on)
+  {
+    if (!m_syncUpdate)
+      sync_timer.start(SYNC_TIMEOUT, true);
+    m_syncUpdate = true;
+  }
+  else if (m_syncUpdate)
+  {
+    sync_timer.stop();
+    m_syncUpdate = false;
+    showBulk();
+  }
+}
+
+void TEmulation::syncTimeout()
+{
+  m_syncUpdate = false;
+  showBulk();
 }
 
 void TEmulation::bulkStart()

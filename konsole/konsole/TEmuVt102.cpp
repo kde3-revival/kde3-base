@@ -139,6 +139,7 @@ void TEmuVt102::reset()
   resetToken();
   //kdDebug(1211)<<"TEmuVt102::reset() resetModes()"<<endl;
   resetModes();
+  setSynchronizedUpdate(false);
   //kdDebug(1211)<<"TEmuVt102::reset() resetCharSet()"<<endl;
   resetCharset(0);
   //kdDebug(1211)<<"TEmuVt102::reset() reset screen0()"<<endl;
@@ -827,6 +828,9 @@ switch( N )
     case TY_CSI_PR('l', 1004) :        resetMode      (MODE_FocusEvents); break; //XTERM
     case TY_CSI_PR('s', 1004) :         saveMode      (MODE_FocusEvents); break; //XTERM
     case TY_CSI_PR('r', 1004) :      restoreMode      (MODE_FocusEvents); break; //XTERM
+
+    case TY_CSI_PR('h', 2026) : setSynchronizedUpdate     (      true); break; //CONTOUR
+    case TY_CSI_PR('l', 2026) : setSynchronizedUpdate     (     false); break; //CONTOUR
 
     case TY_CSI_PR('h', 2004) :          setMode      (MODE_BracketedPaste); break; //XTERM
     case TY_CSI_PR('l', 2004) :        resetMode      (MODE_BracketedPaste); break; //XTERM

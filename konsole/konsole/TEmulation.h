@@ -126,11 +126,18 @@ protected:
 
   KeyTrans* keytrans;
 
+  // Synchronized output (DECSET 2026): hold back screen updates while
+  // the application redraws, at most SYNC_TIMEOUT ms.
+  void setSynchronizedUpdate(bool on);
+  bool synchronizedUpdate() const { return m_syncUpdate; }
+
 // refreshing related material.
 // this is localized in the class.
 private slots: // triggered by timer
 
   void showBulk();
+  void bulkTimeout();
+  void syncTimeout();
 
 private:
 
@@ -142,6 +149,8 @@ private:
 
   QTimer bulk_timer1;
   QTimer bulk_timer2;
+  QTimer sync_timer;
+  bool   m_syncUpdate;
   
   int    m_findPos;
 };
