@@ -231,7 +231,9 @@ class KXftConfig
 #if 0
     void        applySymbolFamilies();
 #endif
+    QString     migrateFrom() const;
     void        applySubPixelType();
+    void        applyLcdFilter();
     void        applyHintStyle();
     void        applyAntiAliasing();
     void        setHinting(bool set);
@@ -255,6 +257,7 @@ class KXftConfig
 #ifdef HAVE_FONTCONFIG
     Hint               m_hint;
     Hinting            m_hinting;
+    Item               m_lcdFilter;
     AntiAliasing       m_antiAliasing;
     bool               aliasingEnabled();
 #else

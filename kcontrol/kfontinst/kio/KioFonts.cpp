@@ -733,7 +733,7 @@ CKioFonts::CKioFonts(const QCString &pool, const QCString &app)
     // 1. Get list of fontconfig dirs
     // 2. For user, look for any starting with $HOME - but prefer $HOME/.fonts
     // 3. For system, look for any starting with /usr/local/share - but prefer /usr/local/share/fonts
-    // 4. If either are not found, then add to local.conf / .fonts.conf
+    // 4. If either are not found, then add to local.conf / $XDG_CONFIG_HOME/fontconfig/fonts.conf
 
     FcStrList   *list=FcConfigGetFontDirs(FcInitLoadConfigAndFonts());
     QStringList dirs;

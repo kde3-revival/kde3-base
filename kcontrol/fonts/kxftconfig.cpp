@@ -161,6 +161,55 @@ static time_t getTimeStamp(const QString &item)
 #ifdef HAVE_FONTCONFIG
 
 inline QString fileSyntax(const QString &f) { return xDirSyntax(f); }
+
+//
+// The user's file is $XDG_CONFIG_HOME/fontconfig/fonts.conf, as fontconfig
+// itself looks for it (~/.config/fontconfig/fonts.conf by default).  The
+// old ~/.fonts.conf is deprecated, and current fontconfig versions do not
+// read it any more; it is only read to migrate its contents.
+//
+static QString userConfigFile()
+{
+    const char *xdg=getenv("XDG_CONFIG_HOME");
+    QString     dir(xdg && '/'==xdg[0] ? QFile::decodeName(xdg)
+                                       : QDir::homeDirPath()+"/.config");
+    QString     file(dirSyntax(dir)+"fontconfig/fonts.conf");
+
+    //
+    // If the file is a link (e.g. into a dotfiles repository), write to
+    // its target instead of replacing the link with a file.
+    char *real=realpath(QFile::encodeName(file), NULL);
+
+    if(real)
+    {
+        file=QFile::decodeName(real);
+        free(real);
+    }
+
+    return file;
+}
+
+static QString oldUserConfigFile()
+{
+    return dirSyntax(QDir::homeDirPath())+".fonts.conf";
+}
+
+static bool makeDirs(const QString &d)
+{
+    QString path(dirSyntax(d)),
+            sub;
+    int     slashPos=0;
+
+    while(-1!=(slashPos=path.find('/', slashPos+1)))
+    {
+        sub=path.left(slashPos);
+        if(!dExists(sub) && 0!=::mkdir(QFile::encodeName(sub), 0755))
+            return false;
+    }
+
+    return true;
+}
+
 //
 // Obtain location of config file to use.
 //
@@ -169,13 +218,13 @@ inline QString fileSyntax(const QString &f) { return xDirSyntax(f); }
 //     <...>/config.d/00kde.conf   = preferred method from FontConfig >= 2.3
 //     <...>/local.conf
 //
-// Non-system, prefer:
+// Non-system: $XDG_CONFIG_HOME/fontconfig/fonts.conf
 //
-//     $HOME/<...>/.fonts.conf
-//     $HOME/<...>/fonts.conf
-//
-QString getConfigFile(bool system)
+static QString getConfigFile(bool system)
 {
+    if(!system)
+        return userConfigFile();
+
 #if (FC_VERSION>=20300)
     static const char * constKdeRootFcFile="00kde.conf";
 #endif
@@ -183,19 +232,15 @@ QString getConfigFile(bool system)
     FcStrList   *list=FcConfigGetConfigFiles(FcConfigGetCurrent());
     QStringList files;
     FcChar8     *file;
-    QString     home(dirSyntax(QDir::homeDirPath()));
 
     while((file=FcStrListNext(list)))
     {
         QString f((const char *)file);
 
         if(fExists(f))
-        {
-            if(system || 0==fileSyntax(f).find(home)) // For nonsystem, only consider file within $HOME
-                files.append(f);
-        }
+            files.append(f);
 #if (FC_VERSION>=20300)
-        if(system && dExists(f) && (-1!=f.find(QRegExp("/conf\\.d/?$")) || -1!=f.find(QRegExp("/conf\\.d?$"))) )
+        if(dExists(f) && (-1!=f.find(QRegExp("/conf\\.d/?$")) || -1!=f.find(QRegExp("/conf\\.d?$"))) )
             return dirSyntax(f)+constKdeRootFcFile;   // This ones good enough for me!
 #endif
     }
@@ -208,12 +253,12 @@ QString getConfigFile(bool system)
                               end(files.end());
 
         for(; it!=end; ++it)
-            if(-1!=(*it).find(QRegExp(system ? "/local\\.conf$" : "/\\.?fonts\\.conf$")))
+            if(-1!=(*it).find(QRegExp("/local\\.conf$")))
                 return *it;
         return files.front();  // Just return the 1st one...
     }
     else
-        return system ? "/etc/fonts/local.conf" : fileSyntax(home+"/.fonts.conf"); // Hmmm... no known files?
+        return "/etc/fonts/local.conf"; // Hmmm... no known files?
 }
 
 static QString getEntry(QDomElement element, const char *type, unsigned int numAttributes, ...)
@@ -466,6 +511,7 @@ bool KXftConfig::reset()
 #ifdef HAVE_FONTCONFIG
     m_hint.reset();
     m_hinting.reset();
+    m_lcdFilter.reset();
 #else
     m_symbolFamilies.clear();
 #endif
@@ -475,11 +521,11 @@ bool KXftConfig::reset()
     m_subPixel.reset();
 
 #ifdef HAVE_FONTCONFIG
-    QFile f(m_file);
+    QFile f(migrateFrom());
 
     if(f.open(IO_ReadOnly))
     {
-        m_time=getTimeStamp(m_file);
+        m_time=getTimeStamp(f.name());
         ok=true;
         m_doc.clear();
 
@@ -488,7 +534,7 @@ bool KXftConfig::reset()
         f.close();
     }
     else
-        ok=!fExists(m_file) && dWritable(getDir(m_file));
+        ok=!fExists(m_file);
 
     if(m_doc.documentElement().isNull())
         m_doc.appendChild(m_doc.createElement("fontconfig"));
@@ -607,7 +653,10 @@ bool KXftConfig::apply()
             }
     
 #ifdef HAVE_FONTCONFIG
-            FcAtomic *atomic=FcAtomicCreate((const unsigned char *)((const char *)(QFile::encodeName(m_file))));
+            QString  oldFile(migrateFrom());
+            FcAtomic *atomic=makeDirs(getDir(m_file))
+                        ? FcAtomicCreate((const unsigned char *)((const char *)(QFile::encodeName(m_file))))
+                        : NULL;
     
             ok=false;
             if(atomic)
@@ -624,7 +673,10 @@ bool KXftConfig::apply()
                             removeItems(m_dirs);
                         }
                         if(m_required&SubPixelType)
+                        {
                             applySubPixelType();
+                            applyLcdFilter();
+                        }
                         if(m_required&HintStyle)
                             applyHintStyle();
                         if(m_required&AntiAlias)
@@ -637,21 +689,24 @@ bool KXftConfig::apply()
     
                         //
                         // Check document syntax...
-                        const char qtXmlHeader[]   = "<?xml version = '1.0'?>";
-                        const char xmlHeader[]     = "<?xml version=\"1.0\"?>";
-                        const char qtDocTypeLine[] = "<!DOCTYPE fontconfig>";
-                        const char docTypeLine[]   = "<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">";
+                        const char qtXmlHeader[]    = "<?xml version = '1.0'?>";
+                        const char xmlHeader[]      = "<?xml version=\"1.0\"?>";
+                        const char qtDocTypeLine[]  = "<!DOCTYPE fontconfig>";
+                        const char oldDocTypeLine[] = "<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">";
+                        const char docTypeLine[]    = "<!DOCTYPE fontconfig SYSTEM \"urn:fontconfig:fonts.dtd\">";
     
                         QString str(m_doc.toString());
                         int     idx;
     
                         if(0!=str.find("<?xml"))
-                            str.insert(0, xmlHeader);
+                            str.insert(0, QString(xmlHeader)+'\n');
                         else if(0==str.find(qtXmlHeader))
                             str.replace(0, strlen(qtXmlHeader), xmlHeader);
     
                         if(-1!=(idx=str.find(qtDocTypeLine)))
                             str.replace(idx, strlen(qtDocTypeLine), docTypeLine);
+                        else if(-1!=(idx=str.find(oldDocTypeLine)))
+                            str.replace(idx, strlen(oldDocTypeLine), docTypeLine);
     
                         //
                         // Write to file...
@@ -661,6 +716,14 @@ bool KXftConfig::apply()
                         if(FcAtomicReplaceOrig(atomic))
                         {
                             ok=true;
+                            //
+                            // The contents of ~/.fonts.conf are now in the
+                            // new file: move it out of the way, so that a
+                            // fontconfig which still reads it does not
+                            // override the new file with the old settings.
+                            if(oldFile!=m_file)
+                                ::rename(QFile::encodeName(oldFile),
+                                         QFile::encodeName(oldFile+".kde-migrated"));
                             reset(); // Re-read contents..
                         }
                         else
@@ -1063,6 +1126,8 @@ void KXftConfig::readContents()
                                     m_antiAliasing.node=n;
                                     m_antiAliasing.set=str.lower()!="false";
                                 }
+                                else if(!getEntry(ene, "const", 2, "name", "lcdfilter", "mode", "assign").isNull())
+                                    m_lcdFilter.node=n;
                         }
                         break;
                     case 3:
@@ -1255,6 +1320,47 @@ void KXftConfig::readContents()
 }
 
 #ifdef HAVE_FONTCONFIG
+//
+// The file to read: the old ~/.fonts.conf as long as the user's file does
+// not exist, so that its contents are carried over when the new file is
+// first written.
+QString KXftConfig::migrateFrom() const
+{
+    if(!m_system && !fExists(m_file))
+    {
+        QString old(oldUserConfigFile());
+
+        if(fExists(old))
+            return old;
+    }
+
+    return m_file;
+}
+
+//
+// Sub-pixel rendering needs a filter against colour fringes.  Add the one
+// FreeType recommends unless the file already chooses one; leave it there
+// when sub-pixel rendering is turned off, as it is not used then.
+void KXftConfig::applyLcdFilter()
+{
+    if(SubPixel::None==m_subPixel.type || !m_lcdFilter.node.isNull())
+        return;
+
+    QDomElement matchNode = m_doc.createElement("match"),
+                typeNode  = m_doc.createElement("const"),
+                editNode  = m_doc.createElement("edit");
+    QDomText    typeText  = m_doc.createTextNode("lcddefault");
+
+    matchNode.setAttribute("target", "font");
+    editNode.setAttribute("mode", "assign");
+    editNode.setAttribute("name", "lcdfilter");
+    editNode.appendChild(typeNode);
+    typeNode.appendChild(typeText);
+    matchNode.appendChild(editNode);
+    m_doc.documentElement().appendChild(matchNode);
+    m_lcdFilter.node=matchNode;
+}
+
 void KXftConfig::applyDirs()
 {
     ListItem *item,
