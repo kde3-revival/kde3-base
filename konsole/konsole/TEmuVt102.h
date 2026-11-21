@@ -131,6 +131,7 @@ private:
   void reportCursorPosition();
   void reportTerminalParms(int p);
 
+  void setCursorStyle(int ps);
   void setMouseTracking(int mode);
   void saveMouseTracking();
   void restoreMouseTracking();
@@ -154,6 +155,7 @@ protected:
   DECpar currParm;
   DECpar saveParm;
   bool holdScreen;
+  int cursorStyle; // DECSCUSR parameter, 0 = the user's default
 };
 
 #endif // ifndef ANSIEMU_H

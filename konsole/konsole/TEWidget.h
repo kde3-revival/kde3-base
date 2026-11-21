@@ -68,6 +68,11 @@ public:
     bool blinkingCursor() { return hasBlinkingCursor; }
     void setBlinkingCursor(bool blink);
 
+    // Cursor shape and blinking chosen by the application (DECSCUSR);
+    // blink < 0 means the user's setting (blinkingCursor()).
+    enum { CURSOR_BLOCK=0, CURSOR_UNDERLINE=1, CURSOR_BAR=2 };
+    void setCursorStyle(int shape, int blink);
+
     void setCtrlDrag(bool enable) { ctrldrag=enable; }
     bool ctrlDrag() { return ctrldrag; }
 
@@ -282,6 +287,11 @@ private:
     bool hasBlinker; // has characters to blink
     bool cursorBlinking;     // hide cursor in paintEvent
     bool hasBlinkingCursor;  // has blinking cursor enabled
+    int  cursorShape;        // CURSOR_BLOCK, CURSOR_UNDERLINE, CURSOR_BAR
+    int  cursorBlinkOverride; // -1: hasBlinkingCursor, else 0/1
+    bool cursorBlinks() const
+      { return cursorBlinkOverride < 0 ? hasBlinkingCursor : cursorBlinkOverride; }
+    void updateCursorBlinking();
     bool ctrldrag;           // require Ctrl key for drag
     bool cuttobeginningofline; // triple click only selects forward
     bool isBlinkEvent; // paintEvent due to blinking.

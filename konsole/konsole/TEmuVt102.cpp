@@ -437,8 +437,36 @@ bool TEmuVt102::csiHasIntermediate()
    private markers `<' and `='. Unknown ones are consumed silently, so
    that their final byte does not end up on the screen. */
 
-void TEmuVt102::csiExtended(int /*cc*/)
+void TEmuVt102::csiExtended(int cc)
 {
+  int inter = 0; // the (last) intermediate byte
+  for (int i = 2; i < ppos-1; i++)
+    if (pbuf[i] >= 0x20 && pbuf[i] <= 0x2f)
+      inter = pbuf[i];
+
+  if (pbuf[2] != '<' && pbuf[2] != '=' && pbuf[2] != '?' && pbuf[2] != '>')
+  {
+    if (inter == ' ' && cc == 'q') { setCursorStyle(argv[0]); return; } // DECSCUSR
+  }
+}
+
+/*!
+    DECSCUSR: 1 blinking block, 2 steady block, 3 blinking underline,
+    4 steady underline, 5 blinking bar, 6 steady bar. 0 restores the
+    user's settings: a block that blinks if "Blinking Cursor" is on.
+*/
+
+void TEmuVt102::setCursorStyle(int ps)
+{
+  if (ps < 0 || ps > 6)
+    return;
+  cursorStyle = ps;
+  if (!connected)
+    return;
+  if (ps == 0)
+    gui->setCursorStyle(TEWidget::CURSOR_BLOCK, -1);
+  else
+    gui->setCursorStyle((ps - 1) / 2, ps % 2);
 }
 
 void TEmuVt102::XtermHack()
@@ -1268,6 +1296,7 @@ void TEmuVt102::restoreCursor()
 void TEmuVt102::resetModes()
 {
   setMouseTracking(0); saveMouseTracking();
+  setCursorStyle(0);
   resetMode(MODE_Mouse1006); saveMode(MODE_Mouse1006);
   resetMode(MODE_AppScreen); saveMode(MODE_AppScreen);
   resetMode(MODE_BracketedPaste); saveMode(MODE_BracketedPaste);
@@ -1353,6 +1382,7 @@ void TEmuVt102::setConnect(bool c)
     else
       resetMode(MODE_Mouse1000);
     gui->setBracketedPasteMode(getMode(MODE_BracketedPaste));
+    setCursorStyle(cursorStyle);
 #if defined(HAVE_XKB)
     if (holdScreen)
       scrolllock_set_on();

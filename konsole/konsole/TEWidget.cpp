@@ -356,6 +356,8 @@ TEWidget::TEWidget(QWidget *parent, const char *name)
 ,blinking(false)
 ,cursorBlinking(false)
 ,hasBlinkingCursor(false)
+,cursorShape(CURSOR_BLOCK)
+,cursorBlinkOverride(-1)
 ,ctrldrag(false)
 ,cuttobeginningofline(false)
 ,isBlinkEvent(false)
@@ -677,7 +679,18 @@ void TEWidget::drawAttrStr(QPainter &paint, QRect rect,
     paint.setBackgroundMode( TransparentMode );
     int h = font_h - m_lineSpacing;
     QRect r(rect.x(),rect.y()+m_lineSpacing/2,rect.width(),h);
-    if (hasFocus())
+    if (cursorShape != CURSOR_BLOCK)
+    {
+      // a line under or left of the character, drawn the same with or
+      // without focus; the character keeps its colours
+      if (cursorShape == CURSOR_UNDERLINE)
+        r.setTop(r.bottom() + 1 - QMAX(2, h/8));
+      else
+        r.setWidth(QMAX(2, font_w/6));
+      if (!cursorBlinking)
+        paint.fillRect(r, fColor);
+    }
+    else if (hasFocus())
     {
        if (!cursorBlinking)
        {
@@ -964,6 +977,22 @@ void TEWidget::setImage(const ca* const newimg, int lines, int columns)
 void TEWidget::setBlinkingCursor(bool blink)
 {
   hasBlinkingCursor=blink;
+  updateCursorBlinking();
+}
+
+void TEWidget::setCursorStyle(int shape, int blink)
+{
+  if (shape == cursorShape && blink == cursorBlinkOverride)
+    return;
+  cursorShape = shape;
+  cursorBlinkOverride = blink;
+  updateCursorBlinking();
+  repaint(cursorRect, true);
+}
+
+void TEWidget::updateCursorBlinking()
+{
+  bool blink = cursorBlinks();
   if (blink && !blinkCursorT->isActive()) blinkCursorT->start(1000);
   if (!blink && blinkCursorT->isActive()) {
     blinkCursorT->stop();
@@ -1922,7 +1951,7 @@ bool TEWidget::eventFilter( QObject *obj, QEvent *e )
     actSel=0; // Key stroke implies a screen update, so TEWidget won't
               // know where the current selection is.
 
-    if (hasBlinkingCursor) {
+    if (cursorBlinks()) {
       blinkCursorT->start(1000);
       if (cursorBlinking)
         blinkCursorEvent();
