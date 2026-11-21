@@ -1218,6 +1218,7 @@ void Overview::show()
              item != NULL;
              item = items.next())
             item->restored = false; // a normal window now
+        was_minimized.clear();
         state = Showing;
         computeLayout();
         updateTitles();
@@ -1395,6 +1396,17 @@ void Overview::hide( Client* c )
             abort();
             ws->activateClient( c, true );
             return;
+            }
+        // a dialog of a minimized window (asking before closing it): with
+        // the window, not alone (it is restored along with it)
+        if( c->isMinimized() && c->isTransient())
+            {
+            ClientList mains = c->mainClients();
+            for( ClientList::ConstIterator it = mains.begin();
+                 it != mains.end();
+                 ++it )
+                if( (*it)->isMinimized())
+                    (*it)->unminimize();
             }
         ws->activateClient( c, true );
         if( state == Hidden || r == NULL )
@@ -1679,7 +1691,7 @@ OverviewItem* Overview::createMinimizedItem( Client* c )
         && ws->windowEffects()->retainedContents( c, &pixmap, &size, &depth, &visual ))
         {
         XRenderPictFormat* format = XRenderFindVisualFormat( dpy, visual );
-        if( format != NULL )
+        if( format != NULL && format->depth == depth )
             { // (the picture keeps the contents when Effects frees the pixmap)
             item->format = format;
             item->depth = depth;
@@ -1690,6 +1702,10 @@ OverviewItem* Overview::createMinimizedItem( Client* c )
             item->kept = true;
             }
         }
+    // (now: the window may paint as soon as it is restored; an unmapped
+    // window reports nothing)
+    if( composite )
+        item->damage = XDamageCreate( dpy, item->id, XDamageReportNonEmpty );
 #endif
     if( composite && !item->kept )
         {
@@ -1883,7 +1899,7 @@ void Overview::buildItems( bool initial )
                   // to its place with the kept contents until it has painted
                 item->minimized = false;
                 item->restored = true;
-                item->pending_live = true;
+                item->pending_live = composite; // (else icons, nothing to wait for)
                 item->painted = 0;
 #ifdef OVERVIEW_COMPOSITE
                 if( composite && item->damage == None )
@@ -1906,6 +1922,13 @@ void Overview::buildItems( bool initial )
                     if( item->in_layout )
                         updateTitles();
                     }
+                else if( geom.size() != item->geom.size() && ( item->kept || item->placeholder ))
+                    { // (the kept contents scaled) the new shape
+                    OverviewItem* fresh = createItem( w, attr );
+                    item->shaped = fresh->shaped;
+                    item->shape = fresh->shape;
+                    delete fresh;
+                    }
                 item->geom = geom;
                 item->seen = true;
                 }
@@ -1923,7 +1946,7 @@ void Overview::buildItems( bool initial )
                 item->in_layout = item->kind == OverviewItem::Managed;
                 item->from = item->to = item->cur = RectF( item->geom );
                 // restored along with the picked window: not drawn until painted
-                if( !initial && item->client != NULL && was_minimized.contains( item->client ))
+                if( composite && !initial && item->client != NULL && was_minimized.contains( item->client ))
                     item->pending_live = true;
                 }
             // the screen shows the overview after the first frame: no copies then
@@ -1966,6 +1989,15 @@ void Overview::buildItems( bool initial )
             if( item->minimized && !item->seen && item->client != NULL && ws->hasClient( item->client )
                 && item->client->isMinimized() && item->client->isOnCurrentDesktop())
                 {
+                XWindowAttributes attr;
+                if( item->client->geometry().size() != item->geom.size()
+                    && XGetWindowAttributes( dpy, item->id, &attr ))
+                    { // resized when moved to another monitor: the new shape
+                    OverviewItem* fresh = createItem( item->id, attr );
+                    item->shaped = fresh->shaped;
+                    item->shape = fresh->shape;
+                    delete fresh;
+                    }
                 item->geom = item->client->geometry(); // (moved to another monitor)
                 item->seen = true;
                 minimized.append( item );
@@ -2004,6 +2036,7 @@ void Overview::clientRemoved( Client* c )
     {
     redirected.remove( c->frameId()); // the frame is destroyed
     closing.remove( c );
+    was_minimized.remove( c );
     if( dialog == c )
         dialog = NULL;
     if( state == Hidden || r == NULL )
