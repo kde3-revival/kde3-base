@@ -1010,34 +1010,62 @@ bool Client::sendToScreen( int from, int to )
         return false;
     const QRect old_area = monitorArea( workspace(), from, desktop());
     const QRect new_area = monitorArea( workspace(), to, desktop());
+    const QPoint to_center = dw->screenGeometry( to ).center();
     const QRect g = geometry();
+    const QSize full = isShade() ? adjustedSize() : g.size(); // not the shaded height
+    const QRect max_area = workspace()->clientArea( MaximizeArea, to_center, desktop());
+    // the restore geometry, each remembered direction on its own
+    // (a window maximized in one direction remembers only the other one)
+    QRect restore = geom_restore;
+    if( restore.width() > 0 )
+        {
+        QRect m = mapToArea( QRect( restore.x(), old_area.y(), restore.width(), 1 ), old_area, new_area );
+        restore.setLeft( m.left());
+        restore.setWidth( geom_restore.width());
+        }
+    if( restore.height() > 0 )
+        {
+        QRect m = mapToArea( QRect( old_area.x(), restore.y(), 1, restore.height()), old_area, new_area );
+        restore.setTop( m.top());
+        restore.setHeight( geom_restore.height());
+        }
+    // the maximized geometry on the new monitor
+    QRect maximized;
+    const QRect moved = mapToArea( QRect( g.topLeft(), full ), old_area, new_area );
+    switch( maximizeMode())
+        {
+        case MaximizeVertical:
+            maximized = QRect( QPoint( moved.x(), max_area.top()),
+                adjustedSize( QSize( full.width(), max_area.height()), SizemodeFixedH ));
+            break;
+        case MaximizeHorizontal:
+            maximized = QRect( QPoint( max_area.left(), moved.y()),
+                adjustedSize( QSize( max_area.width(), full.height()), SizemodeFixedW ));
+            break;
+        case MaximizeFull:
+            maximized = QRect( max_area.topLeft(), adjustedSize( max_area.size(), SizemodeMax ));
+            break;
+        default:
+            break;
+        }
     QRect geom;
     if( isFullScreen())
         {
-        if( !geom_fs_restore.isNull())
+        geom = workspace()->clientArea( FullScreenArea, to_center, desktop());
+        if( geom == g )
+            return false; // full screen on all monitors (Xinerama full screen off)
+        geom_restore = restore;
+        if( maximizeMode() != MaximizeRestore )
+            geom_fs_restore = maximized; // maximized again when leaving full screen
+        else if( !geom_fs_restore.isNull())
             geom_fs_restore = mapToArea( geom_fs_restore, old_area, new_area );
-        geom = workspace()->clientArea( FullScreenArea, dw->screenGeometry( to ).center(), desktop());
         }
     else if( maximizeMode() != MaximizeRestore )
         {
-        if( geom_restore.isValid())
-            geom_restore = mapToArea( geom_restore, old_area, new_area );
-        const QRect moved = mapToArea( g, old_area, new_area );
-        const QRect max_area = workspace()->clientArea( MaximizeArea, dw->screenGeometry( to ).center(), desktop());
-        switch( maximizeMode())
-            {
-            case MaximizeVertical:
-                geom = QRect( QPoint( moved.x(), max_area.top()),
-                    adjustedSize( QSize( g.width(), max_area.height()), SizemodeFixedH ));
-                break;
-            case MaximizeHorizontal:
-                geom = QRect( QPoint( max_area.left(), moved.y()),
-                    adjustedSize( QSize( max_area.width(), g.height()), SizemodeFixedW ));
-                break;
-            default:
-                geom = QRect( max_area.topLeft(), adjustedSize( max_area.size(), SizemodeMax ));
-                break;
-            }
+        if( max_area == workspace()->clientArea( MaximizeArea, this ))
+            return false; // maximized to all monitors (Xinerama maximizing off)
+        geom_restore = restore;
+        geom = maximized;
         }
     else
         {
@@ -1063,6 +1091,28 @@ bool Client::sendToScreen( int from, int to )
                 geom.moveLeft( new_area.left());
             if( geom.top() < new_area.top())
                 geom.moveTop( new_area.top());
+            }
+        // not exactly the maximized geometry (checkMaximizeGeometry() would
+        // maximize it, without a restore geometry, with a second configure)
+        if( !isShade())
+            {
+            const QSize before = geom.size();
+            if( geom.left() == max_area.left() && geom.width() == max_area.width())
+                {
+                if( isResizable())
+                    geom.setWidth( geom.width() - 1 );
+                else
+                    geom.moveLeft( geom.left() + 1 );
+                }
+            if( geom.top() == max_area.top() && geom.height() == max_area.height())
+                {
+                if( isResizable())
+                    geom.setHeight( geom.height() - 1 );
+                else
+                    geom.moveTop( geom.top() + 1 );
+                }
+            if( geom.size() != before ) // (size increments)
+                geom.setSize( adjustedSize( geom.size(), SizemodeMax ));
             }
         }
     if( geom.size() == g.size())

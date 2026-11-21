@@ -453,7 +453,7 @@ static void fillRounded( Display* dpy, OverviewRenderer* r, Picture dst, const R
     if( alpha <= 1.0 / 512 || rect.w <= 0 || rect.h <= 0 )
         return;
     radius = QMIN( radius, QMIN( rect.w, rect.h ) / 2 );
-    const int key = (int) floor( radius * 2 + 0.5 );
+    const int key = (int) floor( radius * 2 );
     radius = key / 2.0;
     const int ri = (int) ceil( radius ) + 1;
     const int x0 = (int) floor( rect.x );
@@ -1230,6 +1230,14 @@ void Overview::saveRippleBackground( XID src )
     if( ripple_bg != None || !keep_redirected || r == NULL )
         return; // below a window there the client would get exposed when it goes
     QRect box = rippleBox();
+    // nor above windows that are not redirected (full screen ones)
+    const ClientList& clients = ws->stackingOrder();
+    for( ClientList::ConstIterator it = clients.begin();
+         it != clients.end();
+         ++it )
+        if( (*it)->isOnCurrentDesktop() && (*it)->isShown( true ) && (*it)->geometry().intersects( box )
+            && !redirected.contains( (*it)->frameId()))
+            return;
     ripple_bg = XCreatePixmap( dpy, root, box.width(), box.height(), DefaultDepth( dpy, DefaultScreen( dpy )));
     Picture bg = XRenderCreatePicture( dpy, ripple_bg, r->format, 0, NULL );
     XRenderComposite( dpy, PictOpSrc, src, None, bg, box.x(), box.y(), 0, 0, 0, 0, box.width(), box.height());
@@ -1247,6 +1255,10 @@ void Overview::showRippleWindow()
         stopRipple();
         return;
         }
+    if( ripple_window != None )
+        XDestroyWindow( dpy, ripple_window ); // (not expected)
+    if( ripple_back != None )
+        XFreePixmap( dpy, ripple_back );
     QRect box = rippleBox();
     XSetWindowAttributes attr;
     attr.override_redirect = True;
@@ -1368,6 +1380,10 @@ void Overview::show()
         }
     // a Super press before (the overview shown otherwise) is no tap now
     super_alone = false;
+    // the ripples of an earlier corner still in their window: over (a corner
+    // that opens it now started new ones, without a window)
+    if( ripple_window != None )
+        stopRipple();
     // the pointer resting in a corner (entered while not allowed) must
     // leave it before the corner closes the overview
         {
@@ -1532,8 +1548,10 @@ void Overview::hide( Client* c )
     buildItems( false );
     title_alpha = 0;
     title_start = 0;
-    pressed = pressed_close = hovered = NULL;
-    close_hover = false;
+    pressed = pressed_close = NULL;
+    pressed_button = 0; // (its release may come while zooming in)
+    press_consumed = false;
+    setHover( NULL, false );
     if( dragged != NULL )
         { // zooms in from where it is
         placeDragged( now());
@@ -1871,6 +1889,7 @@ void Overview::buildItems( bool initial )
                     item = it;
                     break;
                     }
+            const bool existing = item != NULL;
             if( item != NULL )
                 {
                 QRect geom( attr.x, attr.y, attr.width + 2 * attr.border_width, attr.height + 2 * attr.border_width );
@@ -1905,8 +1924,13 @@ void Overview::buildItems( bool initial )
             // the screen shows the overview after the first frame: no copies then
             if( !bindContents( item, initial ))
                 {
-                releaseContents( item );
-                delete item;
+                if( existing )
+                    item->seen = false; // forgotten and deleted below
+                else
+                    {
+                    releaseContents( item );
+                    delete item;
+                    }
                 continue;
                 }
             list.append( item );
@@ -2022,9 +2046,13 @@ void Overview::clientAdded( Client* c )
 void Overview::dialogTimeout()
     {
     Client* c = dialog;
+    if( c != NULL && dragged != NULL )
+        { // after the drop
+        dialog_timer.start( 100, true );
+        return;
+        }
     dialog = NULL;
-    if( c != NULL && ws->hasClient( c ) && ( state == Showing || state == Shown ) && dragged == NULL
-        && c->isOnCurrentDesktop())
+    if( c != NULL && ws->hasClient( c ) && ( state == Showing || state == Shown ) && c->isOnCurrentDesktop())
         hide( c );
     }
 
@@ -2032,10 +2060,11 @@ void Overview::closeItem( OverviewItem* item )
     {
     if( item == NULL || item->client == NULL || !ws->hasClient( item->client ) || !item->client->isCloseable())
         return;
+    if( closing.contains( item->client ))
+        return; // asked already (Delete repeating)
     if( debug )
         kdWarning( 1212 ) << "overview: closing " << item->caption << endl;
-    if( !closing.contains( item->client ))
-        closing.append( item->client );
+    closing.append( item->client );
     item->client->closeWindow();
     }
 
@@ -3198,6 +3227,11 @@ bool Overview::handleKey( XKeyEvent* e )
         return true;
         }
     char buf[ 32 ];
+    if(( e->state & ControlMask ) && XLookupKeysym( e, 0 ) == XK_w )
+        { // Ctrl+W, whatever the layout
+        closeItem( selected );
+        return true;
+        }
     KeySym sym = NoSymbol;
     int len = XLookupString( e, buf, sizeof( buf ) - 1, &sym, NULL );
     buf[ QMAX( 0, len ) ] = '\0';
@@ -3216,14 +3250,6 @@ bool Overview::handleKey( XKeyEvent* e )
         case XK_KP_Delete:
             closeItem( selected );
             return true;
-        case XK_w:
-        case XK_W:
-            if( e->state & ControlMask )
-                {
-                closeItem( selected );
-                return true;
-                }
-            break;
         case XK_Return:
         case XK_KP_Enter:
             if( selected == NULL || !selected->matches )
@@ -3421,6 +3447,7 @@ void Overview::handleMotion( const QPoint& p )
         return;
         }
     if( pressed != NULL && pressed_button == Button1 && !press_consumed && state == Shown
+        && QApplication::desktop()->numScreens() > 1 // (nowhere to drop it else)
         && ( p - press_pos ).manhattanLength() >= QMAX( DragThreshold, KGlobalSettings::dndEventDelay()))
         {
         startDrag( p );
@@ -3769,6 +3796,8 @@ bool Overview::x11Event( XEvent* e )
     if( have_monitors && ( e->type == randr_event + RRScreenChangeNotify || e->type == randr_event + RRNotify ))
         {
         monitors_timer.start( 200, true );
+        if( dragged != NULL ) // the monitors are numbered anew
+            endDrag( false, drag_pos );
         return false; // Qt needs RRScreenChangeNotify too
         }
 #endif
