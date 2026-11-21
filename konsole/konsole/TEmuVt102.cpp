@@ -538,6 +538,21 @@ void TEmuVt102::XtermHack(bool st)
     else
       unistr += QChar(c);
   }
+  if ((arg == 10 || arg == 11) && unistr == "?")
+  { // query of the default foreground or background colour: applications
+    // use the answer to pick a light or dark colour scheme
+    if (gui)
+    {
+      QColor c = (arg == 10) ? gui->getColorTable()[DEFAULT_FORE_COLOR].color
+                             : gui->getDefaultBackColor();
+      char tmp[64];
+      sprintf(tmp, "\033]%d;rgb:%04x/%04x/%04x%s", arg,
+              c.red() * 0x101, c.green() * 0x101, c.blue() * 0x101,
+              st ? "\033\\" : "\007");
+      sendString(tmp);
+    }
+    return;
+  }
   // arg == 1 doesn't change the title. In XTerm it only changes the icon name
   // (btw: arg=0 changes title and icon, arg=1 only icon, arg=2 only title
   emit changeTitle(arg,unistr);
