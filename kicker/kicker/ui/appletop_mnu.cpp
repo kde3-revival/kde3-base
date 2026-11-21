@@ -48,11 +48,6 @@ PanelAppletOpMenu::PanelAppletOpMenu(int actions, QPopupMenu *opMenu, const QPop
 
     if (!Kicker::the()->isImmutable())
     {
-        QString text = isButton ? (isMenu ? i18n("&Move %1 Menu") :
-                                            i18n("&Move %1 Button")) :
-                                  i18n("&Move %1");
-        insertItem(SmallIcon("move"), text.arg(titleText), Move);
-
         // we look for a container area to see if we can add containers
         // this is part of the kiosk support in kicker, allowing
         // one to block users from adding new containers
@@ -70,11 +65,26 @@ PanelAppletOpMenu::PanelAppletOpMenu(int actions, QPopupMenu *opMenu, const QPop
             findTheArea = findTheArea->parent();
         }
 
-        if  (!area || area->canAddContainers())
+        // a copy of the main panel on another screen: its containers
+        // are moved on the main panel, and removed from there
+        bool inMirror = area && area->isMirror();
+        if (inMirror)
         {
-            text = isButton ? (isMenu ? i18n("&Remove %1 Menu") :
-                                        i18n("&Remove %1 Button")) :
-                              i18n("&Remove %1");
+            area = area->mirrorSource();
+        }
+        else
+        {
+            QString text = isButton ? (isMenu ? i18n("&Move %1 Menu") :
+                                                i18n("&Move %1 Button")) :
+                                      i18n("&Move %1");
+            insertItem(SmallIcon("move"), text.arg(titleText), Move);
+        }
+
+        if  ((!area && !inMirror) || (area && area->canAddContainers()))
+        {
+            QString text = isButton ? (isMenu ? i18n("&Remove %1 Menu") :
+                                                i18n("&Remove %1 Button")) :
+                                      i18n("&Remove %1");
             insertItem(SmallIcon("remove"), text.arg(titleText), Remove);
             needSeparator = true;
         }

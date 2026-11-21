@@ -331,6 +331,12 @@ void ExtensionContainer::readConfig()
 void ExtensionContainer::writeConfig()
 {
 //    kdDebug(1210) << "ExtensionContainer::writeConfig()" << endl;
+    if (ExtensionManager::the()->isMirror(this))
+    {
+        // made from the main panel's config, never saved
+        return;
+    }
+
     KConfig *config = KGlobal::config();
     config->setGroup(extensionId());
 
@@ -339,6 +345,10 @@ void ExtensionContainer::writeConfig()
     config->writeEntry("UserHidden", userHidden());
 
     m_settings.writeConfig();
+
+    // the mirrors follow the main panel, and give way to the panels
+    // put on their screens by hand
+    ExtensionManager::the()->scheduleMirrorSync();
 }
 
 void ExtensionContainer::showPanelMenu( const QPoint& globalPos )
@@ -351,7 +361,8 @@ void ExtensionContainer::showPanelMenu( const QPoint& globalPos )
     if (m_extension && m_extension->customMenu())
     {
         // use the extenion's own custom menu
-        Kicker::the()->setInsertionPoint(globalPos);
+        Kicker::the()->setInsertionPoint(
+            ExtensionManager::the()->insertionPointFor(this, globalPos));
         m_extension->customMenu()->exec(globalPos);
         Kicker::the()->setInsertionPoint(QPoint());
         return;
@@ -2014,7 +2025,8 @@ bool ExtensionContainer::eventFilter( QObject*, QEvent * e)
                 ((me->state() & LeftButton) == LeftButton) &&
                 !Kicker::the()->isImmutable() &&
                 !m_settings.config()->isImmutable() &&
-                !ExtensionManager::the()->isMenuBar(this))
+                !ExtensionManager::the()->isMenuBar(this) &&
+                !ExtensionManager::the()->isMirror(this))
             {
                 QPoint p(me->globalPos() - _last_lmb_press);
                 int x_threshold = width();

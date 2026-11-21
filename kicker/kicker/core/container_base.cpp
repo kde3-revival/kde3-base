@@ -29,6 +29,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include "global.h"
 #include "appletop_mnu.h"
+#include "containerarea.h"
 #include "kicker.h"
 
 #include "container_base.h"
@@ -44,6 +45,7 @@ BaseContainer::BaseContainer( QPopupMenu* appletOpMenu, QWidget* parent, const c
   , _aid(QString::null)
   , _actions(0)
   , m_immutable(false)
+  , m_inMirror(false)
   , _opMnu(0)
   , _appletOpMnu(appletOpMenu)
 {}
@@ -68,6 +70,25 @@ void BaseContainer::setImmutable(bool immutable)
 {
     m_immutable = immutable;
     clearOpMenu();
+}
+
+BaseContainer* BaseContainer::mirrorSource() const
+{
+    if (!m_inMirror)
+    {
+        return 0;
+    }
+
+    for (QObject* o = parent(); o; o = o->parent())
+    {
+        ContainerArea* area = dynamic_cast<ContainerArea*>(o);
+        if (area)
+        {
+            return area->sourceContainer(this);
+        }
+    }
+
+    return 0;
 }
 
 void BaseContainer::loadConfiguration( KConfigGroup& group )

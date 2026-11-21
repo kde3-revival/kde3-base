@@ -48,6 +48,7 @@ public:
     virtual ~PanelExtension();
 
     QPopupMenu* opMenu();
+    ContainerArea* containerArea() const { return _containerArea; }
 
 k_dcop:
     int panelSize() { return sizeInPixels(); }
@@ -104,6 +105,7 @@ private:
     QPopupMenu* m_removeExtensionMenu;
     QString _configFile;
     bool m_opMenuBuilt;
+    bool m_isMirror;
 };
 
 class MenubarExtension : public PanelExtension

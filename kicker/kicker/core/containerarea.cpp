@@ -87,7 +87,8 @@ ContainerArea::ContainerArea(KConfig* _c,
       m_immutable(_c->isImmutable()),
       m_updateBackgroundsCalled(false),
       m_layout(0),
-      m_addAppletDialog(0)
+      m_addAppletDialog(0),
+      m_isMirror(false)
 {
     setBackgroundOrigin( WidgetOrigin );
     viewport()->setBackgroundOrigin( AncestorOrigin );
@@ -133,6 +134,7 @@ void ContainerArea::initialize(bool useDefaultConfig)
         }
 
         m_canAddContainers = !m_immutable &&
+                             !m_isMirror &&
                              !_config->entryIsImmutable("Applets2");
         loadContainers(_config->readListEntry("Applets2"));
     }
@@ -141,7 +143,7 @@ void ContainerArea::initialize(bool useDefaultConfig)
         defaultContainerConfig();
     }
 
-    setAcceptDrops(!isImmutable());
+    setAcceptDrops(!isImmutable() && !m_isMirror);
     QTimer::singleShot(0, this, SLOT(resizeContents()));
 }
 
@@ -329,9 +331,12 @@ void ContainerArea::loadContainers(const QStringList& containers)
             bool immutable = Kicker::the()->isImmutable() ||
                              group.groupIsImmutable() ||
                              group.entryIsImmutable("ConfigFile");
+            // a mirror is made at any time, also after an applet was
+            // added to the main panel: such an applet is still on the
+            // untrusted list, which only refuses it at startup
             a = PluginManager::the()->createAppletContainer(
                    group.readPathEntry("DesktopFile"),
-                   true, // isStartup
+                   !m_isMirror, // isStartup
                    group.readPathEntry("ConfigFile"),
                    m_opMenu,
                    m_contents,
@@ -367,7 +372,7 @@ void ContainerArea::loadContainers(const QStringList& containers)
 
 void ContainerArea::saveContainerConfig(bool layoutOnly)
 {
-    if (!canAddContainers())
+    if (!canAddContainers() || m_isMirror)
     {
         return;
     }
@@ -390,6 +395,11 @@ void ContainerArea::saveContainerConfig(bool layoutOnly)
     group.writeEntry("Applets2", alist);
 
     _config->sync();
+
+    if (ExtensionManager::the()->isMainPanel(topLevelWidget()))
+    {
+        ExtensionManager::the()->scheduleMirrorSync();
+    }
 }
 
 void ContainerArea::removeAllContainers()
@@ -682,6 +692,7 @@ void ContainerArea::addContainer(BaseContainer* a, bool arrange, int index)
     }
 
     m_containers.append(a);
+    a->setInMirror(m_isMirror);
 
     if (arrange)
     {
@@ -736,6 +747,13 @@ void ContainerArea::addContainer(BaseContainer* a, bool arrange, int index)
 
 bool ContainerArea::removeContainer(BaseContainer *a)
 {
+    if (m_isMirror)
+    {
+        // removed from the main panel, which then makes the mirrors anew
+        BaseContainer* source = sourceContainer(a);
+        return source && m_mirrorSource->removeContainer(source);
+    }
+
     if (!a || isImmutable() || a->isImmutable())
     {
         return false;
@@ -752,7 +770,7 @@ bool ContainerArea::removeContainer(BaseContainer *a)
 
 bool ContainerArea::removeContainer(int index)
 {
-    if (isImmutable())
+    if (isImmutable() || m_isMirror)
     {
         return false;
     }
@@ -774,7 +792,7 @@ bool ContainerArea::removeContainer(int index)
 
 void ContainerArea::removeContainers(BaseContainer::List containers)
 {
-    if (isImmutable())
+    if (isImmutable() || m_isMirror)
     {
         return;
     }
@@ -896,9 +914,38 @@ bool ContainerArea::canAddContainers() const
     return m_canAddContainers && Kicker::the()->canAddContainers();
 }
 
+void ContainerArea::setMirrorSource(ContainerArea* source)
+{
+    m_isMirror = true;
+    m_mirrorSource = source;
+    m_canAddContainers = false;
+    setAcceptDrops(false);
+}
+
+BaseContainer* ContainerArea::sourceContainer(const BaseContainer* mirrored) const
+{
+    if (!m_mirrorSource || !mirrored)
+    {
+        return 0;
+    }
+
+    // the mirror's containers have the ids of the main panel's
+    for (BaseContainer::ConstIterator it = m_mirrorSource->m_containers.constBegin();
+         it != m_mirrorSource->m_containers.constEnd();
+         ++it)
+    {
+        if ((*it)->appletId() == mirrored->appletId())
+        {
+            return *it;
+        }
+    }
+
+    return 0;
+}
+
 void ContainerArea::startContainerMove(BaseContainer *a)
 {
-    if (!a || isImmutable())
+    if (!a || isImmutable() || m_isMirror)
     {
         return;
     }
@@ -1509,7 +1556,7 @@ void ContainerArea::immutabilityChanged(bool immutable)
         (*it)->setImmutable(immutable);
     }
 
-    setAcceptDrops(!isImmutable());
+    setAcceptDrops(!isImmutable() && !m_isMirror);
     QTimer::singleShot(0, this, SLOT(setBackground()));
 }
 

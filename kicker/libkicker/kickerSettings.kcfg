@@ -90,6 +90,12 @@
       <default>true</default>
    </entry>
 
+<entry name="MainPanelOnEveryScreen" type="Bool" >
+      <label>Show the main panel on every screen</label>
+      <whatsthis>When this option is enabled and there is more than one screen, a copy of the main panel is shown on every other screen. The copies follow the main panel: they have its position, size and hiding settings and the same applets and buttons, except those that can exist only once, such as the system tray. The taskbars show only the windows of their own screen.</whatsthis>
+      <default>true</default>
+   </entry>
+
 <entry name="UntrustedApplets" type="StringList">
       <label>A list of applets that have been loaded at runtime. In the case of a crash these applets will not be loaded at the next Kicker start, in case they caused the crash</label>
    </entry>

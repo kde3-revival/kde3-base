@@ -47,6 +47,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "appletop_mnu.h"
 #include "containerarea.h"
 #include "global.h"
+#include "extensionmanager.h"
 #include "kicker.h"
 #include "kickerSettings.h"
 #include "pluginmanager.h"
@@ -223,7 +224,8 @@ void AppletContainer::showAppletMenu()
 
     QPopupMenu *menu = opMenu();
 
-    Kicker::the()->setInsertionPoint(_handle->mapToGlobal(_handle->rect().center()));
+    Kicker::the()->setInsertionPoint(ExtensionManager::the()->insertionPointFor(this,
+        _handle->mapToGlobal(_handle->rect().center())));
 
     switch(menu->exec(KickerLib::popupPosition(popupDirection(), menu, _handle)))
     {
@@ -418,6 +420,18 @@ void AppletContainer::help()
 
 void AppletContainer::preferences()
 {
+    if (isInMirror())
+    {
+        // the settings are the main panel's applet's: a mirror's copy
+        // follows them
+        BaseContainer* source = mirrorSource();
+        if (source)
+        {
+            source->preferences();
+        }
+        return;
+    }
+
     if (!_applet) return;
     _applet->action( KPanelApplet::Preferences );
 }

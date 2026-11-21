@@ -24,6 +24,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #ifndef __containerarea_h__
 #define __containerarea_h__
 
+#include <qguardedptr.h>
 #include <qpixmap.h>
 #include <qptrlist.h>
 #include <qtimer.h>
@@ -90,6 +91,14 @@ public:
     int containerCount(const QString& type) const;
     QStringList listContainers() const;
     bool canAddContainers() const;
+
+    // The area of a copy of the main panel on another screen: made from
+    // a generated config, which it never writes; removing and moving the
+    // containers is done on the main panel's area, the source.
+    void setMirrorSource(ContainerArea* source);
+    bool isMirror() const { return m_isMirror; }
+    ContainerArea* mirrorSource() const { return m_mirrorSource; }
+    BaseContainer* sourceContainer(const BaseContainer* mirrored) const;
 
 signals:
     void maintainFocus(bool);
@@ -169,6 +178,8 @@ private:
     ContainerAreaLayout* m_layout;
     AddAppletDialog*     m_addAppletDialog;
     QMap< QWidget*, QRect > m_cachedGeometry;
+    QGuardedPtr<ContainerArea> m_mirrorSource;
+    bool                 m_isMirror;
 };
 
 

@@ -62,7 +62,8 @@ PanelExtension::PanelExtension(const QString& configFile, QWidget *parent, const
       m_addExtensionMenu(0),
       m_removeExtensionMenu(0),
       _configFile(configFile),
-      m_opMenuBuilt( false )
+      m_opMenuBuilt( false ),
+      m_isMirror(ExtensionManager::isMirrorConfigFile(configFile))
 {
     setAcceptDrops(!Kicker::the()->isImmutable());
     setCustomMenu(opMenu());
@@ -106,6 +107,11 @@ void PanelExtension::populateContainerArea()
         setObjId("Panel");
         _containerArea->initialize(true);
     }
+    else if (m_isMirror)
+    {
+        _containerArea->setMirrorSource(ExtensionManager::the()->mainPanelArea());
+        _containerArea->initialize(false);
+    }
     else
     {
         _containerArea->initialize(false);
@@ -127,6 +133,17 @@ QPopupMenu* PanelExtension::opMenu()
     if (_opMnu)
     {
         return _opMnu;
+    }
+
+    if (m_isMirror)
+    {
+        // a mirror's panel menu is the main panel's: what is added,
+        // removed or configured from it goes to the main panel
+        PanelExtension* mainPanel = ExtensionManager::the()->mainPanelExtension();
+        if (mainPanel && mainPanel != this)
+        {
+            return mainPanel->opMenu();
+        }
     }
 
     _opMnu = new QPopupMenu(this);
@@ -165,7 +182,8 @@ bool PanelExtension::eventFilter(QObject*, QEvent * e)
         QMouseEvent* me = (QMouseEvent*) e;
         if ( me->button() == RightButton && kapp->authorize("action/kicker_rmb"))
         {
-            Kicker::the()->setInsertionPoint(me->globalPos());
+            Kicker::the()->setInsertionPoint(
+                ExtensionManager::the()->insertionPointFor(this, me->globalPos()));
             opMenu()->exec(me->globalPos());
             Kicker::the()->setInsertionPoint(QPoint());
             return true;

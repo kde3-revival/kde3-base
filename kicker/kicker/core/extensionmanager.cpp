@@ -26,10 +26,19 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <unistd.h>
 #include <stdlib.h>
 
+#include <qapplication.h>
+#include <qdesktopwidget.h>
+#include <qdir.h>
+#include <qfile.h>
+#include <qtimer.h>
+
 #include <kaboutdata.h>
 #include <kconfig.h>
 #include <kdebug.h>
+#include <kdesktopfile.h>
+#include <kdirwatch.h>
 #include <kglobal.h>
+#include <kinstance.h>
 #include <kio/netaccess.h>
 #include <klocale.h>
 #include <kmenubar.h>
@@ -39,8 +48,11 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <dcopref.h>
 
 #include "container_extension.h"
+#include "containerarea.h"
+#include "extensionSettings.h"
 #include "global.h"
 #include "kicker.h"
+#include "kickerSettings.h"
 #include "panelextension.h"
 #include "pluginmanager.h"
 
@@ -62,15 +74,33 @@ ExtensionManager::ExtensionManager()
     : QObject(0, "ExtensionManager"),
       m_menubarPanel(0),
       m_mainPanel(0),
-      m_panelCounter(-1)
+      m_panelCounter(-1),
+      m_mirrorGeneration(0),
+      m_extensionsLoaded(false),
+      m_mirrorsInitialized(false),
+      m_mirrorsWereOn(false),
+      m_syncingMirrors(false)
 {
+    m_mirrorSyncTimer = new QTimer(this, "mirrorSyncTimer");
+    connect(m_mirrorSyncTimer, SIGNAL(timeout()), SLOT(syncMirrors()));
+
+    // the config files of the main panel's applets: their settings
+    // changed, the mirrors take them over
+    m_mirrorWatch = new KDirWatch(this, "mirrorWatch");
+    connect(m_mirrorWatch, SIGNAL(dirty(const QString&)), SLOT(scheduleMirrorSync()));
+    connect(m_mirrorWatch, SIGNAL(created(const QString&)), SLOT(scheduleMirrorSync()));
+    connect(m_mirrorWatch, SIGNAL(deleted(const QString&)), SLOT(scheduleMirrorSync()));
 }
 
 ExtensionManager::~ExtensionManager()
 {
-    if (this == m_self)
+    // the mirrors go first: they refer to the main panel
+    QValueList<int> screens = m_mirrors.keys();
+    for (QValueList<int>::const_iterator it = screens.constBegin();
+         it != screens.constEnd();
+         ++it)
     {
-        m_self = 0;
+        destroyMirror(*it);
     }
 
     ExtensionList::iterator itEnd = _containers.end();
@@ -81,7 +111,16 @@ ExtensionManager::~ExtensionManager()
     _containers.clear();
 
     delete m_menubarPanel;
+    m_menubarPanel = 0;
     delete m_mainPanel;
+    m_mainPanel = 0;
+
+    // only now: the panels deleted above may still call the(), which
+    // must not make a new manager
+    if (this == m_self)
+    {
+        m_self = 0;
+    }
 }
 
 void ExtensionManager::initialize()
@@ -169,6 +208,15 @@ void ExtensionManager::initialize()
 
     pm->clearUntrustedLists();
     connect(Kicker::the(), SIGNAL(configurationChanged()), SLOT(configurationChanged()));
+
+    // the copies of the main panel on the other screens: made once the
+    // main panel has its applets (they are loaded from the event loop)
+    migrateManualMirrors();
+    removeStaleMirrorFiles();
+    m_mirrorsWereOn = KickerSettings::mainPanelOnEveryScreen();
+    m_extensionsLoaded = true;
+    QTimer::singleShot(0, this, SLOT(syncMirrors()));
+
     DCOPRef r( "ksmserver", "ksmserver" );
     r.send( "resumeStartup", QCString( "kicker" ));
 }
@@ -356,6 +404,23 @@ void ExtensionManager::configurationChanged()
     {
         (*it)->readConfig();
     }
+
+    // the screens may have changed (Kicker::slotDesktopResized() ends up
+    // here): the mirrors of the screens that are gone are hidden now and
+    // deleted from the event loop, not while this signal is delivered
+    hideStaleMirrors();
+    for (MirrorMap::iterator it = m_mirrors.begin(); it != m_mirrors.end(); ++it)
+    {
+        if ((*it).panel->isVisible())
+        {
+            (*it).panel->readConfig();
+        }
+    }
+
+    if (m_extensionsLoaded)
+    {
+        m_mirrorSyncTimer->start(0, true);
+    }
 }
 
 void ExtensionManager::updateMenubar()
@@ -380,7 +445,7 @@ void ExtensionManager::updateMenubar()
 
 bool ExtensionManager::isMainPanel(const QWidget* panel) const
 {
-    return m_mainPanel == panel;
+    return m_mainPanel && m_mainPanel == panel;
 }
 
 bool ExtensionManager::isMenuBar(const QWidget* panel) const
@@ -652,6 +717,16 @@ QRect ExtensionManager::workArea(int XineramaScreen, const ExtensionContainer* e
                 list.append((*it)->winId());
             }
         }
+
+        for (MirrorMap::const_iterator mit = m_mirrors.constBegin();
+             mit != m_mirrors.constEnd();
+             ++mit)
+        {
+            if (shouldExclude(XineramaScreen, extension, (*mit).panel))
+            {
+                list.append((*mit).panel->winId());
+            }
+        }
     }
     else
     {
@@ -669,6 +744,13 @@ QRect ExtensionManager::workArea(int XineramaScreen, const ExtensionContainer* e
         for (; it != itEnd; ++it)
         {
             list.append((*it)->winId());
+        }
+
+        for (MirrorMap::const_iterator mit = m_mirrors.constBegin();
+             mit != m_mirrors.constEnd();
+             ++mit)
+        {
+            list.append((*mit).panel->winId());
         }
     }
 
@@ -753,6 +835,13 @@ QRect ExtensionManager::desktopIconsArea(int screen) const
         reduceArea(area, (*it));
     }
 
+    for (MirrorMap::const_iterator it = m_mirrors.constBegin();
+         it != m_mirrors.constEnd();
+         ++it)
+    {
+        reduceArea(area, (*it).panel);
+    }
+
     kdDebug(1210) << "ExtensionManager::desktopIconsArea() = " << area
                   << " screen = " << screen << endl;
     return area;
@@ -768,6 +857,649 @@ void ExtensionManager::extensionSizeChanged(ExtensionContainer *extension)
 
   emit desktopIconsAreaChanged(desktopIconsArea(extension->xineramaScreen()),
                                extension->xineramaScreen());
+}
+
+//
+// The main panel on every screen
+//
+// A mirror is a panel of its own (an ExtensionContainer with a
+// PanelExtension) made from files generated out of the main panel's:
+// its panel settings, its Applets2 list and the groups of the
+// containers, and a copy of every applet's config file.  It is not in
+// _containers, so it is not in Extensions2, in the Remove Panel menu or
+// in the Control Center.  Its own config is never written back: moving,
+// removing and configuring, done on a mirror, are done on the main panel
+// (see ContainerArea::setMirrorSource()), and when the main panel's files
+// change, the mirrors are made again from them.
+//
+
+static const QStringList& mirroredPanelKeys(const ExtensionSettings& settings)
+{
+    static QStringList keys;
+    if (keys.isEmpty())
+    {
+        // every ExtensionSettings entry but these two
+        KConfigSkeletonItem::List items = settings.items();
+        for (KConfigSkeletonItem::List::const_iterator it = items.constBegin();
+             it != items.constEnd();
+             ++it)
+        {
+            QString key = (*it)->key();
+            if (key != "IExist" && key != "XineramaScreen")
+            {
+                keys.append(key);
+            }
+        }
+    }
+
+    return keys;
+}
+
+static QString mirrorEntriesText(const QMap<QString, QString>& entries,
+                                 bool layoutHints = true)
+{
+    QString text;
+    for (QMap<QString, QString>::const_iterator it = entries.constBegin();
+         it != entries.constEnd();
+         ++it)
+    {
+        // the size hints are written whenever the main panel saves its
+        // layout; the mirror's applets work theirs out anyway
+        if (!layoutHints &&
+            (it.key() == "WidthForHeightHint" || it.key() == "HeightForWidthHint"))
+        {
+            continue;
+        }
+
+        text += it.key() + '=' + it.data() + '\n';
+    }
+
+    return text;
+}
+
+QString ExtensionManager::mirrorFilePrefix()
+{
+    // kickermirror_, or kicker-screen-1mirror_ with multihead
+    return QString::fromLatin1(KGlobal::instance()->instanceName()) + "mirror_";
+}
+
+bool ExtensionManager::isMirrorConfigFile(const QString& configFile)
+{
+    return configFile.startsWith(mirrorFilePrefix());
+}
+
+bool ExtensionManager::isMirror(const QWidget* panel) const
+{
+    const ExtensionContainer* e = dynamic_cast<const ExtensionContainer*>(panel);
+    return e && isMirrorConfigFile(e->info().configFile());
+}
+
+PanelExtension* ExtensionManager::mainPanelExtension() const
+{
+    return m_mainPanel ? dynamic_cast<PanelExtension*>(m_mainPanel->extension()) : 0;
+}
+
+ContainerArea* ExtensionManager::mainPanelArea() const
+{
+    PanelExtension* panel = mainPanelExtension();
+    return panel ? panel->containerArea() : 0;
+}
+
+QPoint ExtensionManager::insertionPointFor(const QWidget* origin,
+                                           const QPoint& globalPos) const
+{
+    if (!origin || !m_mainPanel || globalPos.isNull())
+    {
+        return globalPos;
+    }
+
+    const QWidget* mirror = origin->topLevelWidget();
+    if (!isMirror(mirror))
+    {
+        return globalPos;
+    }
+
+    // the same place along the main panel (the screens and so the
+    // panels may differ in length)
+    QRect from = mirror->geometry();
+    QRect to = m_mainPanel->geometry();
+    if (from.width() <= 0 || from.height() <= 0 || to.width() <= 0 || to.height() <= 0)
+    {
+        return to.center();
+    }
+
+    QPoint p = globalPos - from.topLeft();
+    int x;
+    int y;
+    if (m_mainPanel->orientation() == Qt::Horizontal)
+    {
+        x = p.x() * to.width() / from.width();
+        y = p.y();
+    }
+    else
+    {
+        x = p.x();
+        y = p.y() * to.height() / from.height();
+    }
+
+    x = QMIN(QMAX(x, 0), to.width() - 1);
+    y = QMIN(QMAX(y, 0), to.height() - 1);
+    return to.topLeft() + QPoint(x, y);
+}
+
+void ExtensionManager::scheduleMirrorSync()
+{
+    if (!m_extensionsLoaded)
+    {
+        // initialize() does the first one
+        return;
+    }
+
+    // compresses the bursts: a drop or a removal writes several times
+    m_mirrorSyncTimer->start(250, true);
+}
+
+void ExtensionManager::migrateManualMirrors()
+{
+    // Panels that somebody put on the other screens by hand before there
+    // were mirrors: keep them, and leave the mirrors off.  The option
+    // turned on in the Control Center asks about them.
+    KConfig* config = KGlobal::config();
+    config->setGroup("General");
+    if (config->readBoolEntry("CheckedForManualMirrors", false))
+    {
+        return;
+    }
+
+    int mainScreen = m_mainPanel ? m_mainPanel->xineramaScreen()
+                                 : QApplication::desktop()->primaryScreen();
+    bool manualPanels = false;
+    for (ExtensionList::const_iterator it = _containers.constBegin();
+         it != _containers.constEnd() && !manualPanels;
+         ++it)
+    {
+        if ((*it)->info().library() != "childpanel_panelextension")
+        {
+            continue;
+        }
+
+        // the screen as written, not as it is now: the other screen may
+        // be away (a laptop out of its dock)
+        KConfig panelConfig((*it)->info().configFile(), true, false);
+        panelConfig.setGroup("General");
+        int screen = panelConfig.readNumEntry("XineramaScreen", mainScreen);
+        manualPanels = screen != mainScreen && screen != XineramaAllScreens;
+    }
+
+    if (manualPanels && KickerSettings::mainPanelOnEveryScreen())
+    {
+        KickerSettings::setMainPanelOnEveryScreen(false);
+        KickerSettings::self()->writeConfig();
+    }
+
+    config->setGroup("General");
+    config->writeEntry("CheckedForManualMirrors", true);
+    config->sync();
+}
+
+void ExtensionManager::removeStaleMirrorFiles()
+{
+    // left over by a kicker that crashed, or written after the end of
+    // their mirror by an applet that went late
+    QDir dir(KGlobal::dirs()->saveLocation("config"), mirrorFilePrefix() + "*",
+             QDir::Unsorted, QDir::Files | QDir::Hidden);
+    QStringList files = dir.entryList();
+    for (QStringList::const_iterator it = files.constBegin(); it != files.constEnd(); ++it)
+    {
+        dir.remove(*it);
+    }
+}
+
+QString ExtensionManager::mirroredDesktopFile(const QString& desktopFile) const
+{
+    // The applets that can exist only once stay on the main panel alone:
+    // the system tray (an X screen has one), the battery, ...  So do those
+    // whose desktop file asks for it, the ones that would do twice what
+    // must be done once.  This is the place to put in their stead an
+    // applet that only shows the main panel's one (a mirrored system
+    // tray, say): the desktop file returned here is loaded in the mirror.
+    KDesktopFile df(desktopFile, true, "applets");
+    if (df.readBoolEntry("X-KDE-UniqueApplet", false) ||
+        df.readBoolEntry("X-KDE-MainPanelOnly", false))
+    {
+        return QString::null;
+    }
+
+    return desktopFile;
+}
+
+bool ExtensionManager::readMirrorSource(MirrorSource& source) const
+{
+    QString mainConfigFile = m_mainPanel->info().configFile();
+    if (mainConfigFile.isEmpty())
+    {
+        return false;
+    }
+
+    // what the main panel wrote, from the disk: the main panel's
+    // ContainerArea writes through a KConfig object of its own
+    KConfig config(mainConfigFile, true, false);
+    KConfigGroup general(&config, "General");
+
+    // the panel settings, all of them as the main panel sees them: the
+    // defaults of its file (a kickerrc of the system, say) are not those
+    // of the generated file
+    const QStringList& keys = mirroredPanelKeys(m_mainPanel->settings());
+    for (QStringList::const_iterator it = keys.constBegin(); it != keys.constEnd(); ++it)
+    {
+        if (general.hasKey(*it))
+        {
+            source.panel[*it] = general.readEntry(*it);
+        }
+    }
+
+    QStringList applets = general.readListEntry("Applets2");
+    QString content;
+    for (QStringList::const_iterator it = applets.constBegin(); it != applets.constEnd(); ++it)
+    {
+        QString appletId = *it;
+        if (!config.hasGroup(appletId))
+        {
+            continue;
+        }
+
+        MirrorSource::Entries entries = config.entryMap(appletId);
+        QString appletType = appletId.left(appletId.findRev('_'));
+        QString configFile;
+        if (appletType == "Applet")
+        {
+            QString desktopFile = mirroredDesktopFile(entries["DesktopFile"]);
+            if (desktopFile.isEmpty())
+            {
+                continue;
+            }
+
+            entries["DesktopFile"] = desktopFile;
+            configFile = entries["ConfigFile"];
+        }
+
+        source.applets.append(appletId);
+        source.containers[appletId] = entries;
+        content += '[' + appletId + "]\n" + mirrorEntriesText(entries, false);
+
+        if (configFile.isEmpty())
+        {
+            continue;
+        }
+
+        MirrorSource::Groups groups;
+        KConfig appletConfig(configFile, true, false);
+        QStringList groupNames = appletConfig.groupList();
+        for (QStringList::const_iterator git = groupNames.constBegin();
+             git != groupNames.constEnd();
+             ++git)
+        {
+            groups[*git] = appletConfig.entryMap(*git);
+            content += '[' + appletId + '/' + *git + "]\n" + mirrorEntriesText(groups[*git]);
+        }
+
+        // the pager of a mirror shows its own screen
+        if (entries["DesktopFile"] == "minipagerapplet.desktop")
+        {
+            groups["General"]["CurrentScreenOnly"] = "true";
+        }
+
+        source.configs[appletId] = groups;
+        source.watchedFiles.append(locateLocal("config", configFile));
+    }
+
+    source.panelSignature = mirrorEntriesText(source.panel);
+    source.contentSignature = source.applets.join(",") + '\n' + content;
+    return true;
+}
+
+ExtensionContainer* ExtensionManager::manualPanelAt(int screen,
+                                                    KPanelExtension::Position position) const
+{
+    for (ExtensionList::const_iterator it = _containers.constBegin();
+         it != _containers.constEnd();
+         ++it)
+    {
+        ExtensionContainer* e = *it;
+        if (e->info().library() == "childpanel_panelextension" &&
+            e->position() == position &&
+            (e->xineramaScreen() == screen || e->xineramaScreen() == XineramaAllScreens))
+        {
+            return e;
+        }
+    }
+
+    return 0;
+}
+
+QValueList<int> ExtensionManager::mirrorScreens(bool askToReplace)
+{
+    QValueList<int> screens;
+    QDesktopWidget* desktop = QApplication::desktop();
+    if (!mainPanelArea() || !desktop->isVirtualDesktop() || desktop->numScreens() < 2)
+    {
+        return screens;
+    }
+
+    int mainScreen = m_mainPanel->xineramaScreen();
+    if (mainScreen == XineramaAllScreens)
+    {
+        // it is on every screen already
+        return screens;
+    }
+
+    if (mainScreen < 0)
+    {
+        mainScreen = desktop->primaryScreen();
+    }
+
+    KPanelExtension::Position position = m_mainPanel->position();
+    for (int screen = 0; screen < desktop->numScreens(); ++screen)
+    {
+        if (screen == mainScreen)
+        {
+            continue;
+        }
+
+        // a panel put there by hand wins, unless the option was just
+        // turned on and the user wants it replaced
+        bool keep = false;
+        while (ExtensionContainer* manual = manualPanelAt(screen, position))
+        {
+            if (!askToReplace ||
+                KMessageBox::questionYesNo(0,
+                    i18n("Screen %1 already has a panel at the edge where the main "
+                         "panel is. Do you want to remove it, with its applets and "
+                         "buttons, and show a copy of the main panel there "
+                         "instead?").arg(screen + 1),
+                    i18n("Main Panel on Every Screen"),
+                    KGuiItem(i18n("&Replace"), "editdelete"),
+                    KGuiItem(i18n("&Keep"))) != KMessageBox::Yes)
+            {
+                keep = true;
+                break;
+            }
+
+            removeContainer(manual);
+        }
+
+        if (!keep)
+        {
+            screens.append(screen);
+        }
+    }
+
+    return screens;
+}
+
+void ExtensionManager::syncMirrors()
+{
+    if (!m_mainPanel || !m_extensionsLoaded)
+    {
+        return;
+    }
+
+    // A mirror may be busy: a menu or a dialog of it runs a nested event
+    // loop, and Qt 3 also runs the deleteLater()s in nested loops.  The
+    // mirrors are deleted from the main loop only.
+    if (m_syncingMirrors || qApp->loopLevel() > 1)
+    {
+        m_mirrorSyncTimer->start(500, true);
+        return;
+    }
+
+    m_syncingMirrors = true;
+
+    bool on = KickerSettings::mainPanelOnEveryScreen();
+    bool askToReplace = on && !m_mirrorsWereOn && m_mirrorsInitialized;
+    m_mirrorsWereOn = on;
+
+    // asks first (a nested event loop), then reads the main panel
+    QValueList<int> screens;
+    if (on)
+    {
+        screens = mirrorScreens(askToReplace);
+    }
+
+    MirrorSource source;
+    if (!screens.isEmpty() && !readMirrorSource(source))
+    {
+        screens.clear();
+    }
+
+    QValueList<int> changed;
+    QValueList<int> existing = m_mirrors.keys();
+    for (QValueList<int>::const_iterator it = existing.constBegin();
+         it != existing.constEnd();
+         ++it)
+    {
+        if (!screens.contains(*it))
+        {
+            destroyMirror(*it);
+            changed.append(*it);
+        }
+    }
+
+    for (QValueList<int>::const_iterator it = screens.constBegin();
+         it != screens.constEnd();
+         ++it)
+    {
+        int screen = *it;
+        MirrorMap::iterator mit = m_mirrors.find(screen);
+        if (mit == m_mirrors.end())
+        {
+            createMirror(screen, source);
+        }
+        else if ((*mit).contentSignature != source.contentSignature)
+        {
+            // new applets or new settings of them: all made again
+            destroyMirror(screen);
+            createMirror(screen, source);
+        }
+        else if ((*mit).panelSignature != source.panelSignature)
+        {
+            updateMirrorPanel(*mit, screen, source);
+        }
+        else if (!(*mit).panel->isVisible())
+        {
+            // hidden by hideStaleMirrors() while its screen was away,
+            // and the screen came back before this ran
+            (*mit).panel->readConfig();
+            (*mit).panel->show();
+        }
+        else
+        {
+            continue;
+        }
+
+        changed.append(screen);
+    }
+
+    if (source.watchedFiles != m_mirrorWatchedFiles)
+    {
+        for (QStringList::const_iterator it = m_mirrorWatchedFiles.constBegin();
+             it != m_mirrorWatchedFiles.constEnd();
+             ++it)
+        {
+            m_mirrorWatch->removeFile(*it);
+        }
+
+        m_mirrorWatchedFiles = source.watchedFiles;
+        for (QStringList::const_iterator it = m_mirrorWatchedFiles.constBegin();
+             it != m_mirrorWatchedFiles.constEnd();
+             ++it)
+        {
+            m_mirrorWatch->addFile(*it);
+        }
+    }
+
+    m_mirrorsInitialized = true;
+    m_syncingMirrors = false;
+
+    for (QValueList<int>::const_iterator it = changed.constBegin();
+         it != changed.constEnd();
+         ++it)
+    {
+        emit desktopIconsAreaChanged(desktopIconsArea(*it), *it);
+    }
+}
+
+void ExtensionManager::createMirror(int screen, const MirrorSource& source)
+{
+    // a new name every time: an applet of the mirror before may write its
+    // file late, it does not get into this one
+    ++m_mirrorGeneration;
+    QString prefix = mirrorFilePrefix() + QString("%1_%2").arg(screen).arg(m_mirrorGeneration);
+
+    Mirror mirror;
+    mirror.configFile = prefix + "rc";
+    mirror.files.append(mirror.configFile);
+
+    {
+        KConfig config(mirror.configFile, false, false);
+        KConfigGroup general(&config, "General");
+        for (MirrorSource::Entries::const_iterator it = source.panel.constBegin();
+             it != source.panel.constEnd();
+             ++it)
+        {
+            general.writeEntry(it.key(), it.data());
+        }
+
+        general.writeEntry("XineramaScreen", screen);
+        general.writeEntry("Applets2", source.applets);
+
+        for (QStringList::const_iterator it = source.applets.constBegin();
+             it != source.applets.constEnd();
+             ++it)
+        {
+            MirrorSource::Entries entries = source.containers[*it];
+            QMap<QString, MirrorSource::Groups>::const_iterator cit = source.configs.find(*it);
+            if (cit != source.configs.constEnd())
+            {
+                QString appletConfigFile = prefix + '_' + (*it).lower() + "rc";
+                entries["ConfigFile"] = appletConfigFile;
+                mirror.files.append(appletConfigFile);
+
+                KConfig appletConfig(appletConfigFile, false, false);
+                for (MirrorSource::Groups::const_iterator git = (*cit).constBegin();
+                     git != (*cit).constEnd();
+                     ++git)
+                {
+                    KConfigGroup group(&appletConfig, git.key());
+                    for (MirrorSource::Entries::const_iterator eit = (*git).constBegin();
+                         eit != (*git).constEnd();
+                         ++eit)
+                    {
+                        group.writeEntry(eit.key(), eit.data());
+                    }
+                }
+                appletConfig.sync();
+            }
+
+            KConfigGroup group(&config, *it);
+            for (MirrorSource::Entries::const_iterator eit = entries.constBegin();
+                 eit != entries.constEnd();
+                 ++eit)
+            {
+                group.writeEntry(eit.key(), eit.data());
+            }
+        }
+
+        config.sync();
+    }
+
+    ExtensionContainer* e = PluginManager::the()->createExtensionContainer(
+                                "childpanelextension.desktop",
+                                false,
+                                mirror.configFile,
+                                QString("Mirror_%1").arg(screen));
+    if (!e)
+    {
+        for (QStringList::const_iterator it = mirror.files.constBegin();
+             it != mirror.files.constEnd();
+             ++it)
+        {
+            QFile::remove(locateLocal("config", *it));
+        }
+        return;
+    }
+
+    mirror.panel = e;
+    mirror.panelSignature = source.panelSignature;
+    mirror.contentSignature = source.contentSignature;
+    m_mirrors[screen] = mirror;
+
+    e->readConfig();
+    e->show();
+}
+
+void ExtensionManager::updateMirrorPanel(Mirror& mirror, int screen,
+                                         const MirrorSource& source)
+{
+    {
+        KConfig config(mirror.configFile, false, false);
+        KConfigGroup general(&config, "General");
+        const QStringList& keys = mirroredPanelKeys(m_mainPanel->settings());
+        for (QStringList::const_iterator it = keys.constBegin(); it != keys.constEnd(); ++it)
+        {
+            MirrorSource::Entries::const_iterator eit = source.panel.find(*it);
+            if (eit == source.panel.constEnd())
+            {
+                general.deleteEntry(*it);
+            }
+            else
+            {
+                general.writeEntry(*it, eit.data());
+            }
+        }
+
+        general.writeEntry("XineramaScreen", screen);
+        config.sync();
+    }
+
+    mirror.panelSignature = source.panelSignature;
+    mirror.panel->readConfig();
+    mirror.panel->show();
+}
+
+void ExtensionManager::destroyMirror(int screen)
+{
+    MirrorMap::iterator it = m_mirrors.find(screen);
+    if (it == m_mirrors.end())
+    {
+        return;
+    }
+
+    Mirror mirror = *it;
+    m_mirrors.remove(it);
+
+    // now and not with deleteLater(): the applets write their files in
+    // their destructors, before the files are removed
+    delete mirror.panel;
+
+    for (QStringList::const_iterator fit = mirror.files.constBegin();
+         fit != mirror.files.constEnd();
+         ++fit)
+    {
+        QFile::remove(locateLocal("config", *fit));
+    }
+}
+
+void ExtensionManager::hideStaleMirrors()
+{
+    QDesktopWidget* desktop = QApplication::desktop();
+    for (MirrorMap::iterator it = m_mirrors.begin(); it != m_mirrors.end(); ++it)
+    {
+        if (!desktop->isVirtualDesktop() || it.key() >= desktop->numScreens())
+        {
+            (*it).panel->hide();
+        }
+    }
 }
 
 #include "extensionmanager.moc"

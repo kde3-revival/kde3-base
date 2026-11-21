@@ -43,6 +43,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "desktopbutton.h"
 #include "extensionbutton.h"
 #include "kbutton.h"
+#include "extensionmanager.h"
 #include "kicker.h"
 #include "kickerSettings.h"
 #include "kickertip.h"
@@ -196,7 +197,11 @@ void ButtonContainer::dragButton(const KURL::List urls, const QPixmap icon)
 
     KMultipleDrag* dd = new KMultipleDrag(this);
     dd->addDragObject(new KURLDrag(urls, 0));
-    dd->addDragObject(new PanelDrag(this, 0));
+    if (!isInMirror())
+    {
+        // a mirror's button is not moved, only its URL is dragged
+        dd->addDragObject(new PanelDrag(this, 0));
+    }
     dd->setPixmap(icon);
     grabKeyboard();
     dd->dragMove();
@@ -205,6 +210,11 @@ void ButtonContainer::dragButton(const KURL::List urls, const QPixmap icon)
 
 void ButtonContainer::dragButton(const QPixmap icon)
 {
+    if (isInMirror())
+    {
+        return;
+    }
+
     PanelDrag* dd = new PanelDrag(this, this);
     dd->setPixmap(icon);
     grabKeyboard();
@@ -229,7 +239,7 @@ bool ButtonContainer::eventFilter(QObject *o, QEvent *e)
         {
         case MidButton:
         {
-            if (isImmutable())
+            if (isImmutable() || isInMirror())
             {
                 break;
             }
@@ -255,7 +265,8 @@ bool ButtonContainer::eventFilter(QObject *o, QEvent *e)
                                                   (orientation() == Horizontal) ?
                                                    QPoint(0, 0) : me->pos());
 
-            Kicker::the()->setInsertionPoint(me->globalPos());
+            Kicker::the()->setInsertionPoint(
+                ExtensionManager::the()->insertionPointFor(this, me->globalPos()));
 
             KickerTip::enableTipping(false);
             switch (menu->exec(pos))
@@ -274,11 +285,19 @@ bool ButtonContainer::eventFilter(QObject *o, QEvent *e)
                 about();
                 break;
             case PanelAppletOpMenu::Preferences:
-                if (_button)
+            {
+                // a mirror's button is set up on the main panel's
+                ButtonContainer* source = dynamic_cast<ButtonContainer*>(mirrorSource());
+                if (source && source->_button)
+                {
+                    source->_button->properties();
+                }
+                else if (_button && !isInMirror())
                 {
                     _button->properties();
                 }
                 break;
+            }
             default:
                 break;
             }

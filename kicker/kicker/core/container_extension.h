@@ -69,6 +69,8 @@ public:
     virtual QSize sizeHint(KPanelExtension::Position, const QSize &maxSize) const;
 
     const AppletInfo& info() const { return _info; }
+    KPanelExtension* extension() const { return m_extension; }
+    const ExtensionSettings& settings() const { return m_settings; }
 
     QString extensionId() const { return _id; }
 

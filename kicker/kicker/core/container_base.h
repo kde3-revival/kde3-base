@@ -63,6 +63,13 @@ public:
     bool isImmutable() const;
     virtual void setImmutable(bool immutable);
 
+    // in a copy of the main panel on another screen, see
+    // ContainerArea::setMirrorSource()
+    bool isInMirror() const { return m_inMirror; }
+    void setInMirror(bool inMirror) { m_inMirror = inMirror; }
+    // the main panel's container this one is a copy of
+    BaseContainer* mirrorSource() const;
+
     double freeSpace() const { return _fspace; }
     void setFreeSpace(double f) { _fspace = f; }
 
@@ -124,6 +131,7 @@ protected:
     QString            _aid;
     int                _actions;
     bool               m_immutable;
+    bool               m_inMirror;
 
 private:
     QPopupMenu        *_opMnu;
