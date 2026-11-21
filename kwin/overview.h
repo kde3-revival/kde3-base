@@ -75,8 +75,9 @@ class Overview : public QObject
         void stackingChanged();
         // keep the hot corners above the electric borders
         void raiseCorners();
-        // KWin moves or resizes a window: its grab keeps the barrier events
-        // away, so the barriers would hold the pointer
+        // KWin moves or resizes a window: no barriers meanwhile, the window
+        // crosses to the other monitor freely (whatever the server tells
+        // about kwin's own grab)
         void setBarriersEnabled( bool enable );
 
     private slots:
@@ -130,6 +131,7 @@ class Overview : public QObject
         bool handleKey( XKeyEvent* e );
         bool handleButton( XButtonEvent* e );
         bool superKey( XKeyEvent* e );
+        bool superAlone( int keycode );
         void handleMotion( const QPoint& p );
         bool handleDamage( XEvent* e );
         bool handlePresent( XEvent* e );

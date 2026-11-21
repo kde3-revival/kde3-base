@@ -694,9 +694,9 @@ void Overview::stackingChanged()
  with a pointer barrier (XFixes 5) on that edge stopping the pointer there,
  like GNOME does.  Below the strip the pointer passes freely; the barrier
  lets it through when the pointer is grabbed by another client (something
- being dragged) and when the corner is off (a full screen window), and
- KWin's own moves and resizes switch the barriers off (their grab keeps
- the barrier events away).  GNOME measures the pressure against the barrier;
+ being dragged), when the corner is off (a full screen window) and after
+ the corner fired until the pointer leaves it (pushing on crosses), and
+ KWin's own moves and resizes switch the barriers off.  GNOME measures the pressure against the barrier;
  here the pointer is simply held in the strip and the usual corner delay
  applies, so that the hot corner of the primary monitor works like all the
  others.  The monitors are RandR's (with the primary one), else Qt's.
@@ -766,7 +766,9 @@ void Overview::createCorners()
             addCorner( QRect( p, QSize( 1, 1 )));
             continue;
             }
-        if( i != primary )
+        // (a strip without a barrier would be crossed, and trigger, when
+        // moving slowly to the other monitor)
+        if( i != primary || !have_barriers )
             continue;
         const int strip = QMIN( CornerStrip, QMIN( g.width(), g.height()));
         if( beyondx )
@@ -923,6 +925,7 @@ void Overview::monitorsChanged()
     {
     if( debug )
         kdWarning( 1212 ) << "overview: the monitors changed" << endl;
+    abort(); // its layout is per monitor
     destroyCorners();
     if( have_render && options->overviewHotCorner )
         createCorners();
@@ -1044,6 +1047,17 @@ void Overview::show()
         {
         kdWarning( 1212 ) << "overview: cannot grab the keyboard or the pointer" << endl;
         return;
+        }
+    // a Super press before (the overview shown otherwise) is no tap now
+    super_alone = false;
+    // the pointer resting in a corner (entered while not allowed) must
+    // leave it before the corner closes the overview
+        {
+        Window root_return, child;
+        int rx, ry, wx, wy;
+        unsigned int mask;
+        if( XQueryPointer( dpy, root, &root_return, &child, &rx, &ry, &wx, &wy, &mask ))
+            corner_armed = !cornerHit( QPoint( rx, ry ));
         }
     composite = have_composite;
     frame_count = 0;
@@ -2691,7 +2705,7 @@ bool Overview::superKey( XKeyEvent* e )
         else if( !super_down ) // else autorepeat
             {
             super_down = true;
-            super_alone = !( e->state & ( ShiftMask | ControlMask | Mod1Mask ));
+            super_alone = superAlone( e->keycode );
             super_time = e->time;
             }
         return super;
@@ -2699,8 +2713,8 @@ bool Overview::superKey( XKeyEvent* e )
     if( super && super_down )
         {
         super_down = false;
-        if( super_alone && e->time - super_time < SuperTapTime )
-            hide();
+        if( super_alone && (unsigned int)( e->time - super_time ) < SuperTapTime )
+            toggle();
         }
     return super;
 #else
@@ -2797,7 +2811,7 @@ void Overview::selectXI2()
         XISetMask( bits, XI_RawKeyRelease );
         XISetMask( bits, XI_RawButtonPress );
         }
-    if( !barrier_lines.isEmpty())
+    if( have_barriers && !barrier_lines.isEmpty())
         XISetMask( bits, XI_BarrierHit );
     mask.deviceid = XIAllMasterDevices;
     mask.mask_len = sizeof( bits );
@@ -2805,6 +2819,20 @@ void Overview::selectXI2()
     XISelectEvents( dpy, root, &mask, 1 );
     super_down = false;
 #endif
+    }
+
+// nothing but the Super key (keycode) held (Shift+Super is no tap)
+bool Overview::superAlone( int keycode )
+    {
+    char keys[ 32 ];
+    XQueryKeymap( dpy, keys );
+    keys[ ( keycode / 8 ) & 31 ] &= ~( 1 << ( keycode % 8 ));
+    for( int i = 0;
+         i < 32;
+         ++i )
+        if( keys[ i ] != 0 )
+            return false;
+    return true;
     }
 
 bool Overview::handleXI2( XEvent* e )
@@ -2822,20 +2850,13 @@ bool Overview::handleXI2( XEvent* e )
             if( ev->flags & XIKeyRepeat )
                 break;
             KeySym sym = XkbKeycodeToKeysym( dpy, ev->detail, 0, 0 );
-            if(( sym == XK_Super_L || sym == XK_Super_R ) && !super_down )
+            // (a release lost under a grab of kwin's own must not spoil the
+            // next tap: every press is a new one, modifiers don't repeat)
+            if( sym == XK_Super_L || sym == XK_Super_R )
                 {
                 super_down = true;
                 super_time = ev->time;
-                // nothing else held (Shift+Super is no tap)
-                char keys[ 32 ];
-                XQueryKeymap( dpy, keys );
-                keys[ ev->detail / 8 ] &= ~( 1 << ( ev->detail % 8 ));
-                super_alone = true;
-                for( int i = 0;
-                     i < 32;
-                     ++i )
-                    if( keys[ i ] != 0 )
-                        super_alone = false;
+                super_alone = superAlone( ev->detail );
                 }
             else
                 super_alone = false;
@@ -2848,9 +2869,9 @@ bool Overview::handleXI2( XEvent* e )
             if(( sym == XK_Super_L || sym == XK_Super_R ) && super_down )
                 {
                 super_down = false;
-                tap = super_alone && ev->time - super_time < SuperTapTime;
+                tap = super_alone && (unsigned int)( ev->time - super_time ) < SuperTapTime;
                 if( debug )
-                    kdWarning( 1212 ) << "overview: Super released after " << ev->time - super_time
+                    kdWarning( 1212 ) << "overview: Super released after " << (unsigned int)( ev->time - super_time )
                         << " ms, alone " << super_alone << endl;
                 }
             break;
@@ -2866,7 +2887,10 @@ bool Overview::handleXI2( XEvent* e )
             // away: the corner stays, to close it again)
             XIBarrierEvent* ev = (XIBarrierEvent*) cookie->data;
             QPoint p( int( ev->root_x ), int( ev->root_y ));
-            bool release = ( ev->flags & XIBarrierDeviceIsGrabbed ) || !cornerAllowed( p, 0 );
+            // and after the corner has fired, until the pointer leaves it:
+            // pushing on goes through to the other monitor
+            bool release = ( ev->flags & XIBarrierDeviceIsGrabbed ) || !corner_armed
+                || !cornerAllowed( p, 0 );
             if( debug )
                 kdWarning( 1212 ) << "overview: barrier hit " << p.x() << "," << p.y() << " flags " << ev->flags
                     << " state " << state << ( release ? " released" : "" ) << endl;

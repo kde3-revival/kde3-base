@@ -629,7 +629,8 @@ KAdvancedConfig::KAdvancedConfig (bool _standAlone, KConfig *_config, QWidget *p
        " before the overview is shown."));
     QWhatsThis::add(overviewSuperKey, i18n("If this option is enabled, pressing and releasing the Super"
        " key (the key with the Windows logo) without any other key shows the window overview, or hides"
-       " it. Shortcuts with the Super key (Meta in KDE) still work."));
+       " it. Shortcuts with the Super key (Meta in KDE) still work. Disable it if the Super key"
+       " alone does something else for you, e.g. switches the keyboard layout."));
     QWhatsThis::add(overviewAnimationTime, i18n("The duration of the zoom out and zoom in animations;"
        " 0 disables them."));
     connect(overviewCorner, SIGNAL(toggled(bool)), this, SLOT(overviewCornerChanged(bool)));
