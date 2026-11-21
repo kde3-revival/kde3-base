@@ -39,6 +39,7 @@ private:
 	void invokeEject(const QString &device, bool quiet=false);
 	QString m_errorStr;
 	QString m_device;
+	QString m_mediumId;
 	bool m_isCdrom;
 
 private slots:

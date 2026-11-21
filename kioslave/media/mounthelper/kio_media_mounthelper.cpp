@@ -85,6 +85,7 @@ MountHelper::MountHelper() : KApplication()
 
 	QString device = medium.deviceNode();
 	QString mount_point = medium.mountPoint();
+	m_mediumId = medium.id();
 
 	m_isCdrom = medium.mimeType().find("dvd")!=-1
 	         || medium.mimeType().find("cd")!=-1;
@@ -141,6 +142,22 @@ MountHelper::MountHelper() : KApplication()
 
 void MountHelper::invokeEject(const QString &device, bool quiet)
 {
+	// The media manager ejects through UDisks2 (and powers USB drives
+	// off), which needs neither the eject program nor root rights
+	DCOPRef mediamanager("kded", "mediamanager");
+	DCOPReply reply = mediamanager.call( "eject", m_mediumId );
+	if (reply.isValid())
+	{
+		QString ejectError;
+		reply.get(ejectError);
+		if (ejectError.isNull())
+			::exit(0);
+		m_errorStr = ejectError;
+		QTimer::singleShot(0, this, SLOT(error()));
+		return;
+	}
+
+	// an older media manager: run the eject command
 	KProcess *proc = new KProcess(this);
 	*proc << "kdeeject";
 	if (quiet)
