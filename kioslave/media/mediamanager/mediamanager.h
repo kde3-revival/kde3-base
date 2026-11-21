@@ -29,6 +29,7 @@
 #include "mediadirnotify.h"
 
 class FstabBackend;
+class UDisks2Backend;
 
 class MediaManager : public KDEDModule
 {
@@ -46,6 +47,8 @@ k_dcop:
 
 	QString mount(const QString &uid);
 	QString unmount(const QString &uid);
+	// Ejects the medium, or powers off its drive (UDisks2 only)
+	QString eject(const QString &uid);
 
 	QString nameForLabel(const QString &label);
 	ASYNC setUserLabel(const QString &name, const QString &label);
@@ -83,6 +86,7 @@ private:
 	RemovableBackend *mp_removableBackend;
 	MediaDirNotify m_dirNotify;
 	FstabBackend *m_fstabbackend;
+	UDisks2Backend *m_udisks2backend;
 };
 
 #endif

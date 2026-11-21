@@ -4,6 +4,11 @@
 <kcfg>
   <kcfgfile name="mediamanagerrc"/>
   <group name="Global">
+    <entry name="UDisks2BackendEnabled" type="Bool">
+      <label>Enable UDisks2 backend</label>
+      <whatsthis>When UDisks2 support is enabled, KDE will use it to gather information on the storage media available in your system.</whatsthis>
+      <default>true</default>
+    </entry>
     <entry name="CdPollingEnabled" type="Bool">
       <label>Enable CD polling</label>
       <whatsthis>Allows KDE to poll CD-Rom or DVD-Rom drives itself in order to detect medium insert.</whatsthis>

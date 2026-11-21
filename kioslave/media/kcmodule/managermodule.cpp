@@ -35,6 +35,13 @@ ManagerModule::ManagerModule( QWidget* parent, const char* name )
 
 	addConfig(  MediaManagerSettings::self(), view );
 
+#ifndef COMPILE_UDISKS2BACKEND
+	QString udisks2_text = view->kcfg_UDisks2BackendEnabled->text();
+	udisks2_text += " ("+i18n("No support for UDisks2 on this system")+")";
+	view->kcfg_UDisks2BackendEnabled->setText( udisks2_text );
+	view->kcfg_UDisks2BackendEnabled->setEnabled( false );
+#endif
+
 #ifndef COMPILE_LINUXCDPOLLING
 	QString poll_text = view->kcfg_CdPollingEnabled->text();
 	poll_text += " ("+i18n("No support for CD polling on this system")+")";

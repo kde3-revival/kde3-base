@@ -678,6 +678,20 @@ endif()
 
 # media: linux/cdrom.h; HAL (COMPILE_HALBACKEND) is not supported any more
 check_include_file(linux/cdrom.h COMPILE_LINUXCDPOLLING)
+
+# The media manager lists, mounts and ejects the storage devices through
+# UDisks2 (org.freedesktop.UDisks2) over the system D-Bus, with GIO's
+# GDBus; without it only what /etc/fstab and /etc/mtab say is known
+option(KDEBASE_UDISKS2 "Media manager backend for UDisks2 (needs GIO; udisks2 at run time)" ON)
+if(KDEBASE_UDISKS2)
+  pkg_check_modules(GIO QUIET IMPORTED_TARGET gio-2.0)
+  if(NOT GIO_FOUND)
+    message(FATAL_ERROR "GIO (gio-2.0, part of GLib) was not found; the media "
+      "manager needs it to talk to UDisks2.  Install it, or configure with "
+      "-DKDEBASE_UDISKS2=OFF to build without the UDisks2 backend.")
+  endif()
+  set(COMPILE_UDISKS2BACKEND 1)
+endif()
 check_function_exists(statvfs HAVE_STATVFS)
 
 # smb (--with-samba=check): libsmbclient
@@ -831,6 +845,7 @@ foreach(_what
     "HAVE_XINERAMA:KDE3_WITH_XINERAMA:Xinerama (ksplashsimple)"
     "HAVE_DPMS:KDE3_WITH_DPMS:DPMS (power saving)"
     "HAVE_LOGIND_SLEEP:KDEBASE_LOGIND_SLEEP:Sleep and hibernate in the logout dialog (GIO, systemd-logind)"
+    "COMPILE_UDISKS2BACKEND:KDEBASE_UDISKS2:UDisks2 backend of the media manager (GIO)"
     "KDE3_BUILD_KXKB:-:XKB headers and libxkbfile (kxkb)"
     "HAVE_LIBSASL2:-:cyrus-sasl 2 (the pop3 and smtp ioslaves lack a lot of authentication methods)"
     "HAVE_LIBLDAP:KDE3_WITH_LDAP:OpenLDAP (ldap ioslave)"

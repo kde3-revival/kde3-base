@@ -26,11 +26,16 @@
 #include <klocale.h>
 
 #include <kdirnotify_stub.h>
+#include <kprocess.h>
 #include <kstandarddirs.h>
 
 #include "mediamanagersettings.h"
 
 #include "fstabbackend.h"
+
+#ifdef COMPILE_UDISKS2BACKEND
+#include "udisks2backend.h"
+#endif //COMPILE_UDISKS2BACKEND
 
 #ifdef COMPILE_LINUXCDPOLLING
 #include "linuxcdpolling.h"
@@ -74,6 +79,30 @@ void MediaManager::loadBackends()
 
     mp_removableBackend = 0L;
     m_fstabbackend = 0L;
+    m_udisks2backend = 0L;
+
+#ifdef COMPILE_UDISKS2BACKEND
+    if ( MediaManagerSettings::self()->uDisks2BackendEnabled() )
+    {
+        m_udisks2backend = new UDisks2Backend(m_mediaList);
+        if (m_udisks2backend->initialize())
+        {
+            m_backends.append( m_udisks2backend );
+            // UDisks2 knows the local devices, fstab the network shares
+            m_fstabbackend = new FstabBackend(m_mediaList, true);
+            m_backends.append( m_fstabbackend );
+            // No need to load something else...
+            m_mediaList.blockSignals(false);
+            return;
+        }
+        else
+        {
+            kdWarning(1219) << "UDisks2 is not available, falling back to fstab" << endl;
+            delete m_udisks2backend;
+            m_udisks2backend = 0;
+        }
+    }
+#endif // COMPILE_UDISKS2BACKEND
 
     mp_removableBackend = new RemovableBackend(m_mediaList);
     m_backends.append( mp_removableBackend );
@@ -171,6 +200,10 @@ bool MediaManager::setMountoptions(const QString &, const QStringList &)
 
 QString MediaManager::mount(const QString &name)
 {
+#ifdef COMPILE_UDISKS2BACKEND
+    if ( m_udisks2backend )
+        return m_udisks2backend->mount( name );
+#endif
     if ( !m_fstabbackend ) // lying :)
         return i18n("Feature only available with HAL");
     return m_fstabbackend->mount( name );
@@ -178,9 +211,29 @@ QString MediaManager::mount(const QString &name)
 
 QString MediaManager::unmount(const QString &name)
 {
+#ifdef COMPILE_UDISKS2BACKEND
+    if ( m_udisks2backend )
+        return m_udisks2backend->unmount( name );
+#endif
     if ( !m_fstabbackend ) // lying :)
         return i18n("Feature only available with HAL");
     return m_fstabbackend->unmount( name );
+}
+
+QString MediaManager::eject(const QString &name)
+{
+#ifdef COMPILE_UDISKS2BACKEND
+    if ( m_udisks2backend )
+        return m_udisks2backend->eject( name );
+#endif
+    // without UDisks2, the eject command does it, and tells about failures
+    const Medium *m = m_mediaList.findById(name);
+    if ( !m )
+        return i18n("No such medium: %1").arg(name);
+    KProcess proc;
+    proc << "kdeeject" << m->deviceNode();
+    proc.start(KProcess::DontCare);
+    return QString::null;
 }
 
 QString MediaManager::nameForLabel(const QString &label)

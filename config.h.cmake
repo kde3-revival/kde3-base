@@ -218,6 +218,8 @@
 #cmakedefine HAVE_ISASTREAM 1
 /* media linux cd polling compilation */
 #cmakedefine COMPILE_LINUXCDPOLLING 1
+/* Define if the media manager has the UDisks2 backend (GIO) */
+#cmakedefine COMPILE_UDISKS2BACKEND 1
 #cmakedefine HAVE_STATVFS 1
 
 /* ---- kdm ---------------------------------------------------------- */

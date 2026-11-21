@@ -39,6 +39,15 @@ if(COMPILE_LINUXCDPOLLING)
   target_link_libraries(kded_mediamanager PRIVATE linuxcdpolling)
 endif()
 
+# The UDisks2 backend; udisks2dbus.cpp talks to UDisks2 with GIO's GDBus
+if(COMPILE_UDISKS2BACKEND)
+  target_sources(kded_mediamanager PRIVATE
+    udisks2backend.cpp
+    udisks2dbus.cpp
+  )
+  target_link_libraries(kded_mediamanager PRIVATE PkgConfig::GIO)
+endif()
+
 install(FILES
   mediamanager.desktop
   DESTINATION ${KDE3_SERVICES_INSTALL_DIR}/kded)
