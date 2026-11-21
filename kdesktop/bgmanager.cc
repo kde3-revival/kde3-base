@@ -298,7 +298,8 @@ void KBackgroundManager::slotDailyFinished(const QString &picture, bool isNew, c
         kdDebug() << "kdesktop: picture of the day of " << m_dailySource << ": " << error << endl;
         next = now + 15 * 60;
     }
-    else if (date >= QDate::currentDate().toString(Qt::ISODate))
+    else if (date >= QMIN(QDate::currentDate(),
+                          QDateTime::currentDateTime(Qt::UTC).date()).toString(Qt::ISODate))
     {
         // today's: the next one tomorrow, a little after midnight
         QDateTime tomorrow(QDate::currentDate().addDays(1), QTime(0, 10));
@@ -673,6 +674,9 @@ void KBackgroundManager::addCache(KPixmap *pm, int hash, int desk)
  */
 void KBackgroundManager::slotTimeout()
 {
+    // a picture of the day that is due (cheap: the state file decides)
+    slotCheckDaily();
+
     QMemArray<int> running(m_Renderer.size());
     running.fill(0);
 

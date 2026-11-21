@@ -235,6 +235,14 @@ BGDialog::BGDialog(QWidget* parent, KConfig* _config, bool _multidesktop)
    if (m_wallpaperPos == KBackgroundSettings::NoWallpaper)
       m_wallpaperPos = KBackgroundSettings::Centred; // Default
 
+   // the picture of the day is fetched by kdesktop: not for the login
+   // manager's background (the KDM module has no several desktops)
+   if (!m_multidesktop)
+   {
+      m_radioDaily->hide();
+      m_comboDailySource->hide();
+   }
+
    if (KGlobal::dirs()->isRestrictedResource("wallpaper"))
    {
       m_urlWallpaperButton->hide();
@@ -791,7 +799,7 @@ void BGDialog::updateUI()
       m_buttonGroupBackground->id(m_radioSlideShow) );
    }
 
-   m_comboDailySource->setEnabled(multiMode == KBackgroundSettings::Daily &&
+   m_comboDailySource->setEnabled(!m_readOnly && multiMode == KBackgroundSettings::Daily &&
                                   wallpaperMode != KBackgroundSettings::NoWallpaper);
    int daily = m_dailySources.findIndex(r->dailySource());
    m_comboDailySource->setCurrentItem(daily < 0 ? 0 : daily);
@@ -919,7 +927,7 @@ void BGDialog::slotWallpaperTypeChanged(int i)
    KBackgroundRenderer *r = eRenderer();
    r->stop();
 
-   m_comboDailySource->setEnabled(i == m_buttonGroupBackground->id(m_radioDaily));
+   m_comboDailySource->setEnabled(!m_readOnly && i == m_buttonGroupBackground->id(m_radioDaily));
 
    // No picture
    if (i == m_buttonGroupBackground->id(m_radioNoPicture))  //None
@@ -1351,7 +1359,7 @@ void BGDialog::slotGetNewStuff()
    {
       KNS::DownloadDialog dlg( this, i18n("Get New Wallpapers") );
       dlg.setType( "wallpapers" );
-      dlg.setInstallAndSetEnabled( !m_readOnly );
+      dlg.setInstallAndSetEnabled( !m_readOnly && m_multidesktop );
       dlg.load();
       dlg.exec();
       picture = dlg.installedAndSetFile();

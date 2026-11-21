@@ -692,7 +692,11 @@ void KBackgroundSettings::setMultiWallpaperMode(int mode)
     if (m_MultiMode == mode)
 	return;
     dirty = hashdirty = true;
+    bool daily = m_MultiMode == Daily || mode == Daily;
     m_MultiMode = mode;
+    // the files of the picture of the day are not those of a slide show
+    if (daily)
+        updateWallpaperFiles();
     changeWallpaper(true);
 }
 
@@ -860,7 +864,10 @@ void KBackgroundSettings::writeSettings()
     m_pConfig->writePathEntry("Wallpaper", m_Wallpaper);
     m_pConfig->writeEntry("WallpaperMode", m_WMRevMap[m_WallpaperMode]);
     m_pConfig->writeEntry("MultiWallpaperMode", m_MMRevMap[m_MultiMode]);
-    m_pConfig->writeEntry("DailyWallpaperSource", m_DailySource);
+    if (m_MultiMode == Daily)
+        m_pConfig->writeEntry("DailyWallpaperSource", m_DailySource);
+    else
+        m_pConfig->deleteEntry("DailyWallpaperSource");
     m_pConfig->writeEntry("BlendMode", m_BlMRevMap[m_BlendMode]);
     m_pConfig->writeEntry("BlendBalance", m_BlendBalance);
     m_pConfig->writeEntry("ReverseBlending", m_ReverseBlending);
