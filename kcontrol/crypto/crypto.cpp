@@ -28,6 +28,7 @@
 #include <sys/stat.h>
 
 #include <stdlib.h>
+#include <string.h>
 #include <pwd.h>
 #include <unistd.h>
 
@@ -324,6 +325,9 @@ QString whatstr;
   whatstr = i18n("Select the ciphers you wish to enable when using the"
                 " SSL v3 protocol. The actual protocol used will be"
                 " negotiated with the server at connection time.");
+  whatstr += i18n(" As long as all ciphers are selected, the system's"
+                  " default cipher list is used as it is. The TLS 1.3"
+                  " ciphers are always those of the system.");
   QWhatsThis::add(SSLv3Box, whatstr);
   SSLv3Box->setSelectionMode(QListView::NoSelection);
   grid->addWidget(SSLv3Box, 2, 1);
@@ -2371,6 +2375,10 @@ SSL *ssl;
     const SSL_CIPHER *sc = sk_SSL_CIPHER_value(sk, i);
     if (!sc)
       break;
+    // SSL_CTX_set_cipher_list() does not set the TLS 1.3 suites, kssl
+    // leaves them to the system: do not offer them here
+    if (!strcmp(SSL_CIPHER_get_version(sc), "TLSv1.3"))
+      continue;
     QString scn(SSL_CIPHER_get_name(sc));
     if (scn.contains("ADH-") || scn.contains("NULL-") || scn.contains("DES-CBC3-SHA") || scn.contains("FZA-")) {
       continue;
