@@ -1547,11 +1547,11 @@ void TEWidget::mouseMoveEvent(QMouseEvent* ev)
     // The application tracks the mouse: report the cell under it,
     // clamped to the screen, whenever it changes. The emulation
     // decides whether the application asked for motion events.
-    QPoint tL  = contentsRect().topLeft();
-    int cx = QMIN(QMAX((ev->x()-tL.x()-bX)/font_w, 0), columns-1) + 1;
-    int cy = QMIN(QMAX((ev->y()-tL.y()-bY)/font_h, 0), lines-1) + 1;
-    if (cx == lastMotionCell.x() && cy == lastMotionCell.y()) return;
-    lastMotionCell = QPoint(cx, cy);
+    QPoint cell = mouseCell(ev->pos());
+    int cx = cell.x();
+    int cy = cell.y();
+    if (cell == lastMotionCell) return;
+    lastMotionCell = cell;
     int button = (ev->state() & LeftButton)  ? 0 :
                  (ev->state() & MidButton)   ? 1 :
                  (ev->state() & RightButton) ? 2 : 3;
@@ -1773,6 +1773,18 @@ void TEWidget::extendSelection( QPoint pos )
     emit extendSelectionSignal( here.x()+offset, here.y() );
 }
 
+// The 1-based screen cell under the widget position `pos', clamped to
+// the screen (for positions outside of it while the mouse is grabbed).
+QPoint TEWidget::mouseCell(const QPoint& pos) const
+{
+  QPoint tL = contentsRect().topLeft();
+  int x = pos.x() - tL.x() - bX;
+  int y = pos.y() - tL.y() - bY;
+  int cx = x < 0 ? 0 : QMIN(x / font_w, columns-1);
+  int cy = y < 0 ? 0 : QMIN(y / font_h, lines-1);
+  return QPoint(cx + 1, cy + 1);
+}
+
 void TEWidget::mouseReleaseEvent(QMouseEvent* ev)
 {
 //printf("release [%d,%d] %d\n",ev->x()/font_w,ev->y()/font_h,ev->button());
@@ -1790,30 +1802,21 @@ void TEWidget::mouseReleaseEvent(QMouseEvent* ev)
           emit endSelectionSignal(preserve_line_breaks);
       actSel = 0;
 
-      //FIXME: emits a release event even if the mouse is
-      //       outside the range. The procedure used in `mouseMoveEvent'
-      //       applies here, too.
-
-      QPoint tL  = contentsRect().topLeft();
-      int    tLx = tL.x();
-      int    tLy = tL.y();
-
+      // A release outside the window (after dragging) is reported at
+      // the nearest cell, like motion.
+      QPoint cell = mouseCell(ev->pos());
       if (!mouse_marks && !(ev->state() & ShiftButton))
         emit mouseSignal( 0, // release
-                        (ev->x()-tLx-bX)/font_w + 1,
-                        (ev->y()-tLy-bY)/font_h + 1 +scrollbar->value() -scrollbar->maxValue(), 2);
+                        cell.x(), cell.y() +scrollbar->value() -scrollbar->maxValue(), 2);
       releaseMouse();
     }
     dragInfo.state = diNone;
   }
   if ( !mouse_marks && ((ev->button() == RightButton && !(ev->state() & ShiftButton))
                         || ev->button() == MidButton) ) {
-    QPoint tL  = contentsRect().topLeft();
-    int    tLx = tL.x();
-    int    tLy = tL.y();
-
+    QPoint cell = mouseCell(ev->pos());
     emit mouseSignal( ev->button() == MidButton ? 1 : 2,
-                      (ev->x()-tLx-bX)/font_w +1, (ev->y()-tLy-bY)/font_h +1 +scrollbar->value() -scrollbar->maxValue(), 2 );
+                      cell.x(), cell.y() +scrollbar->value() -scrollbar->maxValue(), 2 );
     releaseMouse();
   }
 }

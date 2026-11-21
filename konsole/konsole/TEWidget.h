@@ -201,6 +201,7 @@ protected:
     void mouseReleaseEvent( QMouseEvent* );
     void mouseMoveEvent( QMouseEvent* );
     void extendSelection( QPoint pos );
+    QPoint mouseCell(const QPoint& pos) const;
     void wheelEvent( QWheelEvent* );
 
     void focusInEvent( QFocusEvent * );
