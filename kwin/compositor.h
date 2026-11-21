@@ -144,6 +144,7 @@ class Compositor : public QObject
         bool active;
         bool suspended; // by the shortcut
         bool failed_once;
+        int foreign_retries; // another compositing manager when KWin starts
         QString reason; // why it is off
         KSelectionOwner* selection;
         Render::Renderer* renderer;

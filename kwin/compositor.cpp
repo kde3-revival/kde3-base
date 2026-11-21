@@ -210,8 +210,8 @@ static int untrap()
 
 Compositor::Compositor( Workspace* w )
     : ws( w ), dpy( qt_xdisplay()), root( qt_xrootwin()), screen_w( 0 ), screen_h( 0 ), active( false ),
-      suspended( false ), failed_once( false ), selection( NULL ), renderer( NULL ), shadows( NULL ),
-      presenter( NULL ), per_monitor( false ), flips_failed( false ), copies_in_row( 0 ), latest_buffer( -1 ),
+      suspended( false ), failed_once( false ), foreign_retries( 0 ), selection( NULL ), renderer( NULL ),
+      shadows( NULL ), presenter( NULL ), per_monitor( false ), flips_failed( false ), copies_in_row( 0 ), latest_buffer( -1 ),
       hold_until( 0 ), force_mode( 0 ), overlay( None ), frame_number( 0 ), frame_wanted( false ), root_pixmap( None ),
       root_texture( NULL ), shape_event( 0 ), asap( false ), render_budget( 3.0 ), min_budget( 3.0 ), on_time( 0 ),
       target_vblank( 0 ), late_at_max( 0 ), late_failed( false ), submit_time( 0 ), shown_index( 0 ),
@@ -432,8 +432,15 @@ bool Compositor::start()
         {
         reason = i18n( "another compositing manager runs" );
         kdWarning( 1212 ) << "compositor: " << reason << endl;
+        // (kwin --replace: the old KWin may still be exiting)
+        if( foreign_retries < 5 )
+            {
+            ++foreign_retries;
+            retry_timer.start( 1000, true );
+            }
         return false;
         }
+    foreign_retries = 5; // (only right after KWin started)
     shape_event = Shape::shapeEvent();
     screen_w = DisplayWidth( dpy, DefaultScreen( dpy ));
     screen_h = DisplayHeight( dpy, DefaultScreen( dpy ));
