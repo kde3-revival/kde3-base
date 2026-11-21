@@ -34,10 +34,12 @@ fi
 # A display manager sets XDG_CURRENT_DESKTOP from DesktopNames=KDE3;GNOME;
 # of the session file; a value that does not start with KDE3 was inherited
 # from somewhere else (startx from another desktop's terminal, a session
-# file without DesktopNames) and is replaced.
+# file without DesktopNames) and is replaced, and so are the session names
+# that came with it.
 case "$XDG_CURRENT_DESKTOP" in
   KDE3|KDE3:*) ;;
-  *) XDG_CURRENT_DESKTOP=KDE3:GNOME; export XDG_CURRENT_DESKTOP ;;
+  *) XDG_CURRENT_DESKTOP=KDE3:GNOME; export XDG_CURRENT_DESKTOP
+     unset XDG_SESSION_DESKTOP DESKTOP_SESSION ;;
 esac
 if test -z "$XDG_SESSION_DESKTOP"; then
   XDG_SESSION_DESKTOP=KDE3; export XDG_SESSION_DESKTOP
