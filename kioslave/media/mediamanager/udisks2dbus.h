@@ -65,27 +65,38 @@ public:
     /** Some properties of an interface of an object changed. */
     virtual void udisks2PropertiesChanged(const QString &path, const QString &interface,
                                           const UDisks2Properties &changed) = 0;
+    /**
+     * UDisks2 went away (all its objects are reported removed before or
+     * after) or came back (after its objects were reported added).  While
+     * udisksd restarts, hasOwner() is false in the callbacks above.
+     */
+    virtual void udisks2OwnerChanged(bool present) = 0;
 };
 
-/**
- * The outcome of a method call.  call() fills it in when the reply
- * arrives, from the main loop, and sets @p done last.
- */
+/** The outcome of a method call. */
 struct UDisks2Reply
 {
-    UDisks2Reply() : done(false), ok(false) {}
+    UDisks2Reply() : ok(false) {}
 
-    bool done;
     bool ok;
     QString value;        // the first value of the reply, if it is a string
     QString errorName;    // the D-Bus error name, e.g. org.freedesktop.UDisks2.Error.NotAuthorized
     QString errorMessage; // the error's message, without the remote error name
 };
 
+/** Receives the replies of the method calls. */
+class UDisks2ReplyHandler
+{
+public:
+    virtual ~UDisks2ReplyHandler() {}
+    virtual void udisks2Reply(const UDisks2Reply &reply) = 0;
+};
+
 class UDisks2Connection
 {
 public:
     UDisks2Connection(UDisks2Listener *listener);
+    /** Drops the replies still to come: no handler is called any more. */
     ~UDisks2Connection();
 
     /**
@@ -97,17 +108,22 @@ public:
      */
     bool open(QString *error);
 
+    /** Whether udisksd is running (has the bus name) now. */
+    bool hasOwner() const;
+
     /**
      * Calls @p method of @p interface of the object at @p path, with a
      * single a{sv} argument made of @p options (the call signature of the
-     * Filesystem, Drive and Loop methods of UDisks2).  The call does not
-     * time out (polkit may ask for a password) and may be interactively
-     * authorized.  Returns at once; @p reply is filled in later, from the
-     * main loop, and must stay valid until reply->done is set, which
-     * happens even if the connection is deleted first.
+     * Filesystem, Encrypted, Drive and Loop methods of UDisks2).  The call
+     * does not time out (polkit may ask for a password) and may be
+     * interactively authorized.  Returns at once; @p handler gets the
+     * reply later, from the main loop, unless forget() is called first.
      */
     void call(const QString &path, const char *interface, const char *method,
-              const UDisks2Properties &options, UDisks2Reply *reply);
+              const UDisks2Properties &options, UDisks2ReplyHandler *handler);
+
+    /** @p handler is going away: it gets no more replies. */
+    void forget(UDisks2ReplyHandler *handler);
 
 private:
     UDisks2Connection(const UDisks2Connection &);

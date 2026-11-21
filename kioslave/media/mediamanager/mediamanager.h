@@ -47,7 +47,10 @@ k_dcop:
 
 	QString mount(const QString &uid);
 	QString unmount(const QString &uid);
-	// Ejects the medium, or powers off its drive (UDisks2 only)
+	// Whether eject() can do it (UDisks2), else run kdeeject
+	bool canEject(const QString &uid);
+	// Safely removes the medium's drive: unmounts and locks what is on
+	// it, ejects it and powers it off if it can be (UDisks2 only)
 	QString eject(const QString &uid);
 
 	QString nameForLabel(const QString &label);

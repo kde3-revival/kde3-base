@@ -24,8 +24,10 @@
  * on GIO.
  */
 
-#include <qapplication.h>
-#include <qeventloop.h>
+#include <stdlib.h>
+
+#include <qdir.h>
+#include <qfile.h>
 
 #include <kconfig.h>
 #include <kdebug.h>
@@ -37,7 +39,10 @@
 static const char driveInterface[] = "org.freedesktop.UDisks2.Drive";
 static const char blockInterface[] = "org.freedesktop.UDisks2.Block";
 static const char filesystemInterface[] = "org.freedesktop.UDisks2.Filesystem";
+static const char encryptedInterface[] = "org.freedesktop.UDisks2.Encrypted";
 static const char loopInterface[] = "org.freedesktop.UDisks2.Loop";
+static const char drivesPrefix[] = "/org/freedesktop/UDisks2/drives/";
+static const char blockDevicesPrefix[] = "/org/freedesktop/UDisks2/block_devices/";
 
 static QString humanReadableSize(Q_INT64 size)
 {
@@ -51,18 +56,32 @@ static QString humanReadableSize(Q_INT64 size)
     return QString("%1%2").arg(size).arg(units[i]);
 }
 
-// A file system the system itself has mounted somewhere in its tree
-// (/, /boot, /home, /usr, ...), not for the user under /media, /run/media
-// or /mnt
-static bool isSystemMount(const QStringList &mountPoints)
+// A file system mounted somewhere in the system's own tree (/, /boot,
+// /home, /usr, ...), not for the user under /media, /run/media or /mnt;
+// returns the mount point, or QString::null
+static QString systemMountPoint(const QStringList &mountPoints)
 {
     for(QStringList::ConstIterator it = mountPoints.begin(); it != mountPoints.end(); ++it)
     {
         const QString &mp = *it;
         if(!mp.startsWith("/media/") && !mp.startsWith("/run/media/") && !mp.startsWith("/mnt/") && mp != "/mnt")
-            return true;
+            return mp;
     }
-    return false;
+    return QString::null;
+}
+
+// The devices built on top of a block device (dm, md, ...), from sysfs
+static QStringList holders(const QString &device)
+{
+    if(device.isEmpty())
+        return QStringList();
+    const char *sysfs = getenv("MEDIAMANAGER_UDISKS2_TEST_SYSFS");
+    QString base = sysfs && *sysfs ? QFile::decodeName(sysfs) : QString::fromLatin1("/sys/class/block");
+    QDir dir(base + "/" + device.section('/', -1) + "/holders");
+    QStringList list = dir.entryList(QDir::All | QDir::System | QDir::Hidden);
+    list.remove(".");
+    list.remove("..");
+    return list;
 }
 
 /***** UDisks2Backend::Object ***********************/
@@ -96,6 +115,11 @@ struct UDisks2Backend::Object
     {
         return !mountPoints.isEmpty();
     }
+    // the cleartext device of an unlocked encrypted volume
+    bool isCleartext() const
+    {
+        return !cryptoBacking.isEmpty() && cryptoBacking != "/";
+    }
 
     QString path;
     QStringList interfaces;
@@ -116,21 +140,153 @@ struct UDisks2Backend::Object
     // block device interface
     bool mountable;
     QString drive;
-    QString device;
+    QString device;    // the preferred device node, for the user
+    QString rawDevice; // the kernel's device node, e.g. /dev/dm-0
     QString label;
     QString uuid;
     QString fsType;
     Q_INT64 size;
     bool hintIgnore;
     bool hintSystem;
+    QString cryptoBacking;
 
     // filesystem interface
     QStringList mountPoints;
 };
 
+/***** UDisks2Backend::Task *************************/
+
+// One method call of a task
+struct UDisks2Backend::Step
+{
+    Step() : action(Mount)
+    {
+    }
+    Step(Action a, const QString &p, const QString &d) : action(a), path(p), device(d)
+    {
+    }
+
+    Action action;
+    QString path;
+    QString device; // for the error messages
+};
+
+// A mount, unmount or eject: method calls of UDisks2 made one after the
+// other, each when the previous one has succeeded
+class UDisks2Backend::Task : public UDisks2ReplyHandler
+{
+public:
+    Task(UDisks2Backend *b, const QValueList<Step> &s) : backend(b), result(0), steps(s), ejected(false)
+    {
+    }
+
+    ~Task()
+    {
+        backend->m_connection->forget(this);
+    }
+
+    void next()
+    {
+        if(steps.isEmpty())
+        {
+            finish(QString::null);
+            return;
+        }
+        current = steps.first();
+        steps.remove(steps.begin());
+
+        const char *interface = filesystemInterface;
+        const char *method = "Mount";
+        switch(current.action)
+        {
+            case Mount:
+                break;
+            case Unmount:
+                method = "Unmount";
+                break;
+            case Lock:
+                interface = encryptedInterface;
+                method = "Lock";
+                break;
+            case Eject:
+                interface = driveInterface;
+                method = "Eject";
+                break;
+            case PowerOff:
+                interface = driveInterface;
+                method = "PowerOff";
+                break;
+        }
+        backend->m_connection->call(current.path, interface, method, UDisks2Properties(), this);
+    }
+
+    virtual void udisks2Reply(const UDisks2Reply &reply)
+    {
+        bool ok = reply.ok;
+        QString error;
+        switch(current.action)
+        {
+            case Mount:
+                if(!ok && reply.errorName == "org.freedesktop.UDisks2.Error.AlreadyMounted")
+                    ok = true;
+                else if(ok)
+                    backend->mounted(current.path, reply.value);
+                break;
+            case Unmount:
+                if(!ok && reply.errorName == "org.freedesktop.UDisks2.Error.NotMounted")
+                    ok = true;
+                else if(ok)
+                    backend->unmounted(current.path);
+                break;
+            case Lock:
+                break;
+            case Eject:
+                if(!ok && !steps.isEmpty() && steps.first().action == PowerOff)
+                {
+                    // powering off may still do
+                    ejectError = errorMessage(Eject, current.device, reply);
+                    next();
+                    return;
+                }
+                ejected = ok;
+                break;
+            case PowerOff:
+                // ejected is good enough
+                if(!ok && ejected)
+                    ok = true;
+                else if(!ok && !ejectError.isNull())
+                    error = ejectError;
+                break;
+        }
+
+        if(ok)
+            next();
+        else
+            finish(error.isNull() ? errorMessage(current.action, current.device, reply) : error);
+    }
+
+    void finish(const QString &error)
+    {
+        backend->m_tasks.removeRef(this);
+        if(result)
+        {
+            result->finished(error);
+            delete result;
+        }
+        delete this;
+    }
+
+    UDisks2Backend *backend;
+    UDisks2Result *result;
+    QValueList<Step> steps;
+    Step current;
+    bool ejected;
+    QString ejectError;
+};
+
 /***** UDisks2Backend *******************************/
 
-UDisks2Backend::UDisks2Backend(MediaList &mediaList) : BackendBase(mediaList), m_allowNotification(false)
+UDisks2Backend::UDisks2Backend(MediaList &mediaList) : BackendBase(mediaList), m_allowNotification(false), m_takingOver(false)
 {
     m_connection = new UDisks2Connection(this);
     m_objects.setAutoDelete(true);
@@ -138,9 +294,10 @@ UDisks2Backend::UDisks2Backend(MediaList &mediaList) : BackendBase(mediaList), m
 
 UDisks2Backend::~UDisks2Backend()
 {
-    // the calls still waiting for their reply must not touch us
-    for(QPtrListIterator<bool> it(m_waiting); it.current(); ++it)
-        *it.current() = true;
+    // the tasks still running end now, unsuccessfully
+    QPtrList<Task> tasks = m_tasks;
+    for(QPtrListIterator<Task> it(tasks); it.current(); ++it)
+        it.current()->finish(i18n("The media manager was stopped."));
 
     delete m_connection;
 
@@ -163,7 +320,28 @@ bool UDisks2Backend::initialize()
     return true;
 }
 
+bool UDisks2Backend::owns(const QString &id) const
+{
+    return findObjectByMediumId(id) != 0;
+}
+
 void UDisks2Backend::udisks2InterfacesAdded(const QString &path, const UDisks2Interfaces &interfaces)
+{
+    // udisksd is coming back: its objects are added once it is all there
+    if(!m_connection->hasOwner())
+    {
+        if(!m_replay.contains(path))
+            m_replayPaths.append(path);
+        UDisks2Interfaces &buffered = m_replay[path];
+        for(UDisks2Interfaces::ConstIterator it = interfaces.begin(); it != interfaces.end(); ++it)
+            buffered[it.key()] = it.data();
+        return;
+    }
+
+    addInterfaces(path, interfaces);
+}
+
+void UDisks2Backend::addInterfaces(const QString &path, const UDisks2Interfaces &interfaces)
 {
     Object *object = m_objects.find(path);
     if(!object)
@@ -179,16 +357,27 @@ void UDisks2Backend::udisks2InterfacesAdded(const QString &path, const UDisks2In
         setProperties(object, it.key(), it.data());
     }
 
-    update(object);
+    changed(object);
     if(object->isDrive())
         updateBlocksOf(path);
 }
 
 void UDisks2Backend::udisks2InterfacesRemoved(const QString &path, const QStringList &interfaces)
 {
+    if(m_replay.contains(path))
+    {
+        // came and went while udisksd restarted
+        m_replay.remove(path);
+        m_replayPaths.remove(path);
+    }
+
     Object *object = m_objects.find(path);
     if(!object)
         return;
+
+    // udisksd is going away: what it had is probably coming back
+    if(!m_connection->hasOwner() && object->shown && !m_quiet.contains(object->mediumId))
+        m_quiet.append(object->mediumId);
 
     for(QStringList::ConstIterator it = interfaces.begin(); it != interfaces.end(); ++it)
     {
@@ -197,28 +386,55 @@ void UDisks2Backend::udisks2InterfacesRemoved(const QString &path, const QString
         if(*it == filesystemInterface)
             object->mountPoints.clear();
         else if(*it == blockInterface)
+        {
             object->mountable = false;
+            object->cryptoBacking = QString::null;
+        }
         else if(*it == driveInterface)
             object->opticalBlank = object->opticalAudio = false;
     }
 
-    update(object);
+    changed(object);
 
     // destroy the object if it has no more interfaces
     if(object->interfaces.isEmpty())
         m_objects.remove(path);
 }
 
-void UDisks2Backend::udisks2PropertiesChanged(const QString &path, const QString &interface, const UDisks2Properties &changed)
+void UDisks2Backend::udisks2PropertiesChanged(const QString &path, const QString &interface, const UDisks2Properties &properties)
 {
     Object *object = m_objects.find(path);
     if(!object || !object->interfaces.contains(interface))
         return;
 
-    setProperties(object, interface, changed);
-    update(object);
+    setProperties(object, interface, properties);
+    changed(object);
     if(interface == driveInterface)
         updateBlocksOf(path);
+}
+
+void UDisks2Backend::udisks2OwnerChanged(bool present)
+{
+    if(!present)
+        return;
+
+    // udisksd is back: its objects, the drives first; the media that went
+    // away with it come back without "new medium" notifications
+    QStringList paths = m_replayPaths;
+    QMap<QString, UDisks2Interfaces> replay = m_replay;
+    m_replayPaths.clear();
+    m_replay.clear();
+    for(int pass = 0; pass < 3; ++pass)
+    {
+        for(QStringList::ConstIterator it = paths.begin(); it != paths.end(); ++it)
+        {
+            bool drive = (*it).startsWith(drivesPrefix);
+            bool block = (*it).startsWith(blockDevicesPrefix);
+            if((pass == 0 && drive) || (pass == 1 && block) || (pass == 2 && !drive && !block))
+                addInterfaces(*it, replay[*it]);
+        }
+    }
+    m_quiet.clear();
 }
 
 void UDisks2Backend::setProperties(Object *o, const QString &interface, const UDisks2Properties &properties)
@@ -256,6 +472,8 @@ void UDisks2Backend::setProperties(Object *o, const QString &interface, const UD
                 o->drive = value.toString();
             else if("PreferredDevice" == name)
                 o->device = value.toString();
+            else if("Device" == name)
+                o->rawDevice = value.toString();
             else if("IdLabel" == name)
                 o->label = value.toString();
             else if("IdUUID" == name)
@@ -270,9 +488,12 @@ void UDisks2Backend::setProperties(Object *o, const QString &interface, const UD
                     cfg.setGroup("UserLabels");
                     cfg.deleteEntry(o->mediumId);
 
-                    m_mediaList.removeMedium(o->mediumId, true);
+                    QString id = o->mediumId;
+                    m_mediaList.removeMedium(id, true);
                     o->shown = false;
                     o->mediumId = QString::null;
+                    o->uuid = uuid;
+                    takeOver(id);
                 }
                 o->uuid = uuid;
             }
@@ -284,6 +505,8 @@ void UDisks2Backend::setProperties(Object *o, const QString &interface, const UD
                 o->hintIgnore = value.toBool();
             else if("HintSystem" == name)
                 o->hintSystem = value.toBool();
+            else if("CryptoBackingDevice" == name)
+                o->cryptoBacking = value.toString();
         }
 
         // properties of filesystem
@@ -293,6 +516,28 @@ void UDisks2Backend::setProperties(Object *o, const QString &interface, const UD
                 o->mountPoints = value.toStringList();
         }
     }
+}
+
+const UDisks2Backend::Object *UDisks2Backend::driveOf(const Object *o) const
+{
+    if(o->isDrive())
+        return o;
+    // the cleartext device of an encrypted volume: the drive of the volume
+    if(o->isCleartext())
+    {
+        const Object *backing = m_objects.find(o->cryptoBacking);
+        return backing && !backing->isCleartext() ? driveOf(backing) : 0;
+    }
+    const Object *drive = m_objects.find(o->drive);
+    return drive && drive->isDrive() ? drive : 0;
+}
+
+UDisks2Backend::Object *UDisks2Backend::cleartextOf(const Object *o) const
+{
+    for(QDictIterator<Object> it(m_objects); it.current(); ++it)
+        if(it.current()->cryptoBacking == o->path)
+            return it.current();
+    return 0;
 }
 
 bool UDisks2Backend::isAvailable(const Object *o) const
@@ -308,11 +553,34 @@ bool UDisks2Backend::isAvailable(const Object *o) const
     if(o->hintIgnore)
         return false;
 
-    // the system's own partitions (/, /boot, /home, ...) while it uses them
-    if(o->hintSystem && isSystemMount(o->mountPoints))
+    // the system's own file systems (/, /boot, /home, ...) while it uses them
+    if(!systemMountPoint(o->mountPoints).isNull())
         return false;
 
+    // a twin with the same uuid is mounted (e.g. the other devices of a
+    // multi-device btrfs, or a copy of a disk): that one stands for both
+    if(!o->isMounted() && !o->uuid.isEmpty())
+    {
+        for(QDictIterator<Object> it(m_objects); it.current(); ++it)
+        {
+            const Object *twin = it.current();
+            if(twin != o && twin->uuid == o->uuid && twin->isMounted() && twin->hasFilesystem())
+                return false;
+        }
+    }
+
     return true;
+}
+
+// Something of the object changed: it and its twins (same uuid) need an update
+void UDisks2Backend::changed(Object *o)
+{
+    update(o);
+    if(o->uuid.isEmpty())
+        return;
+    for(QDictIterator<Object> it(m_objects); it.current(); ++it)
+        if(it.current() != o && it.current()->uuid == o->uuid)
+            update(it.current());
 }
 
 void UDisks2Backend::update(Object *o)
@@ -322,9 +590,11 @@ void UDisks2Backend::update(Object *o)
         // the medium is not available anymore
         if(o->shown)
         {
-            m_mediaList.removeMedium(o->mediumId, true);
+            QString id = o->mediumId;
+            m_mediaList.removeMedium(id, true);
             o->shown = false;
             o->mediumId = QString::null;
+            takeOver(id);
         }
         return;
     }
@@ -332,23 +602,23 @@ void UDisks2Backend::update(Object *o)
     if(!o->shown)
     {
         // the medium became available
-        o->mediumId = o->uuid;
-        if(o->mediumId.isEmpty())
+        QString id = o->uuid;
+        if(id.isEmpty())
         {
             // no uuid, make up one
             QString dataForFakeUUID = o->label + o->media + o->fsType + QString::number(o->size) + o->path;
             KMD5 context(dataForFakeUUID.utf8());
-            o->mediumId = "FAKE-UUID-" + context.hexDigest();
+            id = "FAKE-UUID-" + context.hexDigest();
         }
 
-        Medium *medium = createMedium(o);
-        if(m_mediaList.addMedium(medium, m_allowNotification).isNull())
-        {
-            kdDebug(1219) << "UDisks2Backend: " << o->path << ": there is a medium with the id " << o->mediumId << " already" << endl;
-            delete medium;
-            o->mediumId = QString::null;
+        // a twin with the same uuid is listed already
+        if(m_mediaList.findById(id))
             return;
-        }
+
+        o->mediumId = id;
+        Medium *medium = createMedium(o);
+        bool notify = m_allowNotification && !m_takingOver && !m_quiet.contains(id);
+        m_mediaList.addMedium(medium, notify);
         o->shown = true;
         return;
     }
@@ -371,11 +641,29 @@ void UDisks2Backend::update(Object *o)
     delete medium;
 }
 
+// The medium @p id went away: another object with the same uuid may stand
+// in for it now, quietly
+void UDisks2Backend::takeOver(const QString &id)
+{
+    if(m_takingOver)
+        return;
+    m_takingOver = true;
+    for(QDictIterator<Object> it(m_objects); it.current(); ++it)
+        if(!it.current()->shown && it.current()->uuid == id)
+            update(it.current());
+    m_takingOver = false;
+}
+
 void UDisks2Backend::updateBlocksOf(const QString &drivePath)
 {
     for(QDictIterator<Object> it(m_objects); it.current(); ++it)
-        if(it.current()->drive == drivePath)
+    {
+        if(it.current()->isDrive())
+            continue;
+        const Object *drive = driveOf(it.current());
+        if(drive && drive->path == drivePath)
             update(it.current());
+    }
 }
 
 Medium *UDisks2Backend::createMedium(const Object *o) const
@@ -410,9 +698,9 @@ Medium *UDisks2Backend::createLoopMedium(const Object *o) const
 
 Medium *UDisks2Backend::createMountableMedium(const Object *o) const
 {
-    // no drive, e.g. a RAID or an encrypted volume: as if it were a disk
+    // no drive, e.g. a RAID: as if it were a disk
     static const Object noDrive(QString::null);
-    const Object *drive = m_objects.find(o->drive);
+    const Object *drive = driveOf(o);
     if(!drive)
         drive = &noDrive;
 
@@ -528,26 +816,6 @@ UDisks2Backend::Object *UDisks2Backend::findObjectByMediumId(const QString &id) 
     return 0;
 }
 
-// Waits for the reply in a local event loop, as the DCOP calls return
-// the outcome; the call has no timeout, as polkit may ask for a
-// password.  Returns false if the backend was deleted meanwhile, then
-// nothing of it may be touched any more.
-bool UDisks2Backend::call(const QString &path, const char *interface, const char *method, const UDisks2Properties &options,
-                          UDisks2Reply &reply)
-{
-    bool gone = false;
-    m_waiting.append(&gone);
-
-    m_connection->call(path, interface, method, options, &reply);
-    while(!reply.done)
-        qApp->eventLoop()->processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMore);
-
-    if(gone)
-        return false;
-    m_waiting.removeRef(&gone);
-    return true;
-}
-
 QString UDisks2Backend::errorMessage(Action action, const QString &device, const UDisks2Reply &reply)
 {
     const QString &name = reply.errorName;
@@ -576,6 +844,8 @@ QString UDisks2Backend::errorMessage(Action action, const QString &device, const
             return i18n("Unable to mount \"%1\".\nReason: %2").arg(device).arg(reason);
         case Unmount:
             return i18n("Unable to unmount \"%1\".\nReason: %2").arg(device).arg(reason);
+        case Lock:
+            return i18n("Unable to lock the encrypted volume \"%1\".\nReason: %2").arg(device).arg(reason);
         case Eject:
             return i18n("Unable to eject \"%1\".\nReason: %2").arg(device).arg(reason);
         case PowerOff:
@@ -584,123 +854,143 @@ QString UDisks2Backend::errorMessage(Action action, const QString &device, const
     return i18n("Unable to power off \"%1\".\nReason: %2").arg(device).arg(reason);
 }
 
-QString UDisks2Backend::mount(const QString &id)
+UDisks2Backend::Task *UDisks2Backend::mount(const QString &id, QString *error)
 {
-    if(!m_mediaList.findById(id))
-        return i18n("No such medium: %1").arg(id);
-
+    *error = QString::null;
     Object *o = findObjectByMediumId(id);
     if(!o)
-        return i18n("No such UDisks2 object in cache: %1").arg(id);
-    if(!o->hasFilesystem())
-        return i18n("%1 is not a mountable media.").arg(id);
-    if(o->isMounted())
-        return QString::null;
+        *error = i18n("No such medium: %1").arg(id);
+    else if(!o->hasFilesystem())
+        *error = i18n("%1 is not a mountable media.").arg(id);
+    if(!o || !error->isNull() || o->isMounted())
+        return 0;
 
-    const QString path = o->path;
-    const QString device = o->device;
-
-    UDisks2Reply reply;
-    if(!call(path, filesystemInterface, "Mount", UDisks2Properties(), reply))
-        return i18n("Unable to mount \"%1\".\nReason: %2").arg(device).arg(i18n("The media manager was stopped."));
-
-    if(!reply.ok)
-    {
-        if(reply.errorName == "org.freedesktop.UDisks2.Error.AlreadyMounted")
-            return QString::null;
-        return errorMessage(Mount, device, reply);
-    }
-
-    // in case the new mount point has not come in yet
-    o = m_objects.find(path);
-    if(o && !o->isMounted() && !reply.value.isEmpty())
-    {
-        o->mountPoints.append(reply.value);
-        update(o);
-    }
-    return QString::null;
+    QValueList<Step> steps;
+    steps.append(Step(Mount, o->path, o->device));
+    return new Task(this, steps);
 }
 
-QString UDisks2Backend::unmount(const QString &id)
+UDisks2Backend::Task *UDisks2Backend::unmount(const QString &id, QString *error)
 {
-    if(!m_mediaList.findById(id))
-        return i18n("No such medium: %1").arg(id);
-
+    *error = QString::null;
     Object *o = findObjectByMediumId(id);
     if(!o)
-        return i18n("No such UDisks2 object in cache: %1").arg(id);
-    if(!o->hasFilesystem() || !o->isMounted())
-        return QString::null;
-
-    const QString path = o->path;
-    const QString device = o->device;
-
-    UDisks2Reply reply;
-    if(!call(path, filesystemInterface, "Unmount", UDisks2Properties(), reply))
-        return i18n("Unable to unmount \"%1\".\nReason: %2").arg(device).arg(i18n("The media manager was stopped."));
-
-    if(!reply.ok)
     {
-        if(reply.errorName == "org.freedesktop.UDisks2.Error.NotMounted")
-            return QString::null;
-        return errorMessage(Unmount, device, reply);
+        *error = i18n("No such medium: %1").arg(id);
+        return 0;
+    }
+    if(!o->hasFilesystem() || !o->isMounted())
+        return 0;
+
+    QValueList<Step> steps;
+    steps.append(Step(Unmount, o->path, o->device));
+    return new Task(this, steps);
+}
+
+// The steps that make a block device of a drive free: its file system
+// (or that of its unlocked encrypted volume) unmounted, the volume locked
+bool UDisks2Backend::releaseSteps(const Object *b, QValueList<Step> &steps, QString *error) const
+{
+    QString device = b->device.isEmpty() ? b->path : b->device;
+
+    const Object *fs = b;
+    const Object *clear = cleartextOf(b);
+    if(clear)
+        fs = clear;
+
+    if(fs->hasFilesystem() && fs->isMounted())
+    {
+        QString mp = systemMountPoint(fs->mountPoints);
+        if(!mp.isNull())
+        {
+            *error = i18n("\"%1\" cannot be removed: it is mounted on %2 and used by the system.").arg(device).arg(mp);
+            return false;
+        }
+        steps.append(Step(Unmount, fs->path, fs->device));
     }
 
-    o = m_objects.find(path);
+    QStringList users = holders(fs->rawDevice);
+    if(!users.isEmpty())
+    {
+        *error = i18n("\"%1\" cannot be removed: it is in use by %2 (a RAID, LVM or other volume built on it).")
+                     .arg(device)
+                     .arg(users.join(", "));
+        return false;
+    }
+
+    if(clear)
+        steps.append(Step(Lock, b->path, device));
+    return true;
+}
+
+// Ejects the medium's drive (opens the tray, or tells a card reader or USB
+// stick that it is about to go), then powers it off if it can be, so that
+// the device can be pulled out safely; everything of the drive is
+// unmounted and locked before
+UDisks2Backend::Task *UDisks2Backend::eject(const QString &id, QString *error)
+{
+    Object *o = findObjectByMediumId(id);
+    if(!o)
+    {
+        *error = i18n("No such medium: %1").arg(id);
+        return 0;
+    }
+
+    QString device = o->device.isEmpty() ? id : o->device;
+    const Object *drive = driveOf(o);
+    if(!drive)
+    {
+        *error = i18n("Unable to eject \"%1\".\nReason: %2").arg(device).arg(i18n("It is not on a drive that can be ejected."));
+        return 0;
+    }
+
+    const bool powerOff = drive->canPowerOff && !drive->optical;
+    if(!drive->ejectable && !powerOff)
+    {
+        *error = i18n("Unable to eject \"%1\".\nReason: %2").arg(device).arg(i18n("The drive can neither be ejected nor powered off."));
+        return 0;
+    }
+
+    QValueList<Step> steps;
+    for(QDictIterator<Object> it(m_objects); it.current(); ++it)
+    {
+        const Object *b = it.current();
+        if(b->drive == drive->path && !b->isDrive() && !releaseSteps(b, steps, error))
+            return 0;
+    }
+
+    if(drive->ejectable)
+        steps.append(Step(Eject, drive->path, device));
+    if(powerOff)
+        steps.append(Step(PowerOff, drive->path, device));
+    *error = QString::null;
+    return new Task(this, steps);
+}
+
+void UDisks2Backend::start(Task *task, UDisks2Result *result)
+{
+    task->result = result;
+    m_tasks.append(task);
+    task->next();
+}
+
+// in case the new mount point has not come in yet
+void UDisks2Backend::mounted(const QString &path, const QString &mountPoint)
+{
+    Object *o = m_objects.find(path);
+    if(o && !o->isMounted() && !mountPoint.isEmpty())
+    {
+        o->mountPoints.append(mountPoint);
+        changed(o);
+    }
+}
+
+void UDisks2Backend::unmounted(const QString &path)
+{
+    Object *o = m_objects.find(path);
     if(o && o->isMounted())
     {
         o->mountPoints.clear();
-        update(o);
+        changed(o);
     }
-    return QString::null;
-}
-
-// Ejects the medium (opens the tray, or tells a card reader or USB stick
-// that it is about to go), then powers the drive off if it can be, so
-// that the device can be pulled out safely
-QString UDisks2Backend::eject(const QString &id)
-{
-    if(!m_mediaList.findById(id))
-        return i18n("No such medium: %1").arg(id);
-
-    Object *o = findObjectByMediumId(id);
-    if(!o)
-        return i18n("No such UDisks2 object in cache: %1").arg(id);
-
-    const Object *drive = o->isDrive() ? o : m_objects.find(o->drive);
-    QString device = o->device;
-    if(!drive)
-        return i18n("Unable to eject \"%1\".\nReason: %2").arg(device).arg(i18n("It is not on a drive that can be ejected."));
-
-    const QString drivePath = drive->path;
-    const bool ejectable = drive->ejectable;
-    const bool powerOff = drive->canPowerOff && !drive->optical;
-    if(device.isEmpty())
-        device = id;
-
-    if(!ejectable && !powerOff)
-        return i18n("Unable to eject \"%1\".\nReason: %2").arg(device).arg(i18n("The drive can neither be ejected nor powered off."));
-
-    QString error;
-    if(ejectable)
-    {
-        UDisks2Reply reply;
-        if(!call(drivePath, driveInterface, "Eject", UDisks2Properties(), reply))
-            return i18n("Unable to eject \"%1\".\nReason: %2").arg(device).arg(i18n("The media manager was stopped."));
-        if(!reply.ok)
-            error = errorMessage(Eject, device, reply);
-    }
-
-    if(powerOff)
-    {
-        UDisks2Reply reply;
-        if(!call(drivePath, driveInterface, "PowerOff", UDisks2Properties(), reply))
-            return QString::null;
-        // ejected is good enough
-        if(!reply.ok && (!ejectable || !error.isNull()))
-            return error.isNull() ? errorMessage(PowerOff, device, reply) : error;
-        if(reply.ok)
-            return QString::null;
-    }
-    return error;
 }

@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include <qfile.h>
+#include <qptrlist.h>
 #include <kdebug.h>
 
 #include "udisks2dbus.h"
@@ -147,11 +148,19 @@ static QString objectPath(GDBusObject *object)
 
 struct UDisks2Connection::Private
 {
+    // A call waiting for its reply
+    struct Pending
+    {
+        Private *owner;               // 0 once the connection is gone
+        UDisks2ReplyHandler *handler; // 0 once forgotten
+    };
+
     UDisks2Listener *listener;
     GCancellable *cancellable;
     GDBusConnection *bus;
     GDBusObjectManager *manager;
-    gulong handlers[5];
+    gulong handlers[6];
+    QPtrList<Pending> pending;
 
     static void objectAdded(GDBusObjectManager *, GDBusObject *object, gpointer data)
     {
@@ -192,35 +201,66 @@ struct UDisks2Connection::Private
                                               toProperties(changed));
     }
 
+    static void ownerChanged(GObject *, GParamSpec *, gpointer data)
+    {
+        Private *d = static_cast<Private *>(data);
+        d->listener->udisks2OwnerChanged(d->hasOwner());
+    }
+
+    bool hasOwner() const
+    {
+        gchar *owner = g_dbus_object_manager_client_get_name_owner(G_DBUS_OBJECT_MANAGER_CLIENT(manager));
+        bool has = owner != 0;
+        g_free(owner);
+        return has;
+    }
+
+    static void deliver(Pending *p, const UDisks2Reply &reply)
+    {
+        if(p->owner)
+            p->owner->pending.removeRef(p);
+        if(p->handler)
+            p->handler->udisks2Reply(reply);
+        delete p;
+    }
+
     static void callDone(GObject *source, GAsyncResult *result, gpointer data)
     {
-        UDisks2Reply *reply = static_cast<UDisks2Reply *>(data);
+        Pending *p = static_cast<Pending *>(data);
+        UDisks2Reply reply;
         GError *err = 0;
         GVariant *value = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &err);
         if(value)
         {
-            reply->ok = true;
+            reply.ok = true;
             if(g_variant_is_of_type(value, G_VARIANT_TYPE("(s)")))
             {
                 const gchar *s = 0;
                 g_variant_get(value, "(&s)", &s);
-                reply->value = QString::fromUtf8(s);
+                reply.value = QString::fromUtf8(s);
             }
             g_variant_unref(value);
         }
         else
         {
-            reply->ok = false;
             gchar *name = g_dbus_error_get_remote_error(err);
             if(name)
             {
-                reply->errorName = QString::fromLatin1(name);
+                reply.errorName = QString::fromLatin1(name);
                 g_free(name);
                 g_dbus_error_strip_remote_error(err);
             }
-            reply->errorMessage = errorString(err);
+            reply.errorMessage = errorString(err);
         }
-        reply->done = true;
+        deliver(p, reply);
+    }
+
+    static gboolean notConnected(gpointer data)
+    {
+        UDisks2Reply reply;
+        reply.errorMessage = QString::fromLatin1("not connected to the bus");
+        deliver(static_cast<Pending *>(data), reply);
+        return FALSE;
     }
 };
 
@@ -231,19 +271,23 @@ UDisks2Connection::UDisks2Connection(UDisks2Listener *listener)
     d->cancellable = g_cancellable_new();
     d->bus = 0;
     d->manager = 0;
-    for(int i = 0; i < 5; ++i)
+    for(int i = 0; i < 6; ++i)
         d->handlers[i] = 0;
 }
 
 UDisks2Connection::~UDisks2Connection()
 {
-    // the replies of the calls still running come with an error, from
-    // the main loop
+    // the replies of the calls still running come later, to nobody
+    for(QPtrListIterator<Private::Pending> it(d->pending); it.current(); ++it)
+    {
+        it.current()->owner = 0;
+        it.current()->handler = 0;
+    }
     g_cancellable_cancel(d->cancellable);
     g_object_unref(d->cancellable);
     if(d->manager)
     {
-        for(int i = 0; i < 5; ++i)
+        for(int i = 0; i < 6; ++i)
             if(d->handlers[i])
                 g_signal_handler_disconnect(d->manager, d->handlers[i]);
         g_object_unref(d->manager);
@@ -284,13 +328,11 @@ bool UDisks2Connection::open(QString *error)
         return false;
     }
 
-    gchar *owner = g_dbus_object_manager_client_get_name_owner(G_DBUS_OBJECT_MANAGER_CLIENT(d->manager));
-    if(!owner)
+    if(!d->hasOwner())
     {
         *error = QString::fromLatin1("%1 is not running and could not be started").arg(udisksService);
         return false;
     }
-    g_free(owner);
 
     // the objects there are: drives first, the block devices need them
     GList *objects = g_dbus_object_manager_get_objects(d->manager);
@@ -315,17 +357,27 @@ bool UDisks2Connection::open(QString *error)
     d->handlers[2] = g_signal_connect(d->manager, "interface-added", G_CALLBACK(Private::interfaceAdded), d);
     d->handlers[3] = g_signal_connect(d->manager, "interface-removed", G_CALLBACK(Private::interfaceRemoved), d);
     d->handlers[4] = g_signal_connect(d->manager, "interface-proxy-properties-changed", G_CALLBACK(Private::propertiesChanged), d);
+    d->handlers[5] = g_signal_connect(d->manager, "notify::name-owner", G_CALLBACK(Private::ownerChanged), d);
     return true;
 }
 
-void UDisks2Connection::call(const QString &path, const char *interface, const char *method, const UDisks2Properties &options,
-                             UDisks2Reply *reply)
+bool UDisks2Connection::hasOwner() const
 {
+    return d->manager && d->hasOwner();
+}
+
+void UDisks2Connection::call(const QString &path, const char *interface, const char *method, const UDisks2Properties &options,
+                             UDisks2ReplyHandler *handler)
+{
+    Private::Pending *p = new Private::Pending;
+    p->owner = d;
+    p->handler = handler;
+    d->pending.append(p);
+
     if(!d->bus)
     {
-        reply->ok = false;
-        reply->errorMessage = QString::fromLatin1("not connected to the bus");
-        reply->done = true;
+        // the reply comes from the main loop, as always
+        g_idle_add(Private::notConnected, p);
         return;
     }
 
@@ -342,7 +394,15 @@ void UDisks2Connection::call(const QString &path, const char *interface, const c
             g_variant_builder_add(&builder, "{sv}", it.key().latin1(), value);
     }
 
-    // no timeout: polkit may ask for a password
+    // no timeout: polkit may ask for a password; the reply comes even if
+    // the connection is deleted first (cancelled), but is not delivered
     g_dbus_connection_call(d->bus, udisksService, path.latin1(), interface, method, g_variant_new("(a{sv})", &builder), 0,
-                           G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, d->cancellable, Private::callDone, reply);
+                           G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION, G_MAXINT, d->cancellable, Private::callDone, p);
+}
+
+void UDisks2Connection::forget(UDisks2ReplyHandler *handler)
+{
+    for(QPtrListIterator<Private::Pending> it(d->pending); it.current(); ++it)
+        if(it.current()->handler == handler)
+            it.current()->handler = 0;
 }

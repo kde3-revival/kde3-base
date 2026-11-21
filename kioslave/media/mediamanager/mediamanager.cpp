@@ -26,7 +26,8 @@
 #include <klocale.h>
 
 #include <kdirnotify_stub.h>
-#include <kprocess.h>
+#include <kapplication.h>
+#include <dcopclient.h>
 #include <kstandarddirs.h>
 
 #include "mediamanagersettings.h"
@@ -198,12 +199,57 @@ bool MediaManager::setMountoptions(const QString &, const QStringList &)
     return false;
 }
 
+#ifdef COMPILE_UDISKS2BACKEND
+namespace {
+
+// Ends the DCOP call that started a UDisks2 task, with the task's outcome
+class DCOPReplyResult : public UDisks2Result
+{
+public:
+    DCOPReplyResult(DCOPClientTransaction *t) : m_transaction(t) {}
+
+    virtual void finished(const QString &error)
+    {
+        // no transaction: sent with DCOP send, or called locally
+        if (!m_transaction)
+            return;
+        QCString replyType = "QString";
+        QByteArray replyData;
+        QDataStream stream(replyData, IO_WriteOnly);
+        stream << error;
+        kapp->dcopClient()->endTransaction(m_transaction, replyType, replyData);
+    }
+
+private:
+    DCOPClientTransaction *m_transaction;
+};
+
+}
+
+// Runs a task of the UDisks2 backend.  The DCOP caller gets the reply
+// once the task is done: polkit may even ask for a password meanwhile.
+// kded serves the other DCOP calls in the meantime.
+static QString runTask(UDisks2Backend *backend, UDisks2Backend::Task *task, const QString &error)
+{
+    if (!task)
+        return error;
+    DCOPClientTransaction *transaction = kapp->dcopClient()->beginTransaction();
+    backend->start(task, new DCOPReplyResult(transaction));
+    return QString::null; // not sent while the transaction runs
+}
+#endif // COMPILE_UDISKS2BACKEND
+
 QString MediaManager::mount(const QString &name)
 {
 #ifdef COMPILE_UDISKS2BACKEND
-    if ( m_udisks2backend )
-        return m_udisks2backend->mount( name );
+    if ( m_udisks2backend && m_udisks2backend->owns(name) )
+    {
+        QString error;
+        UDisks2Backend::Task *task = m_udisks2backend->mount(name, &error);
+        return runTask(m_udisks2backend, task, error);
+    }
 #endif
+    // e.g. a network share of fstab
     if ( !m_fstabbackend ) // lying :)
         return i18n("Feature only available with HAL");
     return m_fstabbackend->mount( name );
@@ -212,28 +258,40 @@ QString MediaManager::mount(const QString &name)
 QString MediaManager::unmount(const QString &name)
 {
 #ifdef COMPILE_UDISKS2BACKEND
-    if ( m_udisks2backend )
-        return m_udisks2backend->unmount( name );
+    if ( m_udisks2backend && m_udisks2backend->owns(name) )
+    {
+        QString error;
+        UDisks2Backend::Task *task = m_udisks2backend->unmount(name, &error);
+        return runTask(m_udisks2backend, task, error);
+    }
 #endif
     if ( !m_fstabbackend ) // lying :)
         return i18n("Feature only available with HAL");
     return m_fstabbackend->unmount( name );
 }
 
+bool MediaManager::canEject(const QString &name)
+{
+#ifdef COMPILE_UDISKS2BACKEND
+    return m_udisks2backend && m_udisks2backend->owns(name);
+#else
+    Q_UNUSED(name);
+    return false;
+#endif
+}
+
 QString MediaManager::eject(const QString &name)
 {
 #ifdef COMPILE_UDISKS2BACKEND
-    if ( m_udisks2backend )
-        return m_udisks2backend->eject( name );
+    if ( m_udisks2backend && m_udisks2backend->owns(name) )
+    {
+        QString error;
+        UDisks2Backend::Task *task = m_udisks2backend->eject(name, &error);
+        return runTask(m_udisks2backend, task, error);
+    }
 #endif
-    // without UDisks2, the eject command does it, and tells about failures
-    const Medium *m = m_mediaList.findById(name);
-    if ( !m )
-        return i18n("No such medium: %1").arg(name);
-    KProcess proc;
-    proc << "kdeeject" << m->deviceNode();
-    proc.start(KProcess::DontCare);
-    return QString::null;
+    // the caller runs the eject command (kdeeject) then
+    return i18n("This medium cannot be ejected by the media manager: %1").arg(name);
 }
 
 QString MediaManager::nameForLabel(const QString &label)
