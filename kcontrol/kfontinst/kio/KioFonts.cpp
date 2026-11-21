@@ -1869,7 +1869,7 @@ void CKioFonts::doModified()
                 itsAddToSysFc=false;
             }
             if(NULL==strstr(itsNrsKfiParams, "s"))
-                Misc::doCmd("xset", "fp", "rehash");  // doRootCmd can only refresh if xfs is being used, so try here anyway...
+                Misc::rehashXFontPath();  // doRootCmd can only refresh if xfs is being used, so try here anyway...
         }
         itsFolders[FOLDER_SYS].modified.clear();
     }

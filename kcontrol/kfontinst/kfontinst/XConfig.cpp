@@ -191,7 +191,7 @@ void CXConfig::refreshPaths(bool xfs)
         }
     }
     else
-        Misc::doCmd("xset", "fp", "rehash");
+        Misc::rehashXFontPath();
 }
 
 CXConfig::TPath * CXConfig::findPath(const QString &dir)

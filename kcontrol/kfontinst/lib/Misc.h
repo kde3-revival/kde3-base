@@ -69,6 +69,7 @@ namespace Misc
     extern KDE_EXPORT void    getAssociatedUrls(const KURL &url, KURL::List &list, bool afmAndPfm=true, QWidget *widget=NULL);
     extern KDE_EXPORT void    createBackup(const QString &f);
     extern KDE_EXPORT time_t  getTimeStamp(const QString &item);
+    extern KDE_EXPORT void    rehashXFontPath();
 }
 
 }

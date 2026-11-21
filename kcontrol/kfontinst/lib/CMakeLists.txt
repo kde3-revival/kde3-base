@@ -11,4 +11,5 @@ kde3_add_library(libkfontinst SHARED VERSION_INFO 0:0:0 OUTPUT_NAME kfontinst
     ${LIBFREETYPE_LIBS}
     KDE3::kio
     ${LIBXFT_LIB}
+    X11::X11
 )

@@ -42,8 +42,6 @@
 #include <knuminput.h>
 #include <kapplication.h>
 #include <kglobal.h>
-#include <kstandarddirs.h>
-#include <kprocess.h>
 #include <kdialog.h>
 
 #include "kcmmisc.h"
@@ -454,30 +452,16 @@ void set_repeatrate(int delay, double rate)
         xkb->ctrls->repeat_delay = delay;
         xkb->ctrls->repeat_interval = (int)floor(1000/rate + 0.5);
         res = XkbSetControls(dpy, XkbRepeatKeysMask, xkb);
+        XkbFreeKeyboard(xkb, 0, True);
         return;
      }
   }
+#else
+  (void)delay;
+  (void)rate;
 #endif
-  // Fallback: use the xset utility.
-
-  // Unfortunately xset does only support int parameters, so
-  // really slow repeat rates cannot be supported this way.
-  // (the FSG Accessibility standard requires support for repeat rates
-  // of several seconds per character)
-  int r;
-  if (rate < 1)
-     r = 1;
-  else
-     r = (int)floor(rate + 0.5);
-
-  QString exe = KGlobal::dirs()->findExe("xset");
-  if (exe.isEmpty())
-    return;
-
-  KProcess p;
-  p << exe << "r" << "rate" << QString::number(delay) << QString::number(r);
-  
-  p.start(KProcess::Block);
+  // No fallback: "xset r rate" sets the repeat rate through XKB as well,
+  // so it cannot do anything without it.
 }
 #endif
 

@@ -33,6 +33,7 @@
 #include <klargefile.h>
 #include <kio/netaccess.h>
 #include <unistd.h>
+#include <X11/Xlib.h>
 
 namespace KFI
 {
@@ -231,6 +232,36 @@ bool check(const QString &path, unsigned int fmt, bool checkW)
     QCString        pathC(QFile::encodeName(path));
 
     return 0==KDE_lstat(pathC, &info) && (info.st_mode&S_IFMT)==fmt && (!checkW || 0==::access(pathC, W_OK));
+}
+
+static int ignoreXError(Display *, XErrorEvent *)
+{
+    return 0;
+}
+
+//
+// Make the X server reread the fonts.dir files of its font path, as
+// "xset fp rehash" does: set the font path to what it is.
+void rehashXFontPath()
+{
+    Display *dpy=XOpenDisplay(NULL);
+
+    if(!dpy)
+        return;
+
+    // The caller may be a kioslave without its own X error handler, and
+    // the default one would exit on an error (e.g. a font path element
+    // that has become invalid)
+    int  (*oldHandler)(Display *, XErrorEvent *)=XSetErrorHandler(ignoreXError);
+    int  count=0;
+    char **path=XGetFontPath(dpy, &count);
+
+    XSetFontPath(dpy, path, count);
+    if(path)
+        XFreeFontPath(path);
+    XSync(dpy, False);
+    XSetErrorHandler(oldHandler);
+    XCloseDisplay(dpy);
 }
 
 }
