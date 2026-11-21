@@ -198,6 +198,7 @@ unsigned long Options::updateSettings()
     overviewAnimationTime = QMAX( 0, QMIN( 2000, config->readNumEntry( "AnimationTime", 250 )));
     overviewKeepRedirected = config->readBoolEntry( "KeepRedirected", true );
     overviewSuperKey = config->readBoolEntry( "SuperKey", true );
+    overviewHotCornerRipple = config->readBoolEntry( "HotCornerRipple", true );
     
     
     

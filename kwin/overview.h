@@ -89,6 +89,7 @@ class Overview : public QObject
         void presentWatchdog();
         void monitorsChanged();
         void dialogTimeout();
+        void rippleTimeout();
 
     private:
         enum State { Hidden, Settling, Showing, Shown, Hiding, Finishing };
@@ -98,7 +99,7 @@ class Overview : public QObject
         bool grabInput();
         void ungrabInput();
         void createCorners();
-        void addCorner( const QRect& area );
+        void addCorner( const QRect& area, const QPoint& point );
         void destroyCorners();
         void selectXI2();
         bool handleXI2( XEvent* e );
@@ -146,6 +147,12 @@ class Overview : public QObject
         bool closeHit( const OverviewItem* item, const QPoint& p ) const;
         void setHover( OverviewItem* item, bool on_close );
         void updateHover();
+        void startRipple( const QPoint& p );
+        bool drawRipples( XID dst, double t, int ox, int oy );
+        QRect rippleBox() const;
+        void saveRippleBackground( XID src );
+        void showRippleWindow();
+        void stopRipple();
         void closeItem( OverviewItem* item );
         void forgetItem( OverviewItem* item );
         void drawBackdrop( XID dst, double dim, double t );
@@ -225,6 +232,7 @@ class Overview : public QObject
         // touches another monitor (the pointer stopped there by a barrier)
         QValueList< Window > corners;
         QValueList< QRect > corner_areas;
+        QValueList< QPoint > corner_points; // the corner of the monitor
         QValueList< bool > corner_mapped;
         struct BarrierLine
             {
@@ -236,6 +244,17 @@ class Overview : public QObject
         QTimer corner_timer;
         QTimer monitors_timer; // RandR changes, several at once
         bool corner_armed;
+
+        // the ripples from a corner that fired (GNOME's): drawn in the
+        // overview frames, and when the overview closes meanwhile in a small
+        // window with the last frame below them (the windows below it are
+        // redirected: no exposure)
+        QPoint ripple_point;
+        double ripple_start; // 0 none
+        Window ripple_window;
+        Pixmap ripple_bg; // the screen there, without the ripples
+        Pixmap ripple_back;
+        QTimer ripple_timer;
 
         // the Super key pressed alone (XInput 2 raw events)
         bool super_down; // pressed, not released yet

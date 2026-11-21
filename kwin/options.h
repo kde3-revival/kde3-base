@@ -310,6 +310,7 @@ class Options : public KDecorationOptions
         int overviewAnimationTime; // ms
         bool overviewKeepRedirected;
         bool overviewSuperKey; // Super pressed and released alone toggles it
+        bool overviewHotCornerRipple; // ripples from the corner when it fires
 
     private:
         WindowOperation OpTitlebarDblClick;

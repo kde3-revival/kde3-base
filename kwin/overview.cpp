@@ -135,6 +135,12 @@ const int DragThreshold = 6;
 // the close button: its diameter, its center inside the top right corner
 const int CloseSize = 28;
 const int CloseInset = 4;
+// the corner ripples (GNOME's timing, shortened): delay, duration (ms),
+// start and final scale of RippleSize, start opacity
+const double RippleSize = 52.0;
+const struct { double delay, duration, scale0, scale1, opacity; } Ripples[ 3 ] =
+    {{ 0, 500, 0.25, 1.5, 1.0 }, { 30, 600, 0.0, 1.25, 0.7 }, { 210, 600, 0.0, 1.0, 0.3 }};
+const double RippleTime = 810.0;
 
 struct RectF
     {
@@ -555,6 +561,10 @@ Overview::Overview( Workspace* w )
       frame_wanted( false ),
       barriers_enabled( true ),
       corner_armed( true ),
+      ripple_start( 0 ),
+      ripple_window( None ),
+      ripple_bg( None ),
+      ripple_back( None ),
       super_down( false ),
       super_alone( false ),
       super_time( 0 ),
@@ -575,6 +585,7 @@ Overview::Overview( Workspace* w )
     connect( &corner_timer, SIGNAL( timeout()), SLOT( cornerTimeout()));
     connect( &monitors_timer, SIGNAL( timeout()), SLOT( monitorsChanged()));
     connect( &dialog_timer, SIGNAL( timeout()), SLOT( dialogTimeout()));
+    connect( &ripple_timer, SIGNAL( timeout()), SLOT( rippleTimeout()));
     checkExtensions();
 #ifdef OVERVIEW_XI2
     if( have_monitors ) // monitors arranged anew without a new screen size
@@ -586,6 +597,7 @@ Overview::Overview( Workspace* w )
 Overview::~Overview()
     {
     abort();
+    stopRipple();
     destroyCorners();
     setKeepRedirected( false );
     }
@@ -890,7 +902,7 @@ void Overview::createCorners()
                 << ( beyondy ? " monitor above/below it" : "" ) << endl;
         if( !beyondx && !beyondy )
             {
-            addCorner( QRect( p, QSize( 1, 1 )));
+            addCorner( QRect( p, QSize( 1, 1 )), p );
             continue;
             }
         // (a strip without a barrier would be crossed, and trigger, when
@@ -901,7 +913,7 @@ void Overview::createCorners()
         if( beyondx )
             { // along the vertical edge, the barrier on the line between the monitors
             QRect area( p.x(), bottom ? p.y() - strip + 1 : p.y(), 1, strip );
-            addCorner( area );
+            addCorner( area, p );
 #ifdef OVERVIEW_XI2
             BarrierLine line;
             line.x1 = line.x2 = right ? p.x() + 1 : p.x();
@@ -914,7 +926,7 @@ void Overview::createCorners()
         if( beyondy )
             {
             QRect area( right ? p.x() - strip + 1 : p.x(), p.y(), strip, 1 );
-            addCorner( area );
+            addCorner( area, p );
 #ifdef OVERVIEW_XI2
             BarrierLine line;
             line.x1 = area.left();
@@ -959,10 +971,11 @@ void Overview::setBarriersEnabled( bool enable )
 #endif
     }
 
-void Overview::addCorner( const QRect& area )
+void Overview::addCorner( const QRect& area, const QPoint& point )
     {
     if( corner_areas.contains( area ))
         return;
+    corner_points.append( point );
     XSetWindowAttributes attr;
     attr.override_redirect = True;
     // a click in the corner opens the overview too (it would be lost anyway)
@@ -1039,6 +1052,7 @@ void Overview::destroyCorners()
         XDestroyWindow( dpy, *it );
     corners.clear();
     corner_areas.clear();
+    corner_points.clear();
     corner_mapped.clear();
     // the barriers go, enabled or not (stays as it is for new ones)
     const bool enabled = barriers_enabled;
@@ -1108,8 +1122,185 @@ void Overview::cornerTimeout()
     if( cornerHit( QPoint( rx, ry )) && cornerAllowed( QPoint( rx, ry ), mask ) && state == Hidden )
         {
         corner_armed = false;
+        startRipple( QPoint( rx, ry ));
         show();
+        if( state == Hidden )
+            stopRipple(); // not shown
         }
+    }
+
+//****************************************
+// the corner ripples
+//****************************************
+
+void Overview::startRipple( const QPoint& p )
+    {
+    stopRipple();
+    if( !options->overviewHotCornerRipple )
+        return;
+    QValueList< QPoint >::ConstIterator point = corner_points.begin();
+    for( QValueList< QRect >::ConstIterator it = corner_areas.begin();
+         it != corner_areas.end();
+         ++it, ++point )
+        if( (*it).contains( p ))
+            {
+            ripple_point = *point;
+            ripple_start = now();
+            if( debug )
+                kdWarning( 1212 ) << "overview: ripples from " << ripple_point.x() << "," << ripple_point.y() << endl;
+            return;
+            }
+    }
+
+// where the ripples are drawn
+QRect Overview::rippleBox() const
+    {
+    const int pos = options->overviewHotCornerPosition;
+    const int size = (int) ceil( RippleSize * 1.5 ) + 2;
+    return QRect( pos == 1 || pos == 3 ? ripple_point.x() - size + 1 : ripple_point.x(),
+        pos == 2 || pos == 3 ? ripple_point.y() - size + 1 : ripple_point.y(), size, size );
+    }
+
+// the ripples at time t, drawn offset by ox, oy; false when they are over
+bool Overview::drawRipples( XID dst, double t, int ox, int oy )
+    {
+    if( ripple_start <= 0 || t - ripple_start >= RippleTime )
+        return false;
+    const int pos = options->overviewHotCornerPosition;
+    // the corner point of the pixel grid, the quarter opening into the monitor
+    const double cx = ripple_point.x() + ( pos == 1 || pos == 3 ? 1 : 0 ) - ox;
+    const double cy = ripple_point.y() + ( pos == 2 || pos == 3 ? 1 : 0 ) - oy;
+    const double dx = pos == 1 || pos == 3 ? -1 : 1;
+    const double dy = pos == 2 || pos == 3 ? -1 : 1;
+    XRenderPictFormat* a8 = XRenderFindStandardFormat( dpy, PictStandardA8 );
+    for( int i = 0;
+         i < 3;
+         ++i )
+        {
+        double f = ( t - ripple_start - Ripples[ i ].delay ) / Ripples[ i ].duration;
+        if( f < 0 || f >= 1 )
+            continue;
+        const double radius = RippleSize * mix( Ripples[ i ].scale0, Ripples[ i ].scale1, easeOutQuad( f ));
+        const double opacity = Ripples[ i ].opacity * ( 1 - f );
+        if( radius < 1 || opacity <= 1.0 / 512 )
+            continue;
+        // a quarter disc, brighter at its rim
+        const int steps = 12;
+        XPointDouble pts[ 2 * ( steps + 1 ) + 1 ];
+        pts[ 0 ].x = cx;
+        pts[ 0 ].y = cy;
+        for( int j = 0;
+             j <= steps;
+             ++j )
+            {
+            double a = M_PI / 2 * j / steps;
+            pts[ j + 1 ].x = cx + dx * radius * cos( a );
+            pts[ j + 1 ].y = cy + dy * radius * sin( a );
+            }
+        Picture fill = solidPicture( dpy, Qt::white, 0.22 * opacity );
+        XRenderCompositeDoublePoly( dpy, PictOpOver, fill, dst, a8, 0, 0, 0, 0, pts, steps + 2, WindingRule );
+        XRenderFreePicture( dpy, fill );
+        const double inner = QMAX( 0.0, radius - 2.0 );
+        int n = 0;
+        for( int j = 0;
+             j <= steps;
+             ++j, ++n )
+            {
+            double a = M_PI / 2 * j / steps;
+            pts[ n ].x = cx + dx * radius * cos( a );
+            pts[ n ].y = cy + dy * radius * sin( a );
+            }
+        for( int j = steps;
+             j >= 0;
+             --j, ++n )
+            {
+            double a = M_PI / 2 * j / steps;
+            pts[ n ].x = cx + dx * inner * cos( a );
+            pts[ n ].y = cy + dy * inner * sin( a );
+            }
+        Picture rim = solidPicture( dpy, Qt::white, 0.35 * opacity );
+        XRenderCompositeDoublePoly( dpy, PictOpOver, rim, dst, a8, 0, 0, 0, 0, pts, n, WindingRule );
+        XRenderFreePicture( dpy, rim );
+        }
+    return true;
+    }
+
+void Overview::saveRippleBackground( XID src )
+    {
+    if( ripple_bg != None || !keep_redirected || r == NULL )
+        return; // below a window there the client would get exposed when it goes
+    QRect box = rippleBox();
+    ripple_bg = XCreatePixmap( dpy, root, box.width(), box.height(), DefaultDepth( dpy, DefaultScreen( dpy )));
+    Picture bg = XRenderCreatePicture( dpy, ripple_bg, r->format, 0, NULL );
+    XRenderComposite( dpy, PictOpSrc, src, None, bg, box.x(), box.y(), 0, 0, 0, 0, box.width(), box.height());
+    XRenderFreePicture( dpy, bg );
+    }
+
+// the overview goes, the ripples aren't over: on in a window of their own
+void Overview::showRippleWindow()
+    {
+    if( debug )
+        kdWarning( 1212 ) << "overview: ripples at " << now() - ripple_start << " ms, background "
+            << ( ripple_bg != None ) << endl;
+    if( ripple_bg == None || r == NULL || now() - ripple_start >= RippleTime )
+        {
+        stopRipple();
+        return;
+        }
+    QRect box = rippleBox();
+    XSetWindowAttributes attr;
+    attr.override_redirect = True;
+    attr.background_pixmap = None;
+    ripple_window = XCreateWindow( dpy, root, box.x(), box.y(), box.width(), box.height(), 0, CopyFromParent,
+        InputOutput, CopyFromParent, CWOverrideRedirect | CWBackPixmap, &attr );
+    // no input: the pointer is in the corner
+    XShapeCombineRectangles( dpy, ripple_window, ShapeInput, 0, 0, NULL, 0, ShapeSet, Unsorted );
+    ripple_back = XCreatePixmap( dpy, root, box.width(), box.height(), DefaultDepth( dpy, DefaultScreen( dpy )));
+    rippleTimeout(); // the contents first
+    XMapRaised( dpy, ripple_window );
+    rippleTimeout();
+    ripple_timer.start( 16 );
+    }
+
+void Overview::rippleTimeout()
+    {
+    if( ripple_window == None )
+        {
+        ripple_timer.stop();
+        return;
+        }
+    QRect box = rippleBox();
+    XRenderPictFormat* format = XRenderFindVisualFormat( dpy, DefaultVisual( dpy, DefaultScreen( dpy )));
+    Picture bg = XRenderCreatePicture( dpy, ripple_bg, format, 0, NULL );
+    Picture back = XRenderCreatePicture( dpy, ripple_back, format, 0, NULL );
+    XRenderComposite( dpy, PictOpSrc, bg, None, back, 0, 0, 0, 0, 0, 0, box.width(), box.height());
+    bool more = drawRipples( back, now(), box.x(), box.y());
+    XRenderFreePicture( dpy, bg );
+    XRenderFreePicture( dpy, back );
+    if( !more )
+        {
+        stopRipple();
+        return;
+        }
+    GC gc = XCreateGC( dpy, ripple_window, 0, NULL );
+    XCopyArea( dpy, ripple_back, ripple_window, gc, 0, 0, box.width(), box.height(), 0, 0 );
+    XFreeGC( dpy, gc );
+    XFlush( dpy );
+    }
+
+void Overview::stopRipple()
+    {
+    ripple_timer.stop();
+    ripple_start = 0;
+    if( ripple_window != None )
+        XDestroyWindow( dpy, ripple_window );
+    if( ripple_bg != None )
+        XFreePixmap( dpy, ripple_bg );
+    if( ripple_back != None )
+        XFreePixmap( dpy, ripple_back );
+    ripple_window = None;
+    ripple_bg = ripple_back = None;
+    XFlush( dpy );
     }
 
 //****************************************
@@ -1459,6 +1650,8 @@ void Overview::cleanup()
         }
     if( r->gc != NULL )
         XFreeGC( dpy, r->gc );
+    if( ripple_start > 0 )
+        showRippleWindow(); // (or no more ripples)
     if( own_overlay )
         XDestroyWindow( dpy, overlay );
 #ifdef OVERVIEW_COMPOSITE
@@ -2474,6 +2667,13 @@ void Overview::renderFrame()
         XRenderFreePicture( dpy, white );
         }
 
+    if( ripple_start > 0 )
+        {
+        if( state == Hiding && !more )
+            saveRippleBackground( dst ); // the last frame: the screen when the overlay goes
+        if( drawRipples( dst, t0, 0, 0 ) && !( state == Hiding && !more ))
+            frame_wanted = true;
+        }
     if( !dump_dir.isEmpty())
         dumpFrame();
     present();
@@ -3234,6 +3434,7 @@ void Overview::handleMotion( const QPoint& p )
             if( corner_armed )
                 {
                 corner_armed = false;
+                startRipple( p );
                 hide();
                 return;
                 }
@@ -3538,7 +3739,10 @@ bool Overview::x11Event( XEvent* e )
         else
             {
             corner_armed = false;
+            startRipple( p );
             show();
+            if( state == Hidden )
+                stopRipple();
             }
         return true;
         }
@@ -3552,7 +3756,10 @@ bool Overview::x11Event( XEvent* e )
         if( state == Hidden && cornerAllowed( p, 0 ))
             {
             corner_armed = false;
+            startRipple( p );
             show();
+            if( state == Hidden )
+                stopRipple();
             }
         return true;
         }
@@ -3626,6 +3833,7 @@ void Overview::setShortcut( const KShortcut& ) {}
 void Overview::clientRemoved( Client* ) {}
 void Overview::clientAdded( Client* ) {}
 void Overview::dialogTimeout() {}
+void Overview::rippleTimeout() {}
 void Overview::abort() {}
 void Overview::frameTimeout() {}
 void Overview::settleTimeout() {}
