@@ -44,6 +44,7 @@ class KWinModule;
 class TrayEmbed;
 class KDialogBase;
 class KActionSelector;
+class StatusNotifierHost;
 
 class SystemTrayApplet : public KPanelApplet, public DCOPObject
 {
@@ -61,6 +62,9 @@ public:
     int heightForWidth(int w) const;
 
     bool eventFilter(QObject* watched, QEvent* e);
+
+    // where the menus of the icons open
+    Direction menuDirection() { return popupDirection(); }
 
 k_dcop:
     void loadSettings();
@@ -84,6 +88,9 @@ protected slots:
     void checkAutoRetract();
     void configure() { preferences(); }
     void setBackground();
+    void statusNotifierItemAdded(const QString &key);
+    void statusNotifierItemRemoved(const QString &key);
+    void statusNotifierItemChanged(const QString &key);
 
 private:
     void embedWindow( WId w, bool kde_tray );
@@ -117,6 +124,7 @@ private:
     int m_currentIconSize;  // on this panel
     int m_announcedIconSize;
     QGridLayout* m_layout;
+    StatusNotifierHost *m_statusNotifierHost;
 };
 
 class TrayEmbed : public QXEmbed, public TrayItem

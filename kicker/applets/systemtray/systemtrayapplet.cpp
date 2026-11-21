@@ -25,6 +25,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ******************************************************************/
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <qcursor.h>
 #include <qlayout.h>
 #include <qpopupmenu.h>
@@ -50,6 +54,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "simplebutton.h"
 
 #include "systemtrayapplet.h"
+#ifdef HAVE_STATUSNOTIFIER
+#include "statusnotifierhost.h"
+#include "statusnotifieritem.h"
+#endif
 #include "systemtrayapplet.moc"
 
 #include <X11/Xlib.h>
@@ -78,7 +86,8 @@ SystemTrayApplet::SystemTrayApplet(const QString& configFile, Type type, int act
     m_iconSize(22),
     m_currentIconSize(22),
     m_announcedIconSize(0),
-    m_layout(0)
+    m_layout(0),
+    m_statusNotifierHost(0)
 {
     loadSettings();
 
@@ -157,6 +166,25 @@ void SystemTrayApplet::initialize()
 
     announceIconSize();
     setBackground();
+
+#ifdef HAVE_STATUSNOTIFIER
+    // the programs which talk to the tray over D-Bus
+    m_statusNotifierHost = StatusNotifierHost::ref();
+    if (m_statusNotifierHost)
+    {
+        connect(m_statusNotifierHost, SIGNAL(itemAdded(const QString &)),
+                SLOT(statusNotifierItemAdded(const QString &)));
+        connect(m_statusNotifierHost, SIGNAL(itemRemoved(const QString &)),
+                SLOT(statusNotifierItemRemoved(const QString &)));
+        connect(m_statusNotifierHost, SIGNAL(itemChanged(const QString &)),
+                SLOT(statusNotifierItemChanged(const QString &)));
+        const QStringList items = m_statusNotifierHost->items();
+        for (QStringList::ConstIterator it = items.begin(); it != items.end(); ++it)
+        {
+            statusNotifierItemAdded(*it);
+        }
+    }
+#endif
 }
 
 SystemTrayApplet::~SystemTrayApplet()
@@ -174,6 +202,15 @@ SystemTrayApplet::~SystemTrayApplet()
     {
         delete *it;
     }
+
+#ifdef HAVE_STATUSNOTIFIER
+    // after the icons, which use it
+    if (m_statusNotifierHost)
+    {
+        m_statusNotifierHost->disconnect(this);
+        m_statusNotifierHost->deref();
+    }
+#endif
 
     KGlobal::locale()->removeCatalogue("ksystemtrayapplet");
 }
@@ -657,6 +694,70 @@ void SystemTrayApplet::updateTrayWindows()
     showExpandButton(!m_hiddenWins.isEmpty());
     updateVisibleWins();
     layoutTray();
+}
+
+void SystemTrayApplet::statusNotifierItemAdded(const QString &key)
+{
+#ifdef HAVE_STATUSNOTIFIER
+    StatusNotifierWidget *item = new StatusNotifierWidget(m_statusNotifierHost, key, this, this);
+    addItem(item);
+    updateVisibleWins();
+    layoutTray();
+#else
+    Q_UNUSED(key);
+#endif
+}
+
+void SystemTrayApplet::statusNotifierItemRemoved(const QString &key)
+{
+#ifdef HAVE_STATUSNOTIFIER
+    for (int list = 0; list < 2; ++list)
+    {
+        TrayItemList &items = list == 0 ? m_shownWins : m_hiddenWins;
+        for (TrayItemList::iterator it = items.begin(); it != items.end(); ++it)
+        {
+            StatusNotifierWidget *item = dynamic_cast<StatusNotifierWidget *>(*it);
+            if (item && item->key() == key)
+            {
+                item->hide();
+                item->deleteLater();
+                items.erase(it);
+                showExpandButton(!m_hiddenWins.isEmpty());
+                updateVisibleWins();
+                layoutTray();
+                return;
+            }
+        }
+    }
+#else
+    Q_UNUSED(key);
+#endif
+}
+
+void SystemTrayApplet::statusNotifierItemChanged(const QString &key)
+{
+#ifdef HAVE_STATUSNOTIFIER
+    for (int list = 0; list < 2; ++list)
+    {
+        TrayItemList &items = list == 0 ? m_shownWins : m_hiddenWins;
+        for (TrayItemList::iterator it = items.begin(); it != items.end(); ++it)
+        {
+            StatusNotifierWidget *item = dynamic_cast<StatusNotifierWidget *>(*it);
+            if (item && item->key() == key)
+            {
+                item->itemChanged();
+                // shown or hidden now? (status, title)
+                if (shouldHide(item) != (list == 1))
+                {
+                    sortHidden();
+                }
+                return;
+            }
+        }
+    }
+#else
+    Q_UNUSED(key);
+#endif
 }
 
 // The side of the icons on a panel this thick: the configured size (22

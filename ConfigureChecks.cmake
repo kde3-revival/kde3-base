@@ -881,6 +881,19 @@ if(KDEBASE_NETWORK_APPLET)
   endif()
 endif()
 
+# kicker/applets/systemtray: the icons of StatusNotifierItems (D-Bus,
+# org.kde.StatusNotifierItem) besides the embedded windows, with GIO's GDBus
+option(KDEBASE_SYSTRAY_SNI "System tray: icons of programs using StatusNotifierItem over D-Bus (needs GIO)" ON)
+if(KDEBASE_SYSTRAY_SNI)
+  pkg_check_modules(GIO QUIET IMPORTED_TARGET gio-2.0)
+  if(NOT GIO_FOUND)
+    message(FATAL_ERROR "GIO (gio-2.0, part of GLib) was not found; the system "
+      "tray needs it for the icons of StatusNotifierItems.  Install it, or "
+      "configure with -DKDEBASE_SYSTRAY_SNI=OFF to build without them.")
+  endif()
+  set(HAVE_STATUSNOTIFIER 1)
+endif()
+
 # configure.in.bot of kioslave/smb, kcontrol/* etc.: the summary of what
 # is left out.  <result variable>:<option switching it off, or ->:<what>
 foreach(_what
@@ -910,7 +923,8 @@ foreach(_what
     "KDEBASE_KONSOLE_FONTS:KDEBASE_KONSOLE_FONTS:Konsole's console fonts"
     "KDEBASE_VOLUME_APPLET:KDEBASE_VOLUME_APPLET:Volume control panel applet (libpulse)"
     "KDEBASE_POWER_APPLET:KDEBASE_POWER_APPLET:Power panel applet (libupower-glib, GIO)"
-    "KDEBASE_NETWORK_APPLET:KDEBASE_NETWORK_APPLET:NetworkManager panel applet (libnm)")
+    "KDEBASE_NETWORK_APPLET:KDEBASE_NETWORK_APPLET:NetworkManager panel applet (libnm)"
+    "HAVE_STATUSNOTIFIER:KDEBASE_SYSTRAY_SNI:StatusNotifierItem icons in the system tray (GIO)")
   string(REPLACE ":" ";" _what "${_what}")
   list(GET _what 0 _var)
   list(GET _what 1 _opt)
