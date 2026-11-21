@@ -68,6 +68,7 @@ public slots:
 protected slots:
     void slotLock();
     void slotLogout();
+    void slotSuspend();
     void slotPopulateSessions();
     void slotSessionActivated( int );
     void slotSaveSession();

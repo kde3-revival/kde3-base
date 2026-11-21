@@ -26,6 +26,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <unistd.h>
 #include <dmctl.h>
 
+#include <qdatastream.h>
 #include <qimage.h>
 #include <qpainter.h>
 #include <qstyle.h>
@@ -309,6 +310,25 @@ void PanelKMenu::initialize()
         insertItem(KickerLib::menuIconSet("lock"), i18n("Lock Session"), this, SLOT(slotLock()));
     }
 
+    // Only ksmserver talks to systemd-logind; it also knows whether the
+    // user wants sleep offered at all
+    {
+        QByteArray data, replyData;
+        QCString replyType;
+        bool canSuspend = false;
+        if (kapp->dcopClient()->call("ksmserver", "ksmserver", "canSuspend()",
+                                     data, replyType, replyData, false, 5000)
+            && replyType == "bool")
+        {
+            QDataStream reply(replyData, IO_ReadOnly);
+            reply >> canSuspend;
+        }
+        if (canSuspend)
+        {
+            insertItem(KickerLib::menuIconSet("player_pause"), i18n("Sleep"), this, SLOT(slotSuspend()));
+        }
+    }
+
     if (kapp->authorize("logout"))
     {
         insertItem(KickerLib::menuIconSet("exit"), i18n("Log Out..."), this, SLOT(slotLogout()));
@@ -348,6 +368,12 @@ void PanelKMenu::slotLock()
     if ( kicker_screen_number )
         appname.sprintf("kdesktop-screen-%d", kicker_screen_number);
     kapp->dcopClient()->send(appname, "KScreensaverIface", "lock()", "");
+}
+
+void PanelKMenu::slotSuspend()
+{
+    // ksmserver locks the screen first if the user wants that
+    kapp->dcopClient()->send("ksmserver", "ksmserver", "suspend()", QByteArray());
 }
 
 void PanelKMenu::slotLogout()
