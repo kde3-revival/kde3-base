@@ -1206,12 +1206,19 @@ void BGDialog::slotAdvanced()
 
 void BGDialog::slotGetNewStuff()
 {
-   //FIXME set this to a server when we get one
-   //should really be in a .rc file but could be either
-   //kcmshellrc or kcontrolrc
+   // The wallpapers of the KDE Store, through its Open Collaboration
+   // Services API (the old hotstuff provider lists are gone). The categories
+   // are those of Plasma's wallpaper.knsrc: "KDE Wallpaper 800x600",
+   // "1024x768", "1280x1024", "1440x900", "1600x1200" and "(other)", all
+   // still images; Plasma's wallpaper plugins are not listed.
+   // Written on every use, like the provider list before, into kcmshellrc
+   // or kcontrolrc (KNewStuff reads the application's configuration).
    KConfig* config = KGlobal::config();
-   config->setGroup("KNewStuff");
-   config->writeEntry( "ProvidersUrl", "http://download.kde.org/khotnewstuff/wallpaper-providers.xml" );
+   KConfigGroupSaver saver( config, "KNewStuff" );
+   config->deleteEntry( "ProvidersUrl" );
+   config->writeEntry( "OcsUrl", "https://api.kde-look.org/ocs/v1/" );
+   config->writeEntry( "OcsCategories", "360,296,297,298,307,299" );
+   config->writeEntry( "OcsName", i18n( "KDE Store" ) );
    config->writeEntry( "StandardResource", "wallpaper" );
    config->sync();
 
