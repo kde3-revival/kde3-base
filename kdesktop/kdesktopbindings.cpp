@@ -51,6 +51,19 @@
 	DEF( I18N_NOOP("Suspend"), "XF86Sleep", "XF86Sleep", slotSuspend() );
 	DEF( I18N_NOOP("Hibernate"), "XF86Suspend;XF86Hibernate", "XF86Suspend;XF86Hibernate", slotHibernate() );
 
+	// the keyboards' launcher keys (X keysyms by name), like GNOME;
+	// the media keys belong to the volume applet
+	keys->insert( "Group:Launchers", i18n("Launchers") );
+	DEF( I18N_NOOP("Launch Calculator"), "XF86Calculator", "XF86Calculator", slotLaunchCalculator() );
+	DEF( I18N_NOOP("Launch Web Browser"), "XF86WWW;XF86HomePage", "XF86WWW;XF86HomePage", slotLaunchBrowser() );
+	DEF( I18N_NOOP("Launch Email Client"), "XF86Mail", "XF86Mail", slotLaunchMail() );
+	DEF( I18N_NOOP("Open Home Folder"), "XF86Explorer", "XF86Explorer", slotOpenHome() );
+	DEF( I18N_NOOP("Open System Folder"), "XF86MyComputer", "XF86MyComputer", slotOpenSystem() );
+	DEF( I18N_NOOP("Open Documents Folder"), "XF86Documents", "XF86Documents", slotOpenDocuments() );
+	DEF( I18N_NOOP("Find Files"), "XF86Search", "XF86Search", slotLaunchSearch() );
+	DEF( I18N_NOOP("Launch Control Center"), "XF86Tools", "XF86Tools", slotLaunchControlCenter() );
+	DEF( I18N_NOOP("Launch Media Player"), "XF86AudioMedia", "XF86AudioMedia", slotLaunchMediaPlayer() );
+
 #undef DEF
 #undef DEF2
 #undef WIN

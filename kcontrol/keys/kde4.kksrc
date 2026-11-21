@@ -147,6 +147,15 @@ Window to Desktop 8=Win+Alt+F8
 Window to Desktop 9=Win+Alt+F9
 Window to Next Desktop=none
 Window to Previous Desktop=none
+Find Files=XF86Search
+Launch Calculator=XF86Calculator
+Launch Control Center=XF86Tools
+Launch Email Client=XF86Mail
+Launch Media Player=XF86AudioMedia
+Launch Web Browser=XF86WWW;XF86HomePage
+Open Documents Folder=XF86Documents
+Open Home Folder=XF86Explorer
+Open System Folder=XF86MyComputer
 
 [Shortcuts]
 AddBookmark=Ctrl+B

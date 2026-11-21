@@ -55,6 +55,13 @@
 #include <kwinmodule.h>
 #include <krun.h>
 #include <kwin.h>
+#include <kemailsettings.h>
+#include <kservice.h>
+#include <kuserprofile.h>
+#include <qfile.h>
+#include <qfileinfo.h>
+#include <qtextstream.h>
+#include <stdlib.h>
 #include <kglobalsettings.h>
 #include <kpopupmenu.h>
 #include <kapplication.h>
@@ -906,6 +913,157 @@ void KDesktop::slotSuspend()
 void KDesktop::slotHibernate()
 {
     kapp->dcopClient()->send( "ksmserver", "ksmserver", "hibernate()", QByteArray() );
+}
+
+/*
+ The keyboards' launcher keys (Launchers group of the shortcuts).
+*/
+
+// a program by its desktop file (so with startup notification); false
+// when it is not installed
+static bool runService( const QString &desktopName )
+{
+    KService::Ptr service = KService::serviceByDesktopName( desktopName );
+    if ( !service )
+    {
+        kdWarning(1204) << "no " << desktopName << ".desktop to start" << endl;
+        return false;
+    }
+    KRun::run( *service, KURL::List() );
+    return true;
+}
+
+// a new file manager window
+static void openFolder( const QString &url )
+{
+    KRun::runCommand( "kfmclient openProfile filemanagement " + KProcess::quote( url ),
+                      "kfmclient", "folder" );
+}
+
+/*
+ An XDG user directory (xdg-user-dirs): $XDG_<name>_DIR, else its line in
+ $XDG_CONFIG_HOME/user-dirs.dirs; null when not set or set to the home
+ folder (which is how xdg-user-dirs disables one).
+*/
+static QString xdgUserDir( const char *name )
+{
+    const QString home = QDir::cleanDirPath( QDir::homeDirPath() );
+    QString dir = QFile::decodeName( getenv( QCString( "XDG_" ) + name + "_DIR" ) );
+    if ( dir.isEmpty() )
+    {
+        QString configHome = QFile::decodeName( getenv( "XDG_CONFIG_HOME" ) );
+        if ( !configHome.startsWith( "/" ) )
+            configHome = home + "/.config";
+        QFile file( configHome + "/user-dirs.dirs" );
+        if ( file.open( IO_ReadOnly ) )
+        {
+            QTextStream stream( &file );
+            stream.setEncoding( QTextStream::UnicodeUTF8 );
+            const QString key = QString( "XDG_%1_DIR=" ).arg( name );
+            while ( !stream.atEnd() )
+            {
+                QString line = stream.readLine().stripWhiteSpace();
+                if ( !line.startsWith( key ) )
+                    continue;
+                // XDG_DOCUMENTS_DIR="$HOME/Documents" or an absolute path
+                QString value = line.mid( key.length() );
+                if ( value.length() >= 2 && value.startsWith( "\"" ) && value.endsWith( "\"" ) )
+                    value = value.mid( 1, value.length() - 2 );
+                value.replace( "\\\"", "\"" );
+                if ( value.startsWith( "$HOME" ) )
+                    value = home + value.mid( 5 );
+                if ( value.startsWith( "/" ) )
+                    dir = value;
+            }
+        }
+    }
+    if ( !dir.startsWith( "/" ) || QDir::cleanDirPath( dir ) == home )
+        return QString::null;
+    return QDir::cleanDirPath( dir );
+}
+
+// KCalc: the running one if there is one (it is not a unique application)
+void KDesktop::slotLaunchCalculator()
+{
+    const QValueList<WId> windows = m_pKwinmodule->windows();
+    for ( QValueList<WId>::ConstIterator it = windows.begin(); it != windows.end(); ++it )
+    {
+        KWin::WindowInfo info = KWin::windowInfo( *it, 0, NET::WM2WindowClass );
+        if ( info.windowClassName() == "kcalc" )
+        {
+            KWin::forceActiveWindow( *it );
+            return;
+        }
+    }
+    runService( "kcalc" );
+}
+
+// KDE's web browser (Components, Default Applications), at its start page
+void KDesktop::slotLaunchBrowser()
+{
+    KConfigGroup group( KGlobal::config(), "General" );
+    const QString browser = group.readPathEntry( "BrowserApplication" );
+    if ( browser.startsWith( "!" ) )
+        KRun::runCommand( browser.mid( 1 ) );
+    else if ( browser.isEmpty() || !runService( browser.endsWith( ".desktop" )
+                                                ? browser.left( browser.length() - 8 ) : browser ) )
+        runService( "konqbrowser" );
+}
+
+// KDE's email client (Components, Default Applications); KMail is unique
+void KDesktop::slotLaunchMail()
+{
+    KEMailSettings settings;
+    // the program, without the arguments for composing a message
+    const QString command = QStringList::split( ' ',
+        settings.getSetting( KEMailSettings::ClientProgram ) ).first();
+    if ( command.isEmpty() || command == "kmail" )
+        runService( "KMail" );
+    else if ( settings.getSetting( KEMailSettings::ClientTerminal ) == "true" )
+        KRun::runCommand( "konsole -e " + command );
+    else
+        KRun::runCommand( command );
+}
+
+void KDesktop::slotOpenHome()
+{
+    runService( "Home" );
+}
+
+void KDesktop::slotOpenSystem()
+{
+    openFolder( "system:/" );
+}
+
+void KDesktop::slotOpenDocuments()
+{
+    QString dir = xdgUserDir( "DOCUMENTS" );
+    if ( dir.isEmpty() )
+        dir = QDir::homeDirPath() + "/Documents";
+    if ( !QFileInfo( dir ).isDir() )
+        dir = QDir::homeDirPath();
+    openFolder( dir );
+}
+
+void KDesktop::slotLaunchSearch()
+{
+    runService( "Kfind" );
+}
+
+// unique
+void KDesktop::slotLaunchControlCenter()
+{
+    runService( "KControl" );
+}
+
+// the program preferred for MP3 files, if there is one
+void KDesktop::slotLaunchMediaPlayer()
+{
+    KService::Ptr service = KServiceTypeProfile::preferredService( "audio/x-mp3", "Application" );
+    if ( !service )
+        service = KServiceTypeProfile::preferredService( "audio/mpeg", "Application" );
+    if ( service )
+        KRun::run( *service, KURL::List() );
 }
 
 /*
