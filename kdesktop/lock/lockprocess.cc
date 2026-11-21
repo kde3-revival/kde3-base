@@ -26,6 +26,7 @@
 
 #include <kstandarddirs.h>
 #include <kapplication.h>
+#include <dcopclient.h>
 #include <kservicegroup.h>
 #include <kdebug.h>
 #include <kmessagebox.h>
@@ -636,6 +637,18 @@ bool LockProcess::grabMouse()
 //
 bool LockProcess::grabInput()
 {
+    // KWin's window overview holds the keyboard and the pointer while it is
+    // shown: close it first (synchronously, it releases them before it
+    // answers; don't wait long for a hung window manager)
+    DCOPClient* client = kapp->dcopClient();
+    if (client->isAttached() || client->attach())
+    {
+        QCString replyType;
+        QByteArray replyData;
+        client->call("kwin", "KWinInterface", "hideOverview()", QByteArray(),
+                     replyType, replyData, false, 1000);
+    }
+
     XSync(qt_xdisplay(), False);
 
     if (!grabKeyboard())
