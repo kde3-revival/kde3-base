@@ -587,6 +587,7 @@ KSMServer::KSMServer( const QString& windowManager, bool _only_local )
     wm = windowManager;
 
     shutdownType = KApplication::ShutdownTypeNone;
+    logindShutdown = false;
 
     state = Idle;
     dialogActive = false;
@@ -710,7 +711,8 @@ void KSMServer::cleanUp()
     signal(SIGTERM, SIG_DFL);
     signal(SIGINT, SIG_DFL);
 
-    DM().shutdown( shutdownType, shutdownMode, bootOption );
+    if ( !logindShutdown ) // else done in killingCompleted()
+        DM().shutdown( shutdownType, shutdownMode, bootOption );
 }
 
 

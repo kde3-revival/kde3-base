@@ -88,6 +88,14 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "client.h"
 #include "logind.h"
 
+// Whether the session runs under KDM, which then decides on shutting
+// the computer down itself (the same test as kdmlib's DM class)
+static bool underKDM()
+{
+    const char* ctl = getenv( "XDM_MANAGED" );
+    return getenv( "DM_CONTROL" ) || ( ctl && ctl[0] == '/' );
+}
+
 void KSMServer::logout( int confirm, int sdtype, int sdmode )
 {
     shutdown( (KApplication::ShutdownConfirm)confirm,
@@ -124,18 +132,31 @@ void KSMServer::shutdown( KApplication::ShutdownConfirm confirm,
         (confirm == KApplication::ShutdownConfirmYes) ? false :
        (confirm == KApplication::ShutdownConfirmNo) ? true :
                   !config->readBoolEntry( "confirmLogout", true );
-    bool maysd = false;
-    if (config->readBoolEntry( "offerShutdown", true ) && DM().canShutdown())
-        maysd = true;
-    if (!maysd) {
-        if (sdtype != KApplication::ShutdownTypeNone &&
-            sdtype != KApplication::ShutdownTypeDefault &&
-            logoutConfirmed)
+    bool offerShutdown = config->readBoolEntry( "offerShutdown", true );
+    // KDM turns the computer off itself once the session has ended (and
+    // knows the boot loader's options).  Under other display managers,
+    // which KDE cannot talk to, systemd-logind can do it, but only for
+    // the user at the computer: a remote session must not turn it off.
+    bool dmShutdown = offerShutdown && DM().canShutdown();
+    bool mayHalt = dmShutdown;
+    bool mayReboot = dmShutdown;
+    if ( offerShutdown && !dmShutdown && !underKDM() && Logind::sessionIsLocal() ) {
+        mayHalt = Logind::canPowerOff();
+        mayReboot = Logind::canReboot();
+    }
+    bool maysd = mayHalt || mayReboot;
+    bool explicitType = sdtype != KApplication::ShutdownTypeNone &&
+                        sdtype != KApplication::ShutdownTypeDefault;
+    if (sdtype == KApplication::ShutdownTypeDefault)
+        sdtype = maysd ? (KApplication::ShutdownType)
+                         config->readNumEntry( "shutdownType", (int)KApplication::ShutdownTypeNone )
+                       : KApplication::ShutdownTypeNone;
+    if ( ( sdtype == KApplication::ShutdownTypeHalt && !mayHalt ) ||
+         ( sdtype == KApplication::ShutdownTypeReboot && !mayReboot ) ) {
+        if ( explicitType && logoutConfirmed )
             return; /* unsupported fast shutdown */
         sdtype = KApplication::ShutdownTypeNone;
-    } else if (sdtype == KApplication::ShutdownTypeDefault)
-        sdtype = (KApplication::ShutdownType)
-                 config->readNumEntry( "shutdownType", (int)KApplication::ShutdownTypeNone );
+    }
     if (sdmode == KApplication::ShutdownModeDefault)
         sdmode = KApplication::ShutdownModeInteractive;
 
@@ -153,7 +174,8 @@ void KSMServer::shutdown( KApplication::ShutdownConfirm confirm,
         }
         KSMShutdownFeedback::start(); // make the screen gray
         logoutConfirmed =
-            KSMShutdownDlg::confirmShutdown( maysd, maySuspend, mayHibernate,
+            KSMShutdownDlg::confirmShutdown( mayHalt, mayReboot, dmShutdown,
+                                             maySuspend, mayHibernate,
                                              sdtype, bopt, sleep );
         // ###### We can't make the screen remain gray while talking to the apps,
         // because this prevents interaction ("do you want to save", etc.)
@@ -168,6 +190,24 @@ void KSMServer::shutdown( KApplication::ShutdownConfirm confirm,
                    config->readBoolEntry( "lockBeforeSleep", true ) );
         dialogActive = false;
         return;
+    }
+
+    logindShutdown = false;
+    if ( logoutConfirmed && !dmShutdown &&
+         ( sdtype == KApplication::ShutdownTypeHalt ||
+           sdtype == KApplication::ShutdownTypeReboot ) ) {
+        // Ask again (the dialog may have been open for a while): once the
+        // session has ended, nothing could be done about a refusal
+        if ( !logindMayShutdown( sdtype ) ) {
+            kapp->enableStyles(); // for the message box
+            KMessageBox::sorry( 0, sdtype == KApplication::ShutdownTypeReboot
+                ? i18n( "The computer cannot be restarted now. The session has not been ended." )
+                : i18n( "The computer cannot be turned off now. The session has not been ended." ) );
+            kapp->disableStyles();
+            dialogActive = false;
+            return;
+        }
+        logindShutdown = true;
     }
 
     if ( logoutConfirmed ) {
@@ -268,6 +308,34 @@ void KSMServer::goToSleep( bool hibernate, bool lock )
             : i18n( "The computer could not be put to sleep:\n%1" ).arg( error ) );
     }
     kapp->disableStyles();
+}
+
+// Whether systemd-logind will turn off or restart the computer for the
+// user at it, without asking for a password
+bool KSMServer::logindMayShutdown( KApplication::ShutdownType sdtype )
+{
+    if ( !Logind::sessionIsLocal() )
+        return false;
+    return sdtype == KApplication::ShutdownTypeReboot ? Logind::canReboot()
+                                                      : Logind::canPowerOff();
+}
+
+// The session has ended: have systemd-logind turn off or restart the
+// computer, where KDM would do it once ksmserver has exited
+void KSMServer::logindShutdownNow()
+{
+    bool reboot = shutdownType == KApplication::ShutdownTypeReboot;
+    kdDebug( 1218 ) << "Asking logind to " << ( reboot ? "reboot" : "power off" ) << endl;
+    QString error;
+    bool ok = reboot ? Logind::reboot( &error ) : Logind::powerOff( &error );
+    // Nothing more can be done here: all the applications are gone, the
+    // display manager takes over as after a plain logout
+    if ( !ok )
+        kdWarning( 1218 ) << ( reboot ? "Reboot" : "PowerOff" ) << " failed: "
+                          << error << endl;
+    // Only once, and nothing left for the DM in cleanUp()
+    logindShutdown = false;
+    shutdownType = KApplication::ShutdownTypeNone;
 }
 
 // Whether suspend() is offered: the user's choice and logind's answer
@@ -466,6 +534,7 @@ void KSMServer::cancelShutdown( KSMClient* c )
     kdDebug( 1218 ) << "Client " << c->program() << " (" << c->clientId() << ") canceled shutdown." << endl;
     KNotifyClient::event( 0, "cancellogout", i18n( "Logout canceled by '%1'" ).arg( c->program()));
     clientInteracting = 0;
+    logindShutdown = false;
     for ( KSMClient* c = clients.first(); c; c = clients.next() ) {
         SmsShutdownCancelled( c->connection() );
         if( c->saveYourselfDone ) {
@@ -631,6 +700,8 @@ void KSMServer::completeKillingWM()
 // shutdown is fully complete
 void KSMServer::killingCompleted()
 {
+    if ( logindShutdown )
+        logindShutdownNow();
     kapp->quit();
 }
 

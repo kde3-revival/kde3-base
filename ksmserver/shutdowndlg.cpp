@@ -86,7 +86,8 @@ void KSMShutdownFeedback::slotPaintEffect()
 //////
 
 KSMShutdownDlg::KSMShutdownDlg( QWidget* parent,
-                                bool maysd, bool maySuspend, bool mayHibernate,
+                                bool mayHalt, bool mayReboot, bool dmBootOptions,
+                                bool maySuspend, bool mayHibernate,
                                 KApplication::ShutdownType sdtype )
   : QDialog( parent, 0, TRUE, WType_Popup ),
     m_shutdownType( sdtype ), m_sleep( NoSleep ), targets(0)
@@ -132,8 +133,7 @@ KSMShutdownDlg::KSMShutdownDlg( QWidget* parent,
     buttonlay->addWidget( btnLogout );
     connect(btnLogout, SIGNAL(clicked()), SLOT(slotLogout()));
 
-    if (maysd) {
-
+    if (mayHalt) {
         // Shutdown
         KPushButton* btnHalt = new KPushButton( KGuiItem( i18n("&Turn Off Computer"), "exit"), frame );
         btnHalt->setFont( btnFont );
@@ -141,7 +141,9 @@ KSMShutdownDlg::KSMShutdownDlg( QWidget* parent,
         connect(btnHalt, SIGNAL(clicked()), SLOT(slotHalt()));
         if ( sdtype == KApplication::ShutdownTypeHalt )
             btnHalt->setFocus();
+    }
 
+    if (mayReboot) {
         // Reboot
         KSMDelayedPushButton* btnReboot = new KSMDelayedPushButton( KGuiItem( i18n("&Restart Computer"), "reload"), frame );
         btnReboot->setFont( btnFont );
@@ -152,7 +154,7 @@ KSMShutdownDlg::KSMShutdownDlg( QWidget* parent,
             btnReboot->setFocus();
 
         int def, cur;
-        if ( DM().bootOptions( rebootOptions, def, cur ) ) {
+        if ( dmBootOptions && DM().bootOptions( rebootOptions, def, cur ) ) {
 	  targets = new QPopupMenu( frame );
 	  if ( cur == -1 )
 	    cur = def;
@@ -250,14 +252,16 @@ void KSMShutdownDlg::slotHibernate()
 }
 
 
-bool KSMShutdownDlg::confirmShutdown( bool maysd, bool maySuspend, bool mayHibernate,
+bool KSMShutdownDlg::confirmShutdown( bool mayHalt, bool mayReboot, bool dmBootOptions,
+                                      bool maySuspend, bool mayHibernate,
                                       KApplication::ShutdownType& sdtype, QString& bootOption,
                                       SleepType& sleep )
 {
     kapp->enableStyles();
     KSMShutdownDlg* l = new KSMShutdownDlg( 0,
                                             //KSMShutdownFeedback::self(),
-                                            maysd, maySuspend, mayHibernate, sdtype );
+                                            mayHalt, mayReboot, dmBootOptions,
+                                            maySuspend, mayHibernate, sdtype );
 
     // Show dialog (will save the background in showEvent)
     QSize sh = l->sizeHint();

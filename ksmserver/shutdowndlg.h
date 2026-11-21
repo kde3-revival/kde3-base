@@ -52,8 +52,10 @@ public:
 
     // Returns true if the user confirmed; then either @p sleep says how
     // to put the computer to sleep, or (if it is NoSleep) @p sdtype and
-    // @p bopt say how to end the session.
-    static bool confirmShutdown( bool maysd, bool maySuspend, bool mayHibernate,
+    // @p bopt say how to end the session.  The boot options to restart
+    // into are offered only if @p dmBootOptions (the DM shuts down).
+    static bool confirmShutdown( bool mayHalt, bool mayReboot, bool dmBootOptions,
+                                 bool maySuspend, bool mayHibernate,
                                  KApplication::ShutdownType& sdtype, QString& bopt,
                                  SleepType& sleep );
 
@@ -69,7 +71,8 @@ protected:
     ~KSMShutdownDlg() {};
 
 private:
-    KSMShutdownDlg( QWidget* parent, bool maysd, bool maySuspend, bool mayHibernate,
+    KSMShutdownDlg( QWidget* parent, bool mayHalt, bool mayReboot, bool dmBootOptions,
+                    bool maySuspend, bool mayHibernate,
                     KApplication::ShutdownType sdtype );
     KApplication::ShutdownType m_shutdownType;
     SleepType m_sleep;

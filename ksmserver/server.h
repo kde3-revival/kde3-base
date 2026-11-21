@@ -137,6 +137,8 @@ private:
     bool lockScreen();
     void goToSleep( bool hibernate, bool lock );
     void sleepInternal( bool hibernate );
+    bool logindMayShutdown( KApplication::ShutdownType sdtype );
+    void logindShutdownNow();
 
     void discardSession();
     void storeSession();
@@ -194,6 +196,8 @@ private:
     KApplication::ShutdownType shutdownType;
     KApplication::ShutdownMode shutdownMode;
     QString bootOption;
+    // shutdownType is carried out by systemd-logind, not by the DM
+    bool logindShutdown;
 
     bool clean;
     KSMClient* clientInteracting;
