@@ -75,7 +75,7 @@ Run Command=Alt+F2
 Halt Computer=none
 Halt without Confirmation=none
 Kill Window=Alt+Ctrl+Escape
-Lock Session=Alt+Ctrl+L
+Lock Session=Alt+Ctrl+L;XF86ScreenSaver
 Logout=Alt+Ctrl+Delete
 Logout without Confirmation=none
 Manually Invoke Action on Current Clipboard=Alt+Ctrl+R
@@ -156,6 +156,16 @@ Launch Web Browser=XF86WWW;XF86HomePage
 Open Documents Folder=XF86Documents
 Open Home Folder=XF86Explorer
 Open System Folder=XF86MyComputer
+Suspend=XF86Sleep
+Hibernate=XF86Suspend;XF86Hibernate
+Window to Next Screen=Win+Shift+Right
+Window to Previous Screen=Win+Shift+Left
+Window to Screen 1=none
+Window to Screen 2=none
+Window to Screen 3=none
+Window to Screen 4=none
+Window Maximize No Toggle=Win+Up
+Window Restore=Win+Down
 
 [Shortcuts]
 AddBookmark=Ctrl+B
