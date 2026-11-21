@@ -86,10 +86,12 @@ install(FILES
 
 install(FILES
   kdesktop_bgperscreen.upd
+  kdesktop_lockkey.upd
   DESTINATION ${KDE3_DATA_INSTALL_DIR}/kconf_update)
 
 install(PROGRAMS
   kdesktop_bgperscreen.sh
+  kdesktop_lockkey.sh
   DESTINATION ${KDE3_DATA_INSTALL_DIR}/kconf_update)
 
 install(FILES

@@ -1,0 +1,8 @@
+# The keyboards' lock key (XF86ScreenSaver) is now a default shortcut of
+# Lock Session; KDE wrote the old default into kdeglobals, which would
+# hide the new one.  Only an unchanged default gets it.
+Id=kde3.5-lockkey
+File=kdeglobals
+Group=Global Shortcuts
+Options=overwrite
+Script=kdesktop_lockkey.sh,sh

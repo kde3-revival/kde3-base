@@ -28,7 +28,9 @@
 	if (kapp->authorize("lock_screen"))
 	{
 #endif
-		DEF2( I18N_NOOP("Lock Session"), ALT+CTRL+Qt::Key_L, WIN+Qt::Key_ScrollLock, KRootWm::self(), SLOT(slotLock()) );
+		// and the keyboards' lock key (a padlock: XF86ScreenSaver; Qt 3 has
+		// no code for it, the string names the X keysym)
+		DEF2( I18N_NOOP("Lock Session"), "Alt+Ctrl+L;XF86ScreenSaver", "Win+ScrollLock;XF86ScreenSaver", KRootWm::self(), SLOT(slotLock()) );
 #ifndef NOSLOTS
 	}
 	if (kapp->authorize("logout"))
