@@ -1059,7 +1059,7 @@ void KMovingConfig::load( void )
     setGeometryTip( showGeomTip );
 
     // placement policy --- CT 19jan98 ---
-    key = config->readEntry(KWIN_PLACEMENT);
+    key = config->readEntry(KWIN_PLACEMENT, "Centered");
     //CT 13mar98 interactive placement
 //   if( key.left(11) == "interactive") {
 //     setPlacement(INTERACTIVE_PLACEMENT);
@@ -1178,7 +1178,7 @@ void KMovingConfig::defaults()
     setMove(OPAQUE);
     setResizeOpaque(RESIZE_TRANSPARENT);
     setGeometryTip(false);
-    setPlacement(SMART_PLACEMENT);
+    setPlacement(CENTERED_PLACEMENT);
     setMoveResizeMaximized(false);
 
     //copied from kcontrol/konq/kwindesktop, aleXXX

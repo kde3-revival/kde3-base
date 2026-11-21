@@ -90,7 +90,7 @@ unsigned long Options::updateSettings()
     xineramaFullscreenEnabled = gc->readBoolEntry ("XineramaFullscreenEnabled", true);
     delete gc;
 
-    placement = Placement::policyFromString( config->readEntry("Placement"), true );
+    placement = Placement::policyFromString( config->readEntry("Placement", "Centered"), true );
 
     animateShade = config->readBoolEntry("AnimateShade", TRUE );
 
