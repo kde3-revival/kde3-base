@@ -72,7 +72,7 @@ extern "C"
 		//CT there's need for decision: kwm or kwin?
 		KGlobal::locale()->insertCatalogue("kcmkwm");
 		KConfig *c = new KConfig("kwinrc", false, true);
-		return new KTranslucencyConfig(true, c, parent, name);
+		return new KCompositingConfig(true, c, parent, name);
 	}
 
 	KDE_EXPORT KCModule *create_kwinoptions ( QWidget *parent, const char* name)
@@ -117,9 +117,9 @@ KWinOptions::KWinOptions(QWidget *parent, const char *name)
   tab->addTab(mAdvanced, i18n("Ad&vanced"));
   connect(mAdvanced, SIGNAL(changed(bool)), this, SLOT(moduleChanged(bool)));
 
-  mTranslucency = new KTranslucencyConfig(false, mConfig, this, "KWin Translucency");
+  mTranslucency = new KCompositingConfig(false, mConfig, this, "KWin Compositing");
   mTranslucency->layout()->setMargin( KDialog::marginHint() );
-  tab->addTab(mTranslucency, i18n("&Translucency"));
+  tab->addTab(mTranslucency, i18n("&Compositing"));
   connect(mTranslucency, SIGNAL(changed(bool)), this, SLOT(moduleChanged(bool)));
     
   KAboutData *about =

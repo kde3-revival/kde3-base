@@ -36,6 +36,7 @@ class QSlider;
 class QButtonGroup;
 class QSpinBox;
 class QVButtonGroup;
+class QTabWidget;
 
 class KColorButton;
 class KIntNumInput;
@@ -247,57 +248,49 @@ private:
   QCheckBox* overviewShowMinimized;
 };
 
-class KProcess;
-class KTranslucencyConfig : public KCModule
+/*
+ The compositing page (KWin composites itself, compositor.h in kwin): on or
+ off, the backend, full screen windows drawn directly, the shadows and the
+ window opacity rules ([Compositing] and [Translucency] in kwinrc).
+*/
+class KCompositingConfig : public KCModule
 {
   Q_OBJECT
 public:
-  KTranslucencyConfig( bool _standAlone, KConfig *config, QWidget *parent=0, const char* name=0 );
-  ~KTranslucencyConfig();
-  
+  KCompositingConfig( bool _standAlone, KConfig *config, QWidget *parent=0, const char* name=0 );
+  ~KCompositingConfig();
+
   void load();
   void save();
   void defaults();
-  
+
+private slots:
+  void updateEnabled();
+  void updateStatus();
+
 private:
-  QCheckBox *useTranslucency;
+  // what KWin uses without a setting: on when the X server renders on a GPU
+  static bool enabledByDefault();
+  QCheckBox *enabled;
+  QLabel *status;
+  QComboBox *backend;
+  QCheckBox *unredirectFullscreen;
+  QTabWidget *tabs;
+  QCheckBox *shadows;
+  KIntNumInput *shadowSize;
+  KIntNumInput *shadowOpacity;
+  KIntNumInput *shadowOffsetX;
+  KIntNumInput *shadowOffsetY;
   QCheckBox *activeWindowTransparency;
   QCheckBox *inactiveWindowTransparency;
   QCheckBox *movingWindowTransparency;
   QCheckBox *dockWindowTransparency;
   QCheckBox *keepAboveAsActive;
-  QCheckBox *disableARGB;
-  QCheckBox *fadeInWindows;
-  QCheckBox *fadeOnOpacityChange;
-  QCheckBox *useShadows;
-  QCheckBox *removeShadowsOnResize;
-  QCheckBox *removeShadowsOnMove;
-  QGroupBox *sGroup;
-  QCheckBox *onlyDecoTranslucent;
-//   QPushButton *xcompmgrButton;
   KIntNumInput *activeWindowOpacity;
   KIntNumInput *inactiveWindowOpacity;
   KIntNumInput *movingWindowOpacity;
   KIntNumInput *dockWindowOpacity;
-  KIntNumInput *dockWindowShadowSize;
-  KIntNumInput *activeWindowShadowSize;
-  KIntNumInput *inactiveWindowShadowSize;
-  KIntNumInput *shadowTopOffset;
-  KIntNumInput *shadowLeftOffset;
-  KIntNumInput *fadeInSpeed;
-  KIntNumInput *fadeOutSpeed;
-  KColorButton *shadowColor;
   KConfig *config;
   bool     standAlone;
-  bool alphaActivated;
-  bool resetKompmgr_;
-  bool kompmgrAvailable();
-  bool kompmgrAvailable_;
-  KProcess *kompmgr;
-  
-private slots:
-  void resetKompmgr();
-  void showWarning(bool alphaActivated);
-
 };
 #endif
