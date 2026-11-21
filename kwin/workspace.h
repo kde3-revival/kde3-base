@@ -48,6 +48,7 @@ class PluginMgr;
 class Placement;
 class Rules;
 class WindowRules;
+class Overview;
 
 class SystemTrayWindow
     {
@@ -287,6 +288,9 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         
         void toggleTopDockShadows(bool on);
 
+        // dcop interface
+        void showOverview();
+
     public slots:
         void refresh();
     // keybindings
@@ -326,6 +330,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void slotWalkBackThroughDesktopList();
         void slotWalkThroughWindows();
         void slotWalkBackThroughWindows();
+        void slotShowOverview();
 
         void slotWindowOperations();
         void slotWindowClose();
@@ -546,6 +551,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         int block_focus;
 
         TabBox* tab_box;
+        Overview* overview;
         PopupInfo* popupinfo;
 
         QPopupMenu *popup;

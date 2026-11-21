@@ -24,6 +24,7 @@
 	DEF( I18N_NOOP("Walk Through Desktops (Reverse)"),     0, WIN+SHIFT+Qt::Key_Tab, slotWalkBackThroughDesktops() );
 	DEF( I18N_NOOP("Walk Through Desktop List"),           0, 0, slotWalkThroughDesktopList() );
 	DEF( I18N_NOOP("Walk Through Desktop List (Reverse)"), 0, 0, slotWalkBackThroughDesktopList() );
+	DEF( I18N_NOOP("Show Window Overview"),                ALT+CTRL+Qt::Key_W, WIN+int(Qt::Key_W), slotShowOverview() );
 
 	keys->insert( "Group:Windows", i18n("Windows") );
 	DEF( I18N_NOOP("Window Operations Menu"),              ALT+Qt::Key_F3, ALT+Qt::Key_Menu, slotWindowOperations() );

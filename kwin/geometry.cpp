@@ -28,6 +28,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "notifications.h"
 #include "geometrytip.h"
 #include "rules.h"
+#include "overview.h"
 
 extern Time qt_x_time;
 
@@ -51,6 +52,11 @@ void Workspace::desktopResized()
 
     updateClientArea();
     checkElectricBorders( true );
+    if( overview != NULL )
+        {
+        overview->abort();
+        overview->reconfigure(); // the corners above the new electric borders
+        }
     }
 
 /*!

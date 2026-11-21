@@ -149,6 +149,13 @@
 /* Define if you have the XComposite extension */
 #cmakedefine HAVE_XCOMPOSITE 1
 
+/* ---- kwin --------------------------------------------------------- */
+
+/* Define if you have the XDamage extension */
+#cmakedefine HAVE_XDAMAGE 1
+/* Define if you have the Present extension library */
+#cmakedefine HAVE_XPRESENT 1
+
 /* ---- kdesktop ----------------------------------------------------- */
 
 /* Define if you have the XScreenSaver extension */

@@ -28,10 +28,12 @@ kde3_add_kdeinit_executable(kwin
     useractions.cpp
     geometry.cpp
     rules.cpp
+    overview.cpp
   MOC
     client.h
     geometrytip.h
     main.h
+    overview.h
     popupinfo.h
     sm.h
     tabbox.h
@@ -40,6 +42,7 @@ kde3_add_kdeinit_executable(kwin
   LINK
     KDE3::kdeui
     kdecorations
+    ${LIB_KWIN_OVERVIEW}
 )
 
 install(FILES

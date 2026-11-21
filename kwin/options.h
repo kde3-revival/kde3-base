@@ -303,6 +303,13 @@ class Options : public KDecorationOptions
         bool resetKompmgr;
         bool tabboxOutline;
 
+        // window overview
+        bool overviewHotCorner;
+        int overviewHotCornerPosition; // 0 top left, 1 top right, 2 bottom left, 3 bottom right
+        int overviewHotCornerDelay; // ms
+        int overviewAnimationTime; // ms
+        bool overviewKeepRedirected;
+
     private:
         WindowOperation OpTitlebarDblClick;
 

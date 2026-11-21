@@ -21,6 +21,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "tabbox.h"
 #include "group.h"
 #include "rules.h"
+#include "overview.h"
 
 #include <qwhatsthis.h>
 #include <kkeynative.h>
@@ -195,6 +196,8 @@ void RootInfo::changeShowingDesktop( bool showing )
  */
 bool Workspace::workspaceEvent( XEvent * e )
     {
+    if( overview != NULL && overview->x11Event( e ))
+        return true;
     if ( mouse_emulation && (e->type == ButtonPress || e->type == ButtonRelease ) ) 
         {
         mouse_emulation = FALSE;

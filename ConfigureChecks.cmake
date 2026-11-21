@@ -300,6 +300,22 @@ if(KDE3_WITH_COMPOSITE AND X11_Xdamage_FOUND AND X11_Xcomposite_FOUND
    AND X11_Xrender_FOUND AND X11_Xfixes_FOUND)
   set(KDE3_BUILD_KOMPMGR TRUE)
 endif()
+# the window overview: XRender for drawing; window contents with
+# Xcomposite, Xdamage and Xfixes (HAVE_XCOMPOSITE is set below);
+# Xpresent for tear-free frames
+set(LIB_KWIN_OVERVIEW "")
+if(X11_Xrender_FOUND)
+  list(APPEND LIB_KWIN_OVERVIEW X11::Xrender)
+endif()
+if(KDE3_WITH_COMPOSITE AND X11_Xcomposite_FOUND AND X11_Xdamage_FOUND
+   AND X11_Xfixes_FOUND)
+  set(HAVE_XDAMAGE 1)
+  list(APPEND LIB_KWIN_OVERVIEW X11::Xcomposite X11::Xdamage X11::Xfixes)
+  if(X11_Xpresent_FOUND)
+    set(HAVE_XPRESENT 1)
+    list(APPEND LIB_KWIN_OVERVIEW X11::Xpresent)
+  endif()
+endif()
 
 # ---- ksysguard (ksysguard/configure.in.in, ksysguardd/configure.in.in) ---
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -804,6 +820,8 @@ foreach(_what
     "HAVE_SSL:KDE3_WITH_SSL:SSL in the crypto module (OpenSSL, kdelibs with SSL)"
     "KDE3_BUILD_KOMPMGR:KDE3_WITH_COMPOSITE:Xcomposite, Xdamage, Xrender and Xfixes (kompmgr)"
     "HAVE_XCOMPOSITE:KDE3_WITH_COMPOSITE:Xcomposite (taskmanager)"
+    "HAVE_XDAMAGE:KDE3_WITH_COMPOSITE:Xcomposite, Xdamage and Xfixes (window contents in the KWin overview)"
+    "HAVE_XPRESENT:-:Xpresent (tear-free KWin overview)"
     "HAVE_XINERAMA:KDE3_WITH_XINERAMA:Xinerama (ksplashsimple)"
     "HAVE_DPMS:KDE3_WITH_DPMS:DPMS (power saving)"
     "HAVE_LOGIND_SLEEP:KDEBASE_LOGIND_SLEEP:Sleep and hibernate in the logout dialog (GIO, systemd-logind)"

@@ -39,6 +39,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "notifications.h"
 #include "group.h"
 #include "rules.h"
+#include "overview.h"
 
 #include <X11/extensions/shape.h>
 #include <X11/keysym.h>
@@ -91,6 +92,7 @@ Workspace::Workspace( bool restore )
     mouse_emulation   (false),
     block_focus       (0),
     tab_box           (0),
+    overview          (NULL),
     popupinfo         (0),
     popup             (0),
     advanced_popup    (0),
@@ -213,6 +215,9 @@ Workspace::Workspace( bool restore )
 void Workspace::init()
     {
     checkElectricBorders();
+    // after the electric borders, the hot corners are above them
+    overview = new Overview( this );
+    overview->setShortcut( keys->shortcut( "Show Window Overview" ));
 
 // not used yet
 //     topDock = 0L;
@@ -429,6 +434,8 @@ void Workspace::init()
 
 Workspace::~Workspace()
     {
+    delete overview; // gives the windows back if shown
+    overview = NULL;
     if (kompmgr)
         delete kompmgr;
     blockStackingUpdates( true );
@@ -584,6 +591,8 @@ void Workspace::removeClient( Client* c, allowed_t )
     if ( c == most_recently_raised )
         most_recently_raised = 0;
     should_get_focus.remove( c );
+    if( overview != NULL )
+        overview->clientRemoved( c );
     Q_ASSERT( c != active_client );
     if ( c == last_active_client )
         last_active_client = 0;
@@ -952,6 +961,8 @@ void Workspace::slotReconfigure()
         }
 
     checkElectricBorders();
+    if( overview != NULL )
+        overview->reconfigure();
 
     if( options->topMenuEnabled() && !managingTopMenus())
         {
@@ -1195,6 +1206,8 @@ bool Workspace::setCurrentDesktop( int new_desktop )
     int old_desktop = current_desktop;
     if (new_desktop != current_desktop) 
         {
+        if( overview != NULL )
+            overview->abort(); // its windows are going away
         ++block_showing_desktop;
         /*
           optimized Desktop switching: unmapping done from back to front
@@ -1991,6 +2004,17 @@ void Workspace::requestDelayFocus( Client* c )
     delayFocusTimer->start( options->delayFocusInterval, TRUE  );
     }
     
+void Workspace::showOverview()
+    {
+    if( overview != NULL )
+        overview->toggle();
+    }
+
+void Workspace::slotShowOverview()
+    {
+    showOverview();
+    }
+
 void Workspace::cancelDelayFocus()
     {
     delete delayFocusTimer;

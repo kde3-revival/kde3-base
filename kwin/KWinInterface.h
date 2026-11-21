@@ -29,6 +29,8 @@ class KWinInterface : virtual public DCOPObject
     virtual void setOpacity(unsigned long winId, unsigned int opacityPercent) = 0;
     virtual void setShadowSize(unsigned long winId, unsigned int shadowSizePercent) = 0;
     virtual void setUnshadowed(unsigned long winId) = 0;
+    // shows the window overview, or hides it when it is shown
+    virtual ASYNC showOverview() = 0;
 
     k_dcop_signals:
     

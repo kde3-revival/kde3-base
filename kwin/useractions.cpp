@@ -36,6 +36,7 @@ License. See the file "COPYING" for the exact licensing terms.
 
 #include "killwindow.h"
 #include "tabbox.h"
+#include "overview.h"
 
 namespace KWinInternal
 {
@@ -268,6 +269,8 @@ void Workspace::readShortcuts()
     cutWalkThroughDesktopListReverse = keys->shortcut("Walk Through Desktop List (Reverse)");
     cutWalkThroughWindows = keys->shortcut("Walk Through Windows");
     cutWalkThroughWindowsReverse = keys->shortcut("Walk Through Windows (Reverse)");
+    if( overview != NULL )
+        overview->setShortcut( keys->shortcut( "Show Window Overview" ));
 
     keys->updateConnections();
     disable_shortcuts_keys->updateConnections();

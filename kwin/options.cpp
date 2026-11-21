@@ -188,6 +188,15 @@ unsigned long Options::updateSettings()
     resetKompmgr = config->readBoolEntry("ResetKompmgr", false);
     if (resetKompmgr)
         config->writeEntry("ResetKompmgr",FALSE);
+
+    config->setGroup( "Overview" );
+    overviewHotCorner = config->readBoolEntry( "HotCorner", true );
+    QString corner = config->readEntry( "HotCornerPosition", "TopLeft" );
+    overviewHotCornerPosition = corner == "TopRight" ? 1 : corner == "BottomLeft" ? 2
+        : corner == "BottomRight" ? 3 : 0;
+    overviewHotCornerDelay = QMAX( 0, QMIN( 2000, config->readNumEntry( "HotCornerDelay", 50 )));
+    overviewAnimationTime = QMAX( 0, QMIN( 2000, config->readNumEntry( "AnimationTime", 250 )));
+    overviewKeepRedirected = config->readBoolEntry( "KeepRedirected", true );
     
     
     
