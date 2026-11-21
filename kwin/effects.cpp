@@ -74,7 +74,12 @@ using namespace Compositing;
 namespace
 {
 
-const int MipLevels = 4; // 1, 1/2, 1/4, 1/8
+// downscaled copies of the windows (see EffectPicture::copy()): halved
+// across and along separately, down to 1/64 (a window minimized into a
+// taskbar button is drawn at about 1/30); none for windows larger than
+// 4096x2160 (the copies take a third of a window more, in GPU memory)
+const int CopyLevels = 7;
+const long CopyLimit = 4096L * 2160;
 // the first repaint of a window shown or resized: damage, then quiet for
 // this long; or at most this long
 const double QuietTime = 40.0;
@@ -92,14 +97,14 @@ const double GenieStep = 0.3;
 // for windows taller than that
 const int GenieMaxStrip = 32;
 const int GenieMaxStrips = 2000;
-// downscaled copies of the window, halved across and along separately
-const int GenieLevels = 5; // 1 .. 1/16
 
-// the mip level that is downscaled by at most a half
-int mipLevel( double scale )
+
+// the copy for drawing at this scale (in one direction): downscaled by at
+// most a half more, bilinearly
+int copyLevel( double scale )
     {
     int level = 0;
-    while( level < MipLevels - 1 && scale * ( 1 << ( level + 1 )) <= 1.0 )
+    while( level < CopyLevels - 1 && scale * ( 1 << ( level + 1 )) <= 1.0 )
         ++level;
     return level;
     }
@@ -183,60 +188,76 @@ class EffectPicture
         EffectPicture() : format( NULL ), alpha( false ), depth( 0 ), visual( NULL ), owned( false ),
             transformed( false )
             {
-            for( int i = 0;
-                 i < MipLevels;
-                 ++i )
-                {
-                pixmap[ i ] = None;
-                picture[ i ] = None;
-                w[ i ] = h[ i ] = 0;
-                }
+            pixmap[ 0 ] = None;
+            picture[ 0 ] = None;
+            w[ 0 ] = h[ 0 ] = 0;
             }
         bool isNull() const { return picture[ 0 ] == None; }
         /*
-         The window downscaled by 2^lx across and 2^ly along (for the genie,
-         which squeezes it across much more than along, or the other way),
-         each made once from the one halved less in one direction: 2x1 or
-         1x2 boxes, sampled bilinearly between two pixels.
+         The window downscaled by 2^lx across and 2^ly down, for drawing it
+         at a scale below a half without aliasing (the text shimmering, thin
+         lines breaking up): bilinear sampling from a copy downscaled by at
+         most a half more.  Separately in each direction: the genie and the
+         morphs squeeze a window much more in one direction than in the
+         other.  Each copy is made when first needed from the one halved
+         less (in both directions, or in one): 2x2, 2x1 or 1x2 boxes,
+         sampled bilinearly between their pixels.  The copies of contents
+         that change (a window's own pixmap) are dropped when it changes.
+         None for very large windows (bilinear only).
         */
-        Picture grid( Display* dpy, int lx, int ly, int* gw, int* gh )
+        Picture copy( Display* dpy, int lx, int ly, int* cw, int* ch )
             {
-            if( lx == 0 && ly == 0 )
+            if(( lx == 0 && ly == 0 ) || (long) w[ 0 ] * h[ 0 ] > CopyLimit )
                 {
-                *gw = w[ 0 ];
-                *gh = h[ 0 ];
+                *cw = w[ 0 ];
+                *ch = h[ 0 ];
                 return picture[ 0 ];
                 }
             const int key = lx * 16 + ly;
-            QMap< int, GridLevel >::ConstIterator it = grid_levels.find( key );
-            if( it != grid_levels.end())
+            QMap< int, Copy >::ConstIterator it = copies.find( key );
+            if( it != copies.end())
                 {
-                *gw = (*it).w;
-                *gh = (*it).h;
+                *cw = (*it).w;
+                *ch = (*it).h;
                 return (*it).picture;
                 }
-            const bool across = lx > 0; // halve across from ( lx - 1, ly )
+            // from the one halved less: in both directions when possible
+            const int px = lx > 0 ? lx - 1 : 0;
+            const int py = ly > 0 ? ly - 1 : 0;
             int sw, sh;
-            Picture src = across ? grid( dpy, lx - 1, ly, &sw, &sh ) : grid( dpy, lx, ly - 1, &sw, &sh );
-            GridLevel g;
-            g.w = across ? QMAX( 1, ( sw + 1 ) / 2 ) : sw;
-            g.h = across ? sh : QMAX( 1, ( sh + 1 ) / 2 );
-            g.pixmap = XCreatePixmap( dpy, DefaultRootWindow( dpy ), g.w, g.h, depth );
-            g.picture = XRenderCreatePicture( dpy, g.pixmap, format, 0, NULL );
+            Picture src = copy( dpy, px, py, &sw, &sh );
+            const bool across = px != lx;
+            const bool down = py != ly;
+            Copy c;
+            c.w = across ? QMAX( 1, ( sw + 1 ) / 2 ) : sw;
+            c.h = down ? QMAX( 1, ( sh + 1 ) / 2 ) : sh;
+            c.pixmap = XCreatePixmap( dpy, DefaultRootWindow( dpy ), c.w, c.h, depth );
+            c.picture = XRenderCreatePicture( dpy, c.pixmap, format, 0, NULL );
             XRenderPictureAttributes pa;
             pa.repeat = RepeatPad;
             XRenderChangePicture( dpy, src, CPRepeat, &pa );
-            setTransform( dpy, src, across ? 2 : 1, across ? 1 : 2, 0, 0 );
+            setTransform( dpy, src, across ? 2 : 1, down ? 2 : 1, 0, 0 );
             XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
-            XRenderComposite( dpy, PictOpSrc, src, None, g.picture, 0, 0, 0, 0, 0, 0, g.w, g.h );
+            XRenderComposite( dpy, PictOpSrc, src, None, c.picture, 0, 0, 0, 0, 0, 0, c.w, c.h );
             pa.repeat = RepeatNone;
             XRenderChangePicture( dpy, src, CPRepeat, &pa );
             if( src == picture[ 0 ] )
                 transformed = true;
-            grid_levels[ key ] = g;
-            *gw = g.w;
-            *gh = g.h;
-            return g.picture;
+            copies[ key ] = c;
+            *cw = c.w;
+            *ch = c.h;
+            return c.picture;
+            }
+        void dropCopies( Display* dpy )
+            {
+            for( QMap< int, Copy >::ConstIterator it = copies.begin();
+                 it != copies.end();
+                 ++it )
+                {
+                XRenderFreePicture( dpy, (*it).picture );
+                XFreePixmap( dpy, (*it).pixmap );
+                }
+            copies.clear();
             }
         // pixmap 0 is owned (a named pixmap) when owned
         void set( Display* dpy, Pixmap p, const QSize& size, int d, Visual* vis, bool own )
@@ -252,67 +273,24 @@ class EffectPicture
             if( format != NULL )
                 picture[ 0 ] = XRenderCreatePicture( dpy, p, format, 0, NULL );
             }
-        // releases everything; returns pixmap 0 when owned and keep is set
+        // releases everything; returns the pixmap when owned and keep is set
         Pixmap release( Display* dpy, bool keep = false )
             {
             Pixmap ret = None;
             transformed = false;
-            for( QMap< int, GridLevel >::ConstIterator it = grid_levels.begin();
-                 it != grid_levels.end();
-                 ++it )
+            dropCopies( dpy );
+            if( picture[ 0 ] != None )
+                XRenderFreePicture( dpy, picture[ 0 ] );
+            picture[ 0 ] = None;
+            if( pixmap[ 0 ] != None && owned )
                 {
-                XRenderFreePicture( dpy, (*it).picture );
-                XFreePixmap( dpy, (*it).pixmap );
+                if( keep )
+                    ret = pixmap[ 0 ];
+                else
+                    XFreePixmap( dpy, pixmap[ 0 ] );
                 }
-            grid_levels.clear();
-            for( int i = 0;
-                 i < MipLevels;
-                 ++i )
-                {
-                if( picture[ i ] != None )
-                    XRenderFreePicture( dpy, picture[ i ] );
-                picture[ i ] = None;
-                if( pixmap[ i ] != None && ( i > 0 || owned ))
-                    {
-                    if( i == 0 && keep )
-                        ret = pixmap[ 0 ];
-                    else
-                        XFreePixmap( dpy, pixmap[ i ] );
-                    }
-                pixmap[ i ] = None;
-                }
+            pixmap[ 0 ] = None;
             return ret;
-            }
-        // the level for drawing at this scale, made when needed
-        int level( Display* dpy, double scale )
-            {
-            int level = mipLevel( scale );
-            for( int l = 1;
-                 l <= level;
-                 ++l )
-                {
-                if( picture[ l ] != None )
-                    continue;
-                int lw = QMAX( 1, ( w[ l - 1 ] + 1 ) / 2 );
-                int lh = QMAX( 1, ( h[ l - 1 ] + 1 ) / 2 );
-                pixmap[ l ] = XCreatePixmap( dpy, DefaultRootWindow( dpy ), lw, lh, depth );
-                picture[ l ] = XRenderCreatePicture( dpy, pixmap[ l ], format, 0, NULL );
-                w[ l ] = lw;
-                h[ l ] = lh;
-                Picture src = picture[ l - 1 ];
-                // exactly 2x2 boxes: bilinear sampling between four pixels
-                XRenderPictureAttributes pa;
-                pa.repeat = RepeatPad;
-                XRenderChangePicture( dpy, src, CPRepeat, &pa );
-                setTransform( dpy, src, 2, 2, 0, 0 );
-                XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
-                XRenderComposite( dpy, PictOpSrc, src, None, picture[ l ], 0, 0, 0, 0, 0, 0, lw, lh );
-                pa.repeat = RepeatNone;
-                XRenderChangePicture( dpy, src, CPRepeat, &pa );
-                if( l == 1 )
-                    transformed = true;
-                }
-            return level;
             }
         XRenderPictFormat* format;
         bool alpha;
@@ -320,16 +298,16 @@ class EffectPicture
         Visual* visual;
         bool owned;
         bool transformed; // picture 0 not at the identity (drawn scaled)
-        struct GridLevel
+        struct Copy
             {
             Pixmap pixmap;
             Picture picture;
             int w, h;
             };
-        QMap< int, GridLevel > grid_levels; // by lx * 16 + ly
-        Pixmap pixmap[ MipLevels ];
-        Picture picture[ MipLevels ];
-        int w[ MipLevels ], h[ MipLevels ];
+        QMap< int, Copy > copies; // by lx * 16 + ly
+        Pixmap pixmap[ 1 ];
+        Picture picture[ 1 ];
+        int w[ 1 ], h[ 1 ];
     };
 
 class EffectAnim
@@ -375,6 +353,7 @@ class EffectAnim
         Window below;
         bool done;
         bool fresh; // its first frame not drawn yet: the time starts there
+        RectF drawn; // where it was drawn last (KWIN_EFFECTS_DUMP)
         double started;
     };
 
@@ -500,7 +479,7 @@ double Effects::duration( double factor ) const
     {
     // (KWIN_EFFECTS_SLOW=n: n times slower, for looking at the frames)
     static const double slow = getenv( "KWIN_EFFECTS_SLOW" ) != NULL
-        ? QMAX( 1.0, atof( getenv( "KWIN_EFFECTS_SLOW" ))) : 1.0;
+        ? QMAX( 1.0, QMIN( 50.0, atof( getenv( "KWIN_EFFECTS_SLOW" )))) : 1.0;
     return base_time * factor * slow;
     }
 
@@ -1518,20 +1497,30 @@ bool Effects::updateAnim( EffectAnim* anim, double t )
     }
 
 // draws pic (w x h) into rect, offset by -ox, -oy
-static void drawPicture( Display* dpy, Picture dst, EffectPicture& pic, const RectF& rect, double alpha,
-    int ox, int oy, bool shaped, const QValueVector< XRectangle >& shape )
+// the level of the copy (see copyLevel()) and how far the scale is from
+// its size towards the next smaller one, 0 .. 1 (log2)
+static int copyLevelFraction( double scale, double* fraction )
     {
-    if( pic.isNull() || alpha <= 1.0 / 512 || rect.w < 0.5 || rect.h < 0.5 || ( shaped && shape.isEmpty()))
-        return;
-    const int level = pic.level( dpy, QMIN( rect.w / pic.w[ 0 ], rect.h / pic.h[ 0 ] ));
-    Picture src = pic.picture[ level ];
-    const double sx = rect.w / pic.w[ level ];
-    const double sy = rect.h / pic.h[ level ];
+    const int level = copyLevel( scale );
+    const double lod = scale > 0 ? log( 1.0 / scale ) / log( 2.0 ) : 0;
+    *fraction = level < CopyLevels - 1 ? clamp01( lod - level ) : 0;
+    return level;
+    }
+
+// one copy of pic drawn into rect (the box covers the pixels touched, the
+// transformation puts it at rect.x, rect.y exactly: no rounding, no jitter)
+static void drawCopy( Display* dpy, Picture dst, EffectPicture& pic, int lx, int ly, const RectF& rect,
+    double alpha, int ox, int oy, bool src_op )
+    {
+    int cw, ch;
+    Picture src = pic.copy( dpy, lx, ly, &cw, &ch );
+    const double sx = rect.w / cw;
+    const double sy = rect.h / ch;
     const int dx = (int) floor( rect.x );
     const int dy = (int) floor( rect.y );
     const int dw = (int) ceil( rect.x + rect.w ) - dx;
     const int dh = (int) ceil( rect.y + rect.h ) - dy;
-    const bool identity = level == 0 && fabs( sx - 1 ) < 1e-9 && fabs( sy - 1 ) < 1e-9
+    const bool identity = src == pic.picture[ 0 ] && fabs( sx - 1 ) < 1e-9 && fabs( sy - 1 ) < 1e-9
         && rect.x == dx && rect.y == dy;
     if( identity )
         {
@@ -1543,22 +1532,58 @@ static void drawPicture( Display* dpy, Picture dst, EffectPicture& pic, const Re
         setTransform( dpy, src, 1 / sx, 1 / sy, ( dx - rect.x ) / sx, ( dy - rect.y ) / sy );
         XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
         }
-    if( level == 0 )
+    if( src == pic.picture[ 0 ] )
         pic.transformed = !identity;
-    if( shaped && !shape.isEmpty())
-        {
-        QValueVector< XRectangle > clip = scaledShape( shape, QSize( pic.w[ 0 ], pic.h[ 0 ] ), rect, ox, oy );
-        XRenderSetPictureClipRectangles( dpy, dst, 0, 0, &clip[ 0 ], clip.size());
-        }
     Picture mask = None;
     if( alpha < 1.0 )
         mask = solidPicture( dpy, Qt::black, alpha );
     // at scale 1 like the server's automatic compositing (Src, also for
     // ARGB windows), else blended (the edges are anti-aliased)
-    const int op = mask != None || !identity ? PictOpOver : PictOpSrc;
+    const int op = src_op && mask == None && identity ? PictOpSrc : PictOpOver;
     XRenderComposite( dpy, op, src, mask, dst, 0, 0, 0, 0, dx - ox, dy - oy, dw, dh );
     if( mask != None )
         XRenderFreePicture( dpy, mask );
+    }
+
+/*
+ pic drawn into rect, with alpha, offset by -ox, -oy.
+
+ Scaled down, a bilinear filter skips pixels (the text shimmers and
+ breaks up as the window moves): drawn from the copy downscaled by at most
+ a half more (EffectPicture::copy()), blended with the next smaller one by
+ how far the scale is towards it, like trilinear filtering: no aliasing,
+ and no jump in sharpness when the copy changes.  Scaled up (the old
+ contents of a maximized window), bilinear.
+*/
+static void drawPicture( Display* dpy, Picture dst, EffectPicture& pic, const RectF& rect, double alpha,
+    int ox, int oy, bool shaped, const QValueVector< XRectangle >& shape )
+    {
+    if( pic.isNull() || alpha <= 1.0 / 512 || rect.w < 0.5 || rect.h < 0.5 || ( shaped && shape.isEmpty()))
+        return;
+    double fx, fy;
+    const int lx = copyLevelFraction( rect.w / pic.w[ 0 ], &fx );
+    const int ly = copyLevelFraction( rect.h / pic.h[ 0 ], &fy );
+    const bool blend_x = fx > 1.0 / 64;
+    const bool blend_y = fy > 1.0 / 64;
+    // the weight of the smaller copy
+    double f = blend_x && blend_y ? ( fx + fy ) / 2 : blend_x ? fx : blend_y ? fy : 0;
+    if( (long) pic.w[ 0 ] * pic.h[ 0 ] > CopyLimit )
+        f = 0; // (no copies)
+    if( shaped && !shape.isEmpty())
+        {
+        QValueVector< XRectangle > clip = scaledShape( shape, QSize( pic.w[ 0 ], pic.h[ 0 ] ), rect, ox, oy );
+        XRenderSetPictureClipRectangles( dpy, dst, 0, 0, &clip[ 0 ], clip.size());
+        }
+    if( f < 1.0 / 64 )
+        drawCopy( dpy, dst, pic, lx, ly, rect, alpha, ox, oy, true );
+    else
+        { // (1 - f) of the larger copy, f of the smaller one, alpha in all: the
+          // first one weaker by as much as the second one covers it
+        const double a2 = alpha * f;
+        const double a1 = a2 < 0.999 ? alpha * ( 1 - f ) / ( 1 - a2 ) : 0;
+        drawCopy( dpy, dst, pic, lx, ly, rect, a1, ox, oy, false );
+        drawCopy( dpy, dst, pic, lx + ( blend_x ? 1 : 0 ), ly + ( blend_y ? 1 : 0 ), rect, a2, ox, oy, false );
+        }
     if( shaped && !shape.isEmpty())
         {
         XRenderPictureAttributes pa;
@@ -1595,14 +1620,13 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
                 }
             if( anim->style == Genie )
                 {
-                // (the downscaled copies only of the kept contents: the
-                // window's own ones change)
-                drawGenie( anim, *pic, pic == &anim->snap, dst, anim->p, 1.0 );
+                drawGenie( anim, *pic, true, dst, anim->p, 1.0 );
                 pic->transformed = true;
                 return;
                 }
             RectF target = fitInto( anim->geom.width(), anim->geom.height(), anim->icon );
             RectF rect = mix( RectF( anim->geom ), target, anim->p );
+            anim->drawn = rect;
             const double alpha = 1 - anim->p * anim->p * anim->p * anim->p;
             drawPicture( dpy, dst, *pic, rect, alpha, ox, oy, shaped, *shape );
             break;
@@ -1655,7 +1679,7 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
  edges are where the funnel is, to the subpixel, anti-aliased by the
  bilinear filter (outside the window is transparent).  Where the window
  is squeezed to less than half, a copy downscaled across and/or along is
- drawn (made once, see EffectPicture::grid()): no aliasing, no shimmer of
+ drawn (made once, see EffectPicture::copy()): no aliasing, no shimmer of
  the text.
 
  Computed along the main axis m (the direction of travel, negated for up
@@ -1751,8 +1775,7 @@ void Effects::drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copie
     // the levels of the downscaled copies along (the same for all strips)
     int level_along = 0;
     if( scaled_copies )
-        while( level_along < GenieLevels - 1 && sy * ( 1 << ( level_along + 1 )) <= 1.0 )
-            ++level_along;
+        level_along = copyLevel( sy );
     Picture mask = alpha < 1.0 ? solidPicture( dpy, Qt::black, alpha ) : None;
     Picture last = None;
     int strips = 0;
@@ -1769,11 +1792,10 @@ void Effects::drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copie
             {
             int level_across = 0;
             if( scaled_copies )
-                while( level_across < GenieLevels - 1 && sx * ( 1 << ( level_across + 1 )) <= 1.0 )
-                    ++level_across;
+                level_across = copyLevel( sx );
             int gw, gh;
-            Picture src = horizontal ? pic.grid( dpy, level_along, level_across, &gw, &gh )
-                : pic.grid( dpy, level_across, level_along, &gw, &gh );
+            Picture src = horizontal ? pic.copy( dpy, level_along, level_across, &gw, &gh )
+                : pic.copy( dpy, level_across, level_along, &gw, &gh );
             if( src != last )
                 {
                 XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
@@ -2043,7 +2065,9 @@ void Effects::dumpFrame()
     FILE* log = fopen( QFile::encodeName( dump_dir + "/frames.txt" ), "a" );
     if( log != NULL )
         {
-        fprintf( log, "%s %.1f %d %d\n", QFile::encodeName( name ).data(), now() - stat_start, area.x(), area.y());
+        RectF r = anims.isEmpty() ? RectF() : anims.getFirst()->drawn;
+        fprintf( log, "%s %.1f %d %d %.3f %.3f %.3f %.3f\n", QFile::encodeName( name ).data(), now() - stat_start,
+            area.x(), area.y(), r.x, r.y, r.w, r.h );
         fclose( log );
         }
     }
@@ -2077,6 +2101,7 @@ bool Effects::x11Event( XEvent* e )
             if( win->damage == de->damage )
                 {
                 XDamageSubtract( dpy, de->damage, None, None );
+                win->pic.dropCopies( dpy ); // (downscaled copies of what it was)
                 requestFrame();
                 return true;
                 }
