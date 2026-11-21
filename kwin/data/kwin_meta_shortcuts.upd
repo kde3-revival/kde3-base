@@ -1,0 +1,6 @@
+# kcm_keys wrote "none" for the KWin actions with Meta shortcuts (added after
+# the user's last login) on [Apply]; removing it brings back their defaults.
+Id=kwin_meta_shortcuts
+File=kdeglobals
+Group=Global Shortcuts
+Script=kwin_meta_shortcuts.sh,sh

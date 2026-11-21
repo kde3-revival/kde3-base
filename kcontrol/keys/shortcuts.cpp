@@ -288,6 +288,18 @@ void ShortcutsModule::slotKeyChange()
 	emit changed( true );
 }
 
+// Shows the shortcuts of pConfig (the user's when 0) in pkc.  An action
+// without an entry there has its default shortcut, as KGlobalAccel and
+// KStdAccel read it.  Clearing such actions (syncToConfig()'s bClearUnset)
+// made [Apply] write "none" for every action added since kcminit last wrote
+// all the actions at login, and for the actions a scheme file doesn't know,
+// which disabled their default shortcuts for good.
+static void syncChooserToConfig( KKeyChooser* pkc, const QString& sGroup, KConfigBase* pConfig )
+{
+	pkc->allDefault();
+	pkc->syncToConfig( sGroup, pConfig, false );
+}
+
 void ShortcutsModule::slotSelectScheme( int )
 {
 	i18n("Your current changes will be lost if you load another scheme before saving this one.");
@@ -295,10 +307,9 @@ void ShortcutsModule::slotSelectScheme( int )
 	QString sFilename = m_rgsSchemeFiles[ m_pcbSchemes->currentItem() ];
 
 	if( sFilename == "cur" ) {
-		// TODO: remove nulls params
-		m_pkcGeneral->syncToConfig( "Global Shortcuts", 0, true );
-		m_pkcSequence->syncToConfig( "Global Shortcuts", 0, true );
-		m_pkcApplication->syncToConfig( "Shortcuts", 0, false );
+		syncChooserToConfig( m_pkcGeneral, "Global Shortcuts", 0 );
+		syncChooserToConfig( m_pkcSequence, "Global Shortcuts", 0 );
+		syncChooserToConfig( m_pkcApplication, "Shortcuts", 0 );
 	} else {
 		KSimpleConfig config( sFilename );
 		config.setGroup( "Settings" );
@@ -317,9 +328,9 @@ void ShortcutsModule::slotSelectScheme( int )
 				return;
 		}
 
-		m_pkcGeneral->syncToConfig( "Global Shortcuts", &config, true );
-		m_pkcSequence->syncToConfig( "Global Shortcuts", &config, true );
-		m_pkcApplication->syncToConfig( "Shortcuts", &config, false );
+		syncChooserToConfig( m_pkcGeneral, "Global Shortcuts", &config );
+		syncChooserToConfig( m_pkcSequence, "Global Shortcuts", &config );
+		syncChooserToConfig( m_pkcApplication, "Shortcuts", &config );
 	}
 
 	m_prbPre->setChecked( true );

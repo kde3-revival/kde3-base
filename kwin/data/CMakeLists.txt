@@ -27,6 +27,7 @@ install(FILES
   kwinupdatewindowsettings.upd
   kwin_focus2.upd
   kwin_screenshotkeys.upd
+  kwin_meta_shortcuts.upd
   DESTINATION ${KDE3_DATA_INSTALL_DIR}/kconf_update)
 
 install(PROGRAMS
@@ -35,4 +36,5 @@ install(PROGRAMS
   kwin_focus1.sh
   kwin_focus2.sh
   kwin_screenshotkeys.sh
+  kwin_meta_shortcuts.sh
   DESTINATION ${KDE3_DATA_INSTALL_DIR}/kconf_update)
