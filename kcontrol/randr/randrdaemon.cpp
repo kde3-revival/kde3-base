@@ -1,0 +1,155 @@
+/*
+ * kded_randr: applies the saved display configuration (displayrc) when
+ * monitors are connected or disconnected.
+ *
+ * It reacts only to a change of the set of connected monitors: a
+ * configuration made by hand (xrandr, the control module) stays until
+ * the next hotplug or login. At login the configuration is applied by
+ * krandrstartup from startkde, before the splash screen.
+ *
+ * It uses its own X connection, so that its RandR event selection and
+ * its server grab do not interfere with kded's Qt connection.
+ *
+ * Copyright (C) 2026 Serghei Amelian
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ */
+
+#include "randrdaemon.h"
+#include "randrcore.h"
+#include "randrx11.h"
+
+#include <qsocketnotifier.h>
+
+#include <kapplication.h>
+#include <kconfig.h>
+#include <kdebug.h>
+#include <kglobal.h>
+
+#include <X11/Xlib.h>
+#include <X11/extensions/Xrandr.h>
+
+using namespace KRandR;
+
+// connection changes come in bursts (a monitor waking up, a dock):
+// wait until the outputs settled
+static const int settleMs = 2000;
+
+extern "C" {
+    KDE_EXPORT KDEDModule *create_randr( const QCString &obj )
+    {
+	return new RandRDaemon( obj );
+    }
+}
+
+RandRDaemon::RandRDaemon( const QCString &obj )
+    : KDEDModule( obj ), m_dpy( 0 ), m_eventBase( 0 ), m_notifier( 0 )
+{
+    connect( &m_settle, SIGNAL( timeout() ), SLOT( outputsChanged() ) );
+
+    m_dpy = XOpenDisplay( DisplayString( qt_xdisplay() ) );
+    if ( !m_dpy || !hasRandR12( m_dpy, &m_eventBase ) ) {
+	kdDebug() << "kded_randr: no RandR 1.2 on the display" << endl;
+	if ( m_dpy )
+	    XCloseDisplay( m_dpy );
+	m_dpy = 0;
+	return;
+    }
+    XRRSelectInput( m_dpy, DefaultRootWindow( m_dpy ),
+		    RRScreenChangeNotifyMask | RROutputChangeNotifyMask );
+    XFlush( m_dpy );
+    m_notifier = new QSocketNotifier( ConnectionNumber( m_dpy ), QSocketNotifier::Read, this );
+    connect( m_notifier, SIGNAL( activated( int ) ), SLOT( readEvents() ) );
+
+    // what krandrstartup (or the X server) set up at login is the
+    // starting point: nothing to do until it changes
+    ScreenState state;
+    if ( queryState( m_dpy, state ) )
+	m_lastSet = state.connectedSetKey();
+    kdDebug() << "kded_randr: connected monitors: " << m_lastSet << endl;
+}
+
+RandRDaemon::~RandRDaemon()
+{
+    delete m_notifier;
+    if ( m_dpy )
+	XCloseDisplay( m_dpy );
+}
+
+void RandRDaemon::readEvents()
+{
+    if ( !m_dpy )
+	return;
+    bool changed = false;
+    while ( XPending( m_dpy ) ) {
+	XEvent ev;
+	XNextEvent( m_dpy, &ev );
+	if ( ev.type == m_eventBase + RRScreenChangeNotify ) {
+	    XRRUpdateConfiguration( &ev );
+	    changed = true;
+	} else if ( ev.type == m_eventBase + RRNotify ) {
+	    XRRNotifyEvent *n = (XRRNotifyEvent *) &ev;
+	    if ( n->subtype == RRNotify_OutputChange )
+		changed = true;
+	}
+    }
+    if ( changed )
+	m_settle.start( settleMs, true );
+}
+
+void RandRDaemon::outputsChanged()
+{
+    ScreenState state;
+    if ( !m_dpy || !queryState( m_dpy, state ) )
+	return;
+    QString set = state.connectedSetKey();
+    // the same monitors: a mode set by hand, our own change, a probe
+    if ( set == m_lastSet )
+	return;
+    kdDebug() << "kded_randr: monitors changed: " << m_lastSet << " -> " << set << endl;
+    m_lastSet = set;
+    if ( set.isEmpty() )
+	return;     // everything unplugged: leave the server alone
+
+    KConfig config( "displayrc", true );
+    config.setGroup( "General" );
+    if ( !config.readBoolEntry( "ApplyOnHotplug", true ) )
+	return;
+    reconfigure();
+}
+
+bool RandRDaemon::reconfigure()
+{
+    ScreenState state;
+    if ( !m_dpy || !queryState( m_dpy, state ) )
+	return false;
+    KConfig config( "displayrc", true );
+    ProfileStore store( &config );
+    bool fromProfile = false;
+    Layout layout = layoutFor( state, store, true, &fromProfile );
+    QString error;
+    bool ok = applyLayout( m_dpy, layout, &error );
+    if ( ok )
+	kdDebug() << "kded_randr: applied the " << ( fromProfile ? "saved" : "default" )
+			<< " configuration of " << state.connectedSetKey() << endl;
+    else
+	kdWarning() << "kded_randr: could not apply the "
+			  << ( fromProfile ? "saved" : "default" ) << " configuration of "
+			  << state.connectedSetKey() << ": " << error << endl;
+    // our own changes are in the queue now; they do not change the set
+    readEvents();
+    return ok;
+}
+
+QString RandRDaemon::connectedSet()
+{
+    ScreenState state;
+    if ( !m_dpy || !queryState( m_dpy, state ) )
+	return QString::null;
+    return state.connectedSetKey();
+}
+
+#include "randrdaemon.moc"

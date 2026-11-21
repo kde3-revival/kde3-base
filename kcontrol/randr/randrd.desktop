@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+Name=Display Configuration
+Comment=Applies the saved monitor arrangement when monitors are connected or disconnected
+ServiceTypes=KDEDModule
+X-KDE-ModuleType=Library
+X-KDE-Library=randr
+X-KDE-FactoryName=randr
+X-KDE-Kded-autoload=true
+X-KDE-Kded-load-on-demand=false
+X-KDE-Kded-phase=1
