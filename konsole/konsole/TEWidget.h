@@ -153,6 +153,7 @@ signals:
 
     void keyPressedSignal(QKeyEvent *e);
     void mouseSignal(int cb, int cx, int cy);
+    void focusChangedSignal(bool in);
     void changedFontMetricSignal(int height, int width);
     void changedContentSizeSignal(int height, int width);
     void changedHistoryCursor(int value);

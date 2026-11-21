@@ -34,7 +34,8 @@
 #define MODE_Mouse1000 (MODES_SCREEN+3)
 #define MODE_Ansi      (MODES_SCREEN+4)
 #define MODE_BracketedPaste (MODES_SCREEN+5)
-#define MODE_total     (MODES_SCREEN+6)
+#define MODE_FocusEvents (MODES_SCREEN+6)
+#define MODE_total     (MODES_SCREEN+7)
 
 struct DECpar
 {
@@ -65,6 +66,7 @@ public:
 public slots: // signals incoming from TEWidget
 
   void onMouse(int cb, int cx, int cy);
+  void onFocusChange(bool in);
 
 signals:
 

@@ -1734,16 +1734,22 @@ void TEWidget::mouseTripleClickEvent(QMouseEvent* ev)
   iPntSel.ry() += scrollbar->value();
 }
 
-void TEWidget::focusInEvent( QFocusEvent * )
+void TEWidget::focusInEvent( QFocusEvent * e )
 {
   repaint(cursorRect, true);  // *do* erase area, to get rid of the
                               // hollow cursor rectangle.
+  // A popup menu (e.g. the context menu) does not take the focus away
+  // from the terminal as far as the application is concerned.
+  if ( e->reason() != QFocusEvent::Popup )
+    emit focusChangedSignal(true);
 }
 
 
-void TEWidget::focusOutEvent( QFocusEvent * )
+void TEWidget::focusOutEvent( QFocusEvent * e )
 {
   repaint(cursorRect, true);  // don't erase area
+  if ( e->reason() != QFocusEvent::Popup )
+    emit focusChangedSignal(false);
 }
 
 bool TEWidget::focusNextPrevChild( bool next )

@@ -83,6 +83,8 @@ TEmuVt102::TEmuVt102(TEWidget* gui) : TEmulation(gui)
   //kdDebug(1211)<<"TEmuVt102 ctor() connecting"<<endl;
   QObject::connect(gui,SIGNAL(mouseSignal(int,int,int)),
                    this,SLOT(onMouse(int,int,int)));
+  QObject::connect(gui,SIGNAL(focusChangedSignal(bool)),
+                   this,SLOT(onFocusChange(bool)));
   QObject::connect(gui, SIGNAL(sendStringToEmu(const char*)),
 		   this, SLOT(sendString(const char*)));
   //kdDebug(1211)<<"TEmuVt102 ctor() initToken..."<<endl;
@@ -102,12 +104,16 @@ void TEmuVt102::changeGUI(TEWidget* newgui)
   if ( gui ) {
     QObject::disconnect(gui,SIGNAL(mouseSignal(int,int,int)),
                         this,SLOT(onMouse(int,int,int)));
+    QObject::disconnect(gui,SIGNAL(focusChangedSignal(bool)),
+                        this,SLOT(onFocusChange(bool)));
     QObject::disconnect(gui, SIGNAL(sendStringToEmu(const char*)),
                         this, SLOT(sendString(const char*)));
   }
   TEmulation::changeGUI(newgui);
   QObject::connect(gui,SIGNAL(mouseSignal(int,int,int)),
                    this,SLOT(onMouse(int,int,int)));
+  QObject::connect(gui,SIGNAL(focusChangedSignal(bool)),
+                   this,SLOT(onFocusChange(bool)));
   QObject::connect(gui, SIGNAL(sendStringToEmu(const char*)),
 		   this, SLOT(sendString(const char*)));
 }
@@ -811,6 +817,11 @@ switch( N )
     case TY_CSI_PR('h', 1049) : saveCursor(); screen[1]->clearEntireScreen(); setMode(MODE_AppScreen); break; //XTERM
     case TY_CSI_PR('l', 1049) : resetMode(MODE_AppScreen); restoreCursor(); break; //XTERM
 
+    case TY_CSI_PR('h', 1004) :          setMode      (MODE_FocusEvents); break; //XTERM
+    case TY_CSI_PR('l', 1004) :        resetMode      (MODE_FocusEvents); break; //XTERM
+    case TY_CSI_PR('s', 1004) :         saveMode      (MODE_FocusEvents); break; //XTERM
+    case TY_CSI_PR('r', 1004) :      restoreMode      (MODE_FocusEvents); break; //XTERM
+
     case TY_CSI_PR('h', 2004) :          setMode      (MODE_BracketedPaste); break; //XTERM
     case TY_CSI_PR('l', 2004) :        resetMode      (MODE_BracketedPaste); break; //XTERM
     case TY_CSI_PR('s', 2004) :         saveMode      (MODE_BracketedPaste); break; //XTERM
@@ -957,6 +968,17 @@ void TEmuVt102::onMouse( int cb, int cx, int cy )
   if (cb >= 4) cb += 0x3c;
   sprintf(tmp,"\033[M%c%c%c",cb+0x20,cx+0x20,cy+0x20);
   sendString(tmp);
+}
+
+/*!
+    Report the terminal gaining or losing the keyboard focus to the
+    application if it asked for it (DECSET 1004).
+*/
+
+void TEmuVt102::onFocusChange(bool in)
+{
+  if (connected && getMode(MODE_FocusEvents))
+    sendString(in ? "\033[I" : "\033[O");
 }
 
 // Keyboard Handling ------------------------------------------------------- --
@@ -1204,6 +1226,7 @@ void TEmuVt102::resetModes()
   resetMode(MODE_Mouse1000); saveMode(MODE_Mouse1000);
   resetMode(MODE_AppScreen); saveMode(MODE_AppScreen);
   resetMode(MODE_BracketedPaste); saveMode(MODE_BracketedPaste);
+  resetMode(MODE_FocusEvents); saveMode(MODE_FocusEvents);
   // here come obsolete modes
   resetMode(MODE_AppCuKeys); saveMode(MODE_AppCuKeys);
   resetMode(MODE_NewLine  );
