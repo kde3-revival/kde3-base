@@ -29,6 +29,10 @@
 #include <kpopupmenu.h>
 #include <kwinmodule.h>
 #include <krootpixmap.h>
+#include <kstandarddirs.h>
+#include <knewstuff/dailypicture.h>
+
+#include <time.h>
 
 #include <X11/X.h>
 #include <X11/Xlib.h>
@@ -73,6 +77,10 @@ KBackgroundManager::KBackgroundManager(QWidget *desktop, KWinModule* kwinModule)
     m_pKwinmodule = kwinModule;
     m_pPixmapServer = new KPixmapServer();
     m_xrootpmap = None;
+
+    m_pDaily = new KNS::DailyPicture(this);
+    connect(m_pDaily, SIGNAL(finished(const QString &, bool, const QString &, const QString &)),
+            SLOT(slotDailyFinished(const QString &, bool, const QString &, const QString &)));
 
     for (unsigned i=0; i<m_Renderer.size(); i++)
     {
@@ -214,6 +222,105 @@ void KBackgroundManager::configure()
 
     // Repaint desktop
     slotChangeDesktop(0);
+
+    // a picture of the day may be due (also at login): a little later, in
+    // the background
+    QTimer::singleShot(15000, this, SLOT(slotCheckDaily()));
+}
+
+/*
+ * The picture of the day: each source used by a background is asked once
+ * a day for its new picture (kdesktopdailyrc keeps when to ask next).
+ * Offline, or when the source fails, the current picture stays and the
+ * source is asked again a quarter of an hour later; when it has no
+ * picture of today yet, two hours later.
+ */
+static const char dailyStateFile[] = "kdesktopdailyrc";
+
+void KBackgroundManager::slotCheckDaily()
+{
+    if (m_pDaily->isRunning())
+        return;
+
+    QStringList sources;
+    for (unsigned i = 0; i < m_Renderer.size(); ++i)
+    {
+        KVirtualBGRenderer *v = m_Renderer[i];
+        if (!v)
+            continue;
+        for (unsigned j = 0; j < v->numRenderers(); ++j)
+        {
+            KBackgroundRenderer *r = v->renderer(j);
+            if (r && r->multiWallpaperMode() == KBackgroundSettings::Daily &&
+                r->wallpaperMode() != KBackgroundSettings::NoWallpaper &&
+                !sources.contains(r->dailySource()))
+                sources.append(r->dailySource());
+        }
+    }
+    if (sources.isEmpty())
+        return;
+
+    KConfig state(dailyStateFile, false, false);
+    state.setGroup("Sources");
+    long now = (long) time(0);
+    for (QStringList::ConstIterator it = sources.begin(); it != sources.end(); ++it)
+    {
+        long next = state.readLongNumEntry("Next_" + *it, 0);
+        long attempt = state.readLongNumEntry("Attempt_" + *it, 0);
+        bool none = KNS::DailyPicture::latestPicture(KBackgroundSettings::dailyDirectory(*it)).isEmpty();
+        // a clock set back: ask again
+        bool due = now >= next || next - now > 2 * 86400 ||
+                   (none && (now - attempt >= 15 * 60 || attempt > now));
+        if (!due)
+            continue;
+
+        state.writeEntry("Attempt_" + *it, now);
+        state.sync();
+
+        m_pConfig->setGroup("Background Common");
+        int keep = m_pConfig->readNumEntry("DailyWallpaperKeep", 7);
+        keep = QMIN(QMAX(keep, 1), 60);
+
+        m_dailySource = *it;
+        kdDebug() << "kdesktop: fetching the picture of the day of " << *it << endl;
+        m_pDaily->fetch(*it, KBackgroundSettings::dailyDirectory(*it), keep);
+        return;
+    }
+}
+
+void KBackgroundManager::slotDailyFinished(const QString &picture, bool isNew, const QString &date,
+                                           const QString &error)
+{
+    long now = (long) time(0);
+    long next;
+    if (!error.isEmpty())
+    {
+        kdDebug() << "kdesktop: picture of the day of " << m_dailySource << ": " << error << endl;
+        next = now + 15 * 60;
+    }
+    else if (date >= QDate::currentDate().toString(Qt::ISODate))
+    {
+        // today's: the next one tomorrow, a little after midnight
+        QDateTime tomorrow(QDate::currentDate().addDays(1), QTime(0, 10));
+        next = now + QDateTime::currentDateTime().secsTo(tomorrow);
+    }
+    else
+        next = now + 2 * 3600;
+
+    {
+        KConfig state(dailyStateFile, false, false);
+        state.setGroup("Sources");
+        state.writeEntry("Next_" + m_dailySource, next);
+        state.sync();
+    }
+    kdDebug() << "kdesktop: picture of the day " << picture << (isNew ? " (new)" : "") << endl;
+
+    // the backgrounds of the day show the new picture
+    if (isNew)
+        slotTimeout();
+
+    // the next source, if several are used
+    QTimer::singleShot(1000, this, SLOT(slotCheckDaily()));
 }
 
 

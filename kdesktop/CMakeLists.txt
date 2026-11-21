@@ -54,6 +54,7 @@ kde3_add_kdeinit_executable(kdesktop
     dmctl
     ${LIB_XSS}
     KDE3::kutils
+    KDE3::knewstuff
     ${LIB_XCURSOR}
 )
 

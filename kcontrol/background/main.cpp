@@ -66,6 +66,8 @@ KBackground::KBackground(QWidget *parent, const char *name, const QStringList &/
     setAcceptDrops(true);
 
     connect(m_base, SIGNAL(changed(bool)), SIGNAL(changed(bool)));
+    // "Install and Set" of "Get New Wallpapers"
+    connect(m_base, SIGNAL(applyRequested()), SLOT(slotApplyNow()));
 
     KAboutData *about =
     new KAboutData(I18N_NOOP("kcmbackground"), I18N_NOOP("KDE Background Control Module"),
@@ -113,6 +115,11 @@ void KBackground::save()
 	appname.sprintf("kdesktop-screen-%d", screen_number);
 
     client->send(appname, "KBackgroundIface", "configure()", "");
+}
+
+void KBackground::slotApplyNow()
+{
+    save();
 }
 
 void KBackground::defaults()

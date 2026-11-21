@@ -49,6 +49,8 @@ public:
 
 signals:
    void changed(bool);
+   /** The settings are to be applied now ("Install and Set"). */
+   void applyRequested();
 
 protected:
    void initUI();
@@ -58,6 +60,8 @@ protected:
    void setWallpaper(const QString &);
 
    void loadWallpaperFilesList();
+   void setInstalledPicture(const QString &picture);
+   static int photoPosition(int position);
 
 protected slots:
    void slotIdentifyScreens();
@@ -80,6 +84,7 @@ protected slots:
    void slotBlendReverse(bool b);
    void desktopResized();
    void setBlendingEnabled(bool);
+   void slotDailySource(int index);
 
 protected:
    // The entries of the screen combo box, which are also the indexes of the
@@ -111,6 +116,8 @@ protected:
    bool m_previewUpdates;
    bool m_copyAllDesktops;
    bool m_copyAllScreens;
+   bool m_readOnly;
+   QStringList m_dailySources;
 };
 
 #endif

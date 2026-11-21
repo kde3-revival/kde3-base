@@ -28,6 +28,7 @@
 #include <kstandarddirs.h>
 #include <krandomsequence.h>
 #include <konq_defaults.h>
+#include <knewstuff/dailypicture.h>
 
 #include "bgdefaults.h"
 #include "bghash.h"
@@ -489,6 +490,7 @@ KBackgroundSettings::KBackgroundSettings(int desk, int screen, bool drawBackgrou
     ADD_STRING(InOrder)
     ADD_STRING(Random)
     ADD_STRING(NoMultiRandom)
+    ADD_STRING(Daily)
     #undef ADD_STRING
 
     m_pDirs = KGlobal::dirs();
@@ -546,6 +548,7 @@ void KBackgroundSettings::copyConfig(const KBackgroundSettings *settings)
     m_LastChange = settings->m_LastChange;
     m_CurrentWallpaper = settings->m_CurrentWallpaper;
     m_CurrentWallpaperName = settings->m_CurrentWallpaperName;
+    m_DailySource = settings->m_DailySource;
 
     KBackgroundPattern::copyConfig(settings);
     KBackgroundProgram::copyConfig(settings);
@@ -808,8 +811,13 @@ void KBackgroundSettings::readSettings(bool reparse)
 	int mode = m_MMMap[s];
 	m_MultiMode = mode;
     }
+    m_DailySource = m_pConfig->readEntry("DailyWallpaperSource", "bing");
+    if (!KNS::DailyPicture::sources().contains(m_DailySource))
+        m_DailySource = "bing";
 
     updateWallpaperFiles();
+    if (m_MultiMode == Daily)
+        m_CurrentWallpaperName = m_WallpaperFiles.isEmpty() ? QString::null : m_WallpaperFiles.first();
     if( !m_CurrentWallpaperName.isEmpty())
         m_CurrentWallpaper = m_WallpaperFiles.findIndex(m_CurrentWallpaperName);
     if(m_CurrentWallpaper < 0)
@@ -822,7 +830,8 @@ void KBackgroundSettings::readSettings(bool reparse)
     if (m_WMMap.contains(s)) {
         int mode = m_WMMap[s];
         // consistency check.
-        if ((mode == NoWallpaper) || !m_Wallpaper.isEmpty() || (m_MultiMode == InOrder || m_MultiMode == Random))
+        if ((mode == NoWallpaper) || !m_Wallpaper.isEmpty() ||
+            (m_MultiMode == InOrder || m_MultiMode == Random || m_MultiMode == Daily))
             m_WallpaperMode = mode;
     }
 
@@ -851,6 +860,7 @@ void KBackgroundSettings::writeSettings()
     m_pConfig->writePathEntry("Wallpaper", m_Wallpaper);
     m_pConfig->writeEntry("WallpaperMode", m_WMRevMap[m_WallpaperMode]);
     m_pConfig->writeEntry("MultiWallpaperMode", m_MMRevMap[m_MultiMode]);
+    m_pConfig->writeEntry("DailyWallpaperSource", m_DailySource);
     m_pConfig->writeEntry("BlendMode", m_BlMRevMap[m_BlendMode]);
     m_pConfig->writeEntry("BlendBalance", m_BlendBalance);
     m_pConfig->writeEntry("ReverseBlending", m_ReverseBlending);
@@ -869,6 +879,21 @@ void KBackgroundSettings::writeSettings()
     dirty = false;
 }
 
+void KBackgroundSettings::setDailySource(const QString &source)
+{
+    if (m_DailySource == source || !KNS::DailyPicture::sources().contains(source))
+        return;
+    dirty = hashdirty = true;
+    m_DailySource = source;
+    if (m_MultiMode == Daily)
+        changeWallpaper(true);
+}
+
+QString KBackgroundSettings::dailyDirectory(const QString &source)
+{
+    return locateLocal("data", "kdesktop/daily-wallpapers/" + source + "/");
+}
+
 /*
  * (re)Build m_WallpaperFiles from m_WallpaperList
  */
@@ -876,6 +901,13 @@ void KBackgroundSettings::updateWallpaperFiles()
 {
     QStringList::Iterator it;
     m_WallpaperFiles.clear();
+    if (m_MultiMode == Daily) {
+        // the newest picture of the day
+        QString file = KNS::DailyPicture::latestPicture(dailyDirectory(m_DailySource));
+        if (!file.isEmpty())
+            m_WallpaperFiles.append(file);
+        return;
+    }
     for (it=m_WallpaperList.begin(); it!=m_WallpaperList.end(); ++it) {
         QString file = locate("wallpaper", *it);
         if (file.isEmpty())
@@ -929,6 +961,8 @@ QStringList KBackgroundSettings::wallpaperList() const
 {
     if ( m_WallpaperMode == NoWallpaper )
         return QStringList();
+    if ( m_MultiMode == Daily )
+        return QStringList(currentWallpaper());
     if ( m_MultiMode == NoMulti || m_MultiMode == NoMultiRandom )
         return QStringList(m_Wallpaper);
     return m_WallpaperList;
@@ -938,6 +972,8 @@ QStringList KBackgroundSettings::wallpaperFiles() const
 {
     if ( m_WallpaperMode == NoWallpaper )
         return QStringList();
+    if ( m_MultiMode == Daily )
+        return QStringList(currentWallpaper());
     if ( m_MultiMode == NoMulti || m_MultiMode == NoMultiRandom )
         return QStringList(m_Wallpaper);
     return m_WallpaperFiles;
@@ -948,6 +984,17 @@ QStringList KBackgroundSettings::wallpaperFiles() const
  */
 void KBackgroundSettings::changeWallpaper(bool init)
 {
+    if (m_MultiMode == Daily) {
+        // the newest picture of the day; nothing is written: the picture
+        // follows from the folder
+        updateWallpaperFiles();
+        m_CurrentWallpaper = 0;
+        m_CurrentWallpaperName = m_WallpaperFiles.isEmpty() ? QString::null : m_WallpaperFiles.first();
+        m_LastChange = (int) time(0L);
+        hashdirty = true;
+        return;
+    }
+
     if (m_WallpaperFiles.count() == 0) {
         if( init ) {
 	    m_CurrentWallpaper = 0;
@@ -996,6 +1043,9 @@ QString KBackgroundSettings::currentWallpaper() const
 	return QString::null;
     if (m_MultiMode == NoMulti || m_MultiMode == NoMultiRandom)
 	return m_Wallpaper;
+    if (m_MultiMode == Daily)
+        // until the first picture of the day is there: the picture set before
+        return m_CurrentWallpaperName.isEmpty() ? m_Wallpaper : m_CurrentWallpaperName;
 
     if (m_CurrentWallpaper >= 0 && m_CurrentWallpaper < (int) m_WallpaperFiles.count())
 	return m_WallpaperFiles[m_CurrentWallpaper];
@@ -1004,7 +1054,7 @@ QString KBackgroundSettings::currentWallpaper() const
 
 bool KBackgroundSettings::discardCurrentWallpaper()
 {
-    if (m_MultiMode == NoMulti || m_MultiMode == NoMultiRandom)
+    if (m_MultiMode == NoMulti || m_MultiMode == NoMultiRandom || m_MultiMode == Daily)
     {
        return false;
     }
@@ -1020,6 +1070,11 @@ bool KBackgroundSettings::needWallpaperChange()
 {
     if (m_MultiMode == NoMulti || m_MultiMode == NoMultiRandom)
 	return false;
+    if (m_MultiMode == Daily) {
+        // a new picture of the day arrived
+        QString latest = KNS::DailyPicture::latestPicture(dailyDirectory(m_DailySource));
+        return !latest.isEmpty() && latest != m_CurrentWallpaperName;
+    }
 
     return ((m_LastChange + 60*m_Interval) <= time(0L));
 }

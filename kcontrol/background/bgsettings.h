@@ -227,11 +227,22 @@ public:
     void setWallpaperChangeInterval(int);
     int wallpaperChangeInterval() const { return m_Interval; }
 
+    /**
+     * Daily: the picture of the day of a source (see dailySource()), the
+     * newest picture in the folder kdesktop fetches it into; the picture
+     * set as wallpaper() until there is one.
+     */
     enum MultiMode {
-	NoMulti, InOrder, Random, NoMultiRandom
+	NoMulti, InOrder, Random, NoMultiRandom, Daily
     };
     void setMultiWallpaperMode(int mode);
     int multiWallpaperMode() const { return m_MultiMode; }
+
+    /** The source of the picture of the day: "bing", "wikimedia", "apod". */
+    void setDailySource(const QString &source);
+    QString dailySource() const { return m_DailySource; }
+    /** The folder of the pictures of the day of @p source. */
+    static QString dailyDirectory(const QString &source);
 
     enum MinOptDepth {
         AlwaysOpt, Opt16bpp, Opt15bpp, NeverOpt };
@@ -294,6 +305,7 @@ private:
     int m_Interval, m_LastChange;
     int m_CurrentWallpaper;
     QString m_CurrentWallpaperName;
+    QString m_DailySource;
 
     KConfig *m_pConfig;
     KStandardDirs *m_pDirs;

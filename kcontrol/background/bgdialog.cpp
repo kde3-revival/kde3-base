@@ -55,6 +55,7 @@
 #include <kwin.h>
 #include <kimagefilepreview.h>
 #include <knewstuff/downloaddialog.h>
+#include <knewstuff/dailypicture.h>
 
 #include <stdlib.h>
 
@@ -91,6 +92,7 @@ BGDialog::BGDialog(QWidget* parent, KConfig* _config, bool _multidesktop)
    getEScreen();
    m_copyAllDesktops = true;
    m_copyAllScreens = true;
+   m_readOnly = false;
 
    if (!m_multidesktop)
    {
@@ -140,6 +142,8 @@ BGDialog::BGDialog(QWidget* parent, KConfig* _config, bool _multidesktop)
            SLOT(slotWallpaperPos(int)));
    connect(m_buttonSetupWallpapers, SIGNAL(clicked()),
            SLOT(slotSetupMulti()));
+   connect(m_comboDailySource, SIGNAL(activated(int)),
+           SLOT(slotDailySource(int)));
 
    // set up the background colour stuff
    connect(m_colorPrimary, SIGNAL(changed(const QColor &)),
@@ -222,7 +226,8 @@ BGDialog::BGDialog(QWidget* parent, KConfig* _config, bool _multidesktop)
    m_slideShowRandom = eRenderer()->multiWallpaperMode();
    if (m_slideShowRandom == KBackgroundSettings::NoMultiRandom)
       m_slideShowRandom = KBackgroundSettings::Random;
-   if (m_slideShowRandom == KBackgroundSettings::NoMulti)
+   if (m_slideShowRandom == KBackgroundSettings::NoMulti ||
+       m_slideShowRandom == KBackgroundSettings::Daily)
       m_slideShowRandom = KBackgroundSettings::InOrder;
 
    // Wallpaper Position
@@ -306,6 +311,7 @@ void BGDialog::deleteScreenGroups(int desk)
 
 void BGDialog::makeReadOnly()
 {
+    m_readOnly = true;
     m_pMonitorArrangement->setEnabled( false );
     m_comboScreen->setEnabled( false );
     m_comboDesktop->setEnabled( false );
@@ -315,6 +321,8 @@ void BGDialog::makeReadOnly()
     m_radioNoPicture->setEnabled( false );
     m_radioPicture->setEnabled( false );
     m_radioSlideShow->setEnabled( false );
+    m_radioDaily->setEnabled( false );
+    m_comboDailySource->setEnabled( false );
     m_urlWallpaperBox->setEnabled( false );
     m_urlWallpaperButton->setEnabled( false );
     m_comboWallpaperPos->setEnabled( false );
@@ -359,7 +367,8 @@ void BGDialog::load( bool useDefaults )
    m_slideShowRandom = eRenderer()->multiWallpaperMode();
    if (m_slideShowRandom == KBackgroundSettings::NoMultiRandom)
       m_slideShowRandom = KBackgroundSettings::Random;
-   if (m_slideShowRandom == KBackgroundSettings::NoMulti)
+   if (m_slideShowRandom == KBackgroundSettings::NoMulti ||
+       m_slideShowRandom == KBackgroundSettings::Daily)
       m_slideShowRandom = KBackgroundSettings::InOrder;
 
    // Wallpaper Position
@@ -504,6 +513,11 @@ void BGDialog::initUI()
    }
 
    loadWallpaperFilesList();
+
+   // Sources of the picture of the day
+   m_dailySources = KNS::DailyPicture::sources();
+   for (QStringList::ConstIterator it = m_dailySources.begin(); it != m_dailySources.end(); ++it)
+      m_comboDailySource->insertItem(KNS::DailyPicture::sourceName(*it));
 
    // Wallpaper tilings: again they must match the ones from bgrender.cc
    m_comboWallpaperPos->insertItem(i18n("Centered"));
@@ -753,6 +767,18 @@ void BGDialog::updateUI()
       }
    }
 
+   // Picture of the day
+   else if (multiMode == KBackgroundSettings::Daily)
+   {
+      m_urlWallpaperBox->setEnabled(false);
+      m_urlWallpaperButton->setEnabled(false);
+      m_buttonSetupWallpapers->setEnabled(false);
+      m_comboWallpaperPos->setEnabled(true);
+      m_lblWallpaperPos->setEnabled(true);
+      m_buttonGroupBackground->setButton(
+      m_buttonGroupBackground->id(m_radioDaily) );
+   }
+
    // Slide show
    else
    {
@@ -764,6 +790,11 @@ void BGDialog::updateUI()
       m_buttonGroupBackground->setButton(
       m_buttonGroupBackground->id(m_radioSlideShow) );
    }
+
+   m_comboDailySource->setEnabled(multiMode == KBackgroundSettings::Daily &&
+                                  wallpaperMode != KBackgroundSettings::NoWallpaper);
+   int daily = m_dailySources.findIndex(r->dailySource());
+   m_comboDailySource->setCurrentItem(daily < 0 ? 0 : daily);
 
    m_comboWallpaperPos->setCurrentItem(r->wallpaperMode()-1);
 
@@ -888,6 +919,8 @@ void BGDialog::slotWallpaperTypeChanged(int i)
    KBackgroundRenderer *r = eRenderer();
    r->stop();
 
+   m_comboDailySource->setEnabled(i == m_buttonGroupBackground->id(m_radioDaily));
+
    // No picture
    if (i == m_buttonGroupBackground->id(m_radioNoPicture))  //None
    {
@@ -904,6 +937,28 @@ void BGDialog::slotWallpaperTypeChanged(int i)
          r->setMultiWallpaperMode(KBackgroundSettings::NoMultiRandom);
 
       setBlendingEnabled(false);
+   }
+
+   // Picture of the day: the picture set before stays until the first
+   // picture of the day is there
+   else if (i == m_buttonGroupBackground->id(m_radioDaily))
+   {
+      m_urlWallpaperBox->setEnabled(false);
+      m_urlWallpaperButton->setEnabled(false);
+      m_buttonSetupWallpapers->setEnabled(false);
+      m_comboWallpaperPos->setEnabled(true);
+      m_lblWallpaperPos->setEnabled(true);
+      setBlendingEnabled(true);
+
+      int source = m_comboDailySource->currentItem();
+      if (source >= 0 && source < int(m_dailySources.count()))
+         r->setDailySource(m_dailySources[source]);
+      r->setMultiWallpaperMode(KBackgroundSettings::Daily);
+      m_wallpaperPos = photoPosition(m_wallpaperPos);
+      r->setWallpaperMode(m_wallpaperPos);
+      m_comboWallpaperPos->blockSignals(true);
+      m_comboWallpaperPos->setCurrentItem(m_wallpaperPos-1);
+      m_comboWallpaperPos->blockSignals(false);
    }
 
    // Slide show
@@ -1287,11 +1342,89 @@ void BGDialog::slotGetNewStuff()
    config->writeEntry( "OcsUrl", "https://api.kde-look.org/ocs/v1/" );
    config->writeEntry( "OcsCategories", "360,296,297,298,307,299" );
    config->writeEntry( "OcsName", i18n( "KDE Store" ) );
+   // the other sources, after the store (see knewstuff/wallpapersources.h)
+   config->writeEntry( "WallpaperSources", QStringList::split( ',', "wallhaven,wikimedia,bing,apod,unsplash" ) );
    config->writeEntry( "StandardResource", "wallpaper" );
    config->sync();
 
-   KNS::DownloadDialog::open("wallpapers", i18n("Get New Wallpapers"));
+   QString picture;
+   {
+      KNS::DownloadDialog dlg( this, i18n("Get New Wallpapers") );
+      dlg.setType( "wallpapers" );
+      dlg.setInstallAndSetEnabled( !m_readOnly );
+      dlg.load();
+      dlg.exec();
+      picture = dlg.installedAndSetFile();
+   }
    loadWallpaperFilesList();
+   updateUI();
+
+   if ( !picture.isEmpty() )
+      setInstalledPicture( picture );
+}
+
+/*
+ * The placement of a photo: a mode that fills the screen with it, keeping
+ * its proportions. One of those chosen before is kept (Scaled, Centered
+ * Maxpect, Scale & Crop, Centered Auto Fit); the others are meant for
+ * small pictures and patterns (Centered, Tiled...), so a photo gets
+ * Scale & Crop: the screen filled, nothing distorted, the borders cut.
+ */
+int BGDialog::photoPosition(int position)
+{
+   switch (position)
+   {
+      case KBackgroundSettings::Scaled:
+      case KBackgroundSettings::CentredMaxpect:
+      case KBackgroundSettings::ScaleAndCrop:
+      case KBackgroundSettings::CentredAutoFit:
+         return position;
+      default:
+         return KBackgroundSettings::ScaleAndCrop;
+   }
+}
+
+/*
+ * "Install and Set" of the "Get New Wallpapers" dialog: the picture is
+ * the wallpaper of what is being configured (all screens alike, the
+ * screens spanned, or the screen selected; the desktop selected), and
+ * applied at once.
+ */
+void BGDialog::setInstalledPicture(const QString &picture)
+{
+   KBackgroundRenderer *r = eRenderer();
+   int position = photoPosition(r->wallpaperMode());
+
+   setWallpaper(picture);
+   int optionID = m_buttonGroupBackground->id(m_radioPicture);
+   m_buttonGroupBackground->setButton( optionID );
+   slotWallpaperTypeChanged( optionID );
+
+   r->stop();
+   m_wallpaperPos = position;
+   r->setWallpaperMode(position);
+   m_comboWallpaperPos->blockSignals(true);
+   m_comboWallpaperPos->setCurrentItem(position-1);
+   m_comboWallpaperPos->blockSignals(false);
+   r->start(true);
+
+   emit changed(true);
+   emit applyRequested();
+}
+
+void BGDialog::slotDailySource(int index)
+{
+   if (index < 0 || index >= int(m_dailySources.count()))
+      return;
+   KBackgroundRenderer *r = eRenderer();
+   if (r->dailySource() == m_dailySources[index])
+      return;
+   r->stop();
+   r->setDailySource(m_dailySources[index]);
+   r->start(true);
+   m_copyAllDesktops = true;
+   m_copyAllScreens = true;
+   emit changed(true);
 }
 
 void BGDialog::slotBlendMode(int mode)

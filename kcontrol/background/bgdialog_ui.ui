@@ -664,6 +664,33 @@
                         <string></string>
                     </property>
                 </widget>
+                <widget class="QRadioButton" row="3" column="0">
+                    <property name="name">
+                        <cstring>m_radioDaily</cstring>
+                    </property>
+                    <property name="text">
+                        <string>Picture of the &amp;day:</string>
+                    </property>
+                    <property name="whatsThis" stdset="0">
+                        <string>Shows a new picture every day from the chosen source. The desktop fetches it in the background once a day and keeps the last pictures; when it cannot reach the source, the current picture stays. The title, author and license of each picture are kept next to it.</string>
+                    </property>
+                </widget>
+                <widget class="KComboBox" row="3" column="1" rowspan="1" colspan="2">
+                    <property name="name">
+                        <cstring>m_comboDailySource</cstring>
+                    </property>
+                    <property name="sizePolicy">
+                        <sizepolicy>
+                            <hsizetype>5</hsizetype>
+                            <vsizetype>0</vsizetype>
+                            <horstretch>0</horstretch>
+                            <verstretch>0</verstretch>
+                        </sizepolicy>
+                    </property>
+                    <property name="whatsThis" stdset="0">
+                        <string>The source of the picture of the day. Only this source is contacted, without cookies or personal data.</string>
+                    </property>
+                </widget>
                 <widget class="KComboBox" row="1" column="1" rowspan="1" colspan="2">
                     <property name="name">
                         <cstring>m_urlWallpaperBox</cstring>
@@ -696,6 +723,7 @@
     <tabstop>m_urlWallpaperBox</tabstop>
     <tabstop>m_urlWallpaperButton</tabstop>
     <tabstop>m_buttonSetupWallpapers</tabstop>
+    <tabstop>m_comboDailySource</tabstop>
     <tabstop>m_comboWallpaperPos</tabstop>
     <tabstop>m_comboPattern</tabstop>
     <tabstop>m_colorPrimary</tabstop>

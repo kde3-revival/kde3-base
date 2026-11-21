@@ -31,6 +31,9 @@ public:
     virtual void save();
     virtual void defaults();
 
+private slots:
+    void slotApplyNow();
+
 private:
     BGDialog      *m_base;
     KConfig       *m_pConfig;

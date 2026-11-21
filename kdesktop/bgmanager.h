@@ -23,6 +23,7 @@ class KWinModule;
 class KPixmap;
 class KVirtualBGRenderer;
 class KPixmapServer;
+namespace KNS { class DailyPicture; }
 
 /**
  * Internal struct for KBackgroundManager.
@@ -83,6 +84,8 @@ private slots:
     void desktopResized();
     void clearRoot();
     void saveImages();
+    void slotCheckDaily();
+    void slotDailyFinished(const QString &picture, bool isNew, const QString &date, const QString &error);
     
 private:
     void applyCommon(bool common);
@@ -121,6 +124,10 @@ private:
     KPixmapServer *m_pPixmapServer;
     
     unsigned long m_xrootpmap;
+
+    // the picture of the day
+    KNS::DailyPicture *m_pDaily;
+    QString m_dailySource;
 };
 
 #endif // __BGManager_h_Included__
