@@ -265,10 +265,31 @@ void TEScreen::NextLine()
     The line is filled in from the right with spaces.
 */
 
+/*! The cells `from'..`to' of the cursor line are about to be cleared or
+    deleted: blank the half of a double-width character that would remain
+    outside of them (the widget would draw it two columns wide, or draw
+    the character after it so). A cell with c == 0 is the right half of
+    the character before it.
+*/
+
+void TEScreen::blankSplitWideChars(int from, int to)
+{
+  from = QMAX(0, QMIN(from, columns-1));
+  to = QMAX(0, QMIN(to, columns-1));
+  if (from > 0 && image[loc(from,cuY)].c == 0)
+  {
+    image[loc(from-1,cuY)].c = ' ';
+    image[loc(from-1,cuY)].p = 0;
+  }
+  if (to+1 < columns && image[loc(to+1,cuY)].c == 0)
+    image[loc(to+1,cuY)].c = ' ';
+}
+
 void TEScreen::eraseChars(int n)
 {
   if (n == 0) n = 1; // Default
   int p = QMAX(0,QMIN(cuX+n-1,columns-1));
+  blankSplitWideChars(cuX, p);
   clearImage(loc(cuX,cuY),loc(p,cuY),' ');
 }
 
@@ -282,6 +303,7 @@ void TEScreen::deleteChars(int n)
   if (n == 0) n = 1; // Default
   if (n > columns) n = columns - 1;
   int p = QMAX(0,QMIN(cuX+n,columns-1));
+  blankSplitWideChars(cuX, cuX+n-1);
   moveImage(loc(cuX,cuY),loc(p,cuY),loc(columns-1,cuY));
   clearImage(loc(columns-n,cuY),loc(columns-1,cuY),' ');
 }
@@ -296,6 +318,16 @@ void TEScreen::insertChars(int n)
   if (n == 0) n = 1; // Default
   int p = QMAX(0,QMIN(columns-1-n,columns-1));
   int q = QMAX(0,QMIN(cuX+n,columns-1));
+  // the cells from columns-n on fall off the line
+  if (columns-n > cuX)
+    blankSplitWideChars(columns-n, columns-1);
+  // a right half at the cursor moves away from its left half
+  int x = QMIN(cuX, columns-1);
+  if (x > 0 && image[loc(x,cuY)].c == 0)
+  {
+    blankSplitWideChars(x, x);
+    image[loc(x,cuY)].c = ' ';
+  }
   moveImage(loc(q,cuY),loc(cuX,cuY),loc(p,cuY));
   clearImage(loc(cuX,cuY),loc(q-1,cuY),' ');
 }
@@ -1010,6 +1042,7 @@ void TEScreen::moveImage(int dst, int loca, int loce)
 
 void TEScreen::clearToEndOfScreen()
 {
+  blankSplitWideChars(cuX, columns-1);
   clearImage(loc(cuX,cuY),loc(columns-1,lines-1),' ');
 }
 
@@ -1018,6 +1051,7 @@ void TEScreen::clearToEndOfScreen()
 
 void TEScreen::clearToBeginOfScreen()
 {
+  blankSplitWideChars(0, cuX);
   clearImage(loc(0,0),loc(cuX,cuY),' ');
 }
 
@@ -1049,6 +1083,7 @@ void TEScreen::helpAlign()
 
 void TEScreen::clearToEndOfLine()
 {
+  blankSplitWideChars(cuX, columns-1);
   clearImage(loc(cuX,cuY),loc(columns-1,cuY),' ');
 }
 
@@ -1057,6 +1092,7 @@ void TEScreen::clearToEndOfLine()
 
 void TEScreen::clearToBeginOfLine()
 {
+  blankSplitWideChars(0, cuX);
   clearImage(loc(0,cuY),loc(cuX,cuY),' ');
 }
 

@@ -137,6 +137,7 @@ public: // these are all `Screen' operations
     void reset();
     // Show character
     void ShowCharacter(int c);
+    void blankSplitWideChars(int from, int to);
     
     // Do composition with last shown character
     void compose(QString compose);
