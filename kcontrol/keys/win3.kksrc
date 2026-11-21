@@ -74,7 +74,8 @@ Name[zu]=Iplani lama-Window (Ngaphandle kukakhiye we-Win)
 Uses Win Modifier=false
 
 [Global Shortcuts]
-Desktop Screenshot=Ctrl+Print
+Desktop Screenshot=Shift+Print;Ctrl+Print
+Region Screenshot=Print;XF86SelectiveScreenshot
 Enable/Disable Clipboard Actions=none
 Run Command=none
 Halt Computer=none

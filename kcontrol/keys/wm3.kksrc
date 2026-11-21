@@ -64,7 +64,8 @@ Name[zh_CN]=WindowMaker (三个修饰键)
 Name[zh_TW]=WindowMaker (3 個輔助按鍵)
 
 [Global Shortcuts]
-Desktop Screenshot=Ctrl+Print
+Desktop Screenshot=Shift+Print;Ctrl+Print
+Region Screenshot=Print;XF86SelectiveScreenshot
 Enable/Disable Clipboard Actions=Alt+Ctrl+X
 Run Command=Alt+F2
 Halt Computer=none

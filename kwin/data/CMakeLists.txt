@@ -26,6 +26,7 @@ install(FILES
   kwin_focus1.upd
   kwinupdatewindowsettings.upd
   kwin_focus2.upd
+  kwin_screenshotkeys.upd
   DESTINATION ${KDE3_DATA_INSTALL_DIR}/kconf_update)
 
 install(PROGRAMS
@@ -33,4 +34,5 @@ install(PROGRAMS
   kwin3_plugin.pl
   kwin_focus1.sh
   kwin_focus2.sh
+  kwin_screenshotkeys.sh
   DESTINATION ${KDE3_DATA_INSTALL_DIR}/kconf_update)

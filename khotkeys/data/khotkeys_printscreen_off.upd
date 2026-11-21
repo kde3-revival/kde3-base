@@ -1,0 +1,7 @@
+# The Print key is KWin's now (Screenshot of an Area, in the Keyboard
+# Shortcuts); the old preset action that started KSnapshot on Print would
+# take the key from it.  It is disabled where it is still unchanged.
+Id=kde3.5-printscreen-off
+File=khotkeysrc
+Options=overwrite
+Script=khotkeys_printscreen_off.sh,sh

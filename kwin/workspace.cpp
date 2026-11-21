@@ -26,6 +26,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <qclipboard.h>
 #include <kmenubar.h>
 #include <kprocess.h>
+#include <kstandarddirs.h>
 #include <kglobalaccel.h>
 #include <dcopclient.h>
 #include <kipc.h>
@@ -1700,10 +1701,43 @@ void Workspace::sendTakeActivity( Client* c, Time timestamp, long flags )
     }
 
 
+/*
+  The screenshot shortcuts: KSnapshot takes the screenshot, saves it in the
+  Screenshots folder of the pictures folder, puts it on the clipboard and
+  says so.  Without KSnapshot (kdegraphics) only the clipboard gets the
+  window or the whole desktop.
+*/
+static bool runKSnapshot( const char* mode )
+    {
+    if( KStandardDirs::findExe( "ksnapshot" ).isEmpty())
+        return false;
+    KProcess proc;
+    proc << "ksnapshot" << mode;
+    return proc.start( KProcess::DontCare );
+    }
+
+void Workspace::slotGrabRegion()
+    {
+    if( !runKSnapshot( "--region" ))
+        grabDesktopToClipboard();
+    }
+
+void Workspace::slotGrabWindow()
+    {
+    if( !runKSnapshot( "--window" ))
+        grabWindowToClipboard();
+    }
+
+void Workspace::slotGrabDesktop()
+    {
+    if( !runKSnapshot( "--fullscreen" ))
+        grabDesktopToClipboard();
+    }
+
 /*!
   Takes a screenshot of the current window and puts it in the clipboard.
 */
-void Workspace::slotGrabWindow()
+void Workspace::grabWindowToClipboard()
     {
     if ( active_client ) 
         {
@@ -1751,13 +1785,13 @@ void Workspace::slotGrabWindow()
         cb->setPixmap( snapshot );
         }
     else
-        slotGrabDesktop();
+        grabDesktopToClipboard();
     }
 
 /*!
   Takes a screenshot of the whole desktop and puts it in the clipboard.
 */
-void Workspace::slotGrabDesktop()
+void Workspace::grabDesktopToClipboard()
     {
     QPixmap p = QPixmap::grabWindow( qt_xrootwin() );
     QClipboard *cb = QApplication::clipboard();

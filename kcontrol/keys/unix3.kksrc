@@ -75,6 +75,7 @@ Uses Win Modifier=false
 
 [Global Shortcuts]
 Desktop Screenshot=none
+Region Screenshot=none
 Enable/Disable Clipboard Actions=none
 Run Command=Alt+F2
 Halt Computer=none

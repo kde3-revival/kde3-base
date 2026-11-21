@@ -377,6 +377,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
 
         void slotKillWindow();
 
+        void slotGrabRegion();
         void slotGrabWindow();
         void slotGrabDesktop();
 
@@ -419,6 +420,8 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         bool keyPressMouseEmulation( XKeyEvent& ev );
 
     private:
+        void grabWindowToClipboard();
+        void grabDesktopToClipboard();
         void init();
         void initShortcuts();
         void readShortcuts();

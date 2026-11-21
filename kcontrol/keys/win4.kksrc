@@ -75,6 +75,7 @@ Uses Win Modifier=true
 
 [Global Shortcuts]
 Desktop Screenshot=Print
+Region Screenshot=Shift+Win+S;XF86SelectiveScreenshot
 Enable/Disable Clipboard Actions=none
 Run Command=Win+R
 Halt Computer=none

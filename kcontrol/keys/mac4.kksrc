@@ -74,6 +74,7 @@ Uses Win Modifier=true
 
 [Global Shortcuts]
 Desktop Screenshot=Ctrl+Shift+3
+Region Screenshot=none
 Enable/Disable Clipboard Actions=Alt+Ctrl+X
 Run Command=Alt+F2
 Halt Computer=none

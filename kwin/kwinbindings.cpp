@@ -151,8 +151,18 @@
 	keys->insert( "Group:Miscellaneous", i18n("Miscellaneous") );
 	DEF( I18N_NOOP("Mouse Emulation"),                     ALT+Qt::Key_F12, 0, slotMouseEmulation() );
 	DEF( I18N_NOOP("Kill Window"),                         ALT+CTRL+Qt::Key_Escape, WIN+CTRL+Qt::Key_Delete, slotKillWindow() );
+
+	// by KSnapshot: saved in the Screenshots folder of the pictures folder
+	// and copied to the clipboard (only copied when KSnapshot is missing);
+	// like GNOME: Print an area, Shift+Print all screens, Alt+Print the
+	// active window.  Some keyboards have a key for an area
+	// (XF86SelectiveScreenshot; Qt 3 has no code for it, the string names
+	// the X keysym).
+	keys->insert( "Group:Screenshots", i18n("Screenshots") );
+	DEF2( "Region Screenshot", I18N_NOOP("Screenshot of an Area"),
+	      "Print;XF86SelectiveScreenshot", "Print;XF86SelectiveScreenshot", slotGrabRegion() );
+	DEF( I18N_NOOP("Desktop Screenshot"),                  "Shift+Print;Ctrl+Print", "Shift+Print;Win+Print", slotGrabDesktop() );
 	DEF( I18N_NOOP("Window Screenshot"),                   ALT+Qt::Key_Print, ALT+Qt::Key_Print, slotGrabWindow() );
-	DEF( I18N_NOOP("Desktop Screenshot"),                  CTRL+Qt::Key_Print, WIN+Qt::Key_Print, slotGrabDesktop() );
 #ifdef IN_KWIN
         {
         KGlobalAccel* keys = disable_shortcuts_keys;

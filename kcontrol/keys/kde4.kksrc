@@ -68,7 +68,8 @@ Name[zu]=Okwendalo kwe-KDE okusetshenziselwa okhiye bokulungisa abangu-4
 Uses Win Modifier=true
 
 [Global Shortcuts]
-Desktop Screenshot=Win+Print
+Desktop Screenshot=Shift+Print;Win+Print
+Region Screenshot=Print;XF86SelectiveScreenshot
 Enable/Disable Clipboard Actions=Win+Ctrl+X
 Run Command=Win+Return;Alt+F2
 Halt Computer=none

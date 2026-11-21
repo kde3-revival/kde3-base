@@ -1,0 +1,8 @@
+# Desktop Screenshot is Shift+Print now (like GNOME), its old default stays
+# as the alternate; KDE wrote the old default into kdeglobals, which would
+# hide the new one.  Only an unchanged default gets it.
+Id=kde3.5-screenshotkeys
+File=kdeglobals
+Group=Global Shortcuts
+Options=overwrite
+Script=kwin_screenshotkeys.sh,sh
