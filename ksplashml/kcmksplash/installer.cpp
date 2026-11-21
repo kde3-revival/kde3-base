@@ -417,7 +417,7 @@ void SplashInstaller::slotAdd()
   static QString path;
   if (path.isEmpty()) path = QDir::homeDirPath();
 
-  KFileDialog dlg(path, "*.tgz *.tar.gz *.tar.bz2|" + i18n( "KSplash Theme Files" ), 0, 0, true);
+  KFileDialog dlg(path, "*.tgz *.tar.gz *.tar.bz2 *.tar.xz *.txz *.tar.zst *.tzst|" + i18n( "KSplash Theme Files" ), 0, 0, true);
   dlg.setCaption(i18n("Add Theme"));
   if (!dlg.exec())
     return;
