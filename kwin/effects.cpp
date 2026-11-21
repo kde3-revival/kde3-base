@@ -333,13 +333,14 @@ class EffectScene
             {
             wins.setAutoDelete( true );
             }
-        Win* find( Window w )
+        // (not moving the list's current item: called while iterating it)
+        Win* find( Window w ) const
             {
-            for( Win* win = wins.first();
-                 win != NULL;
-                 win = wins.next())
-                if( win->id == w )
-                    return win;
+            for( QPtrListIterator< Win > it( wins );
+                 it.current() != NULL;
+                 ++it )
+                if( it.current()->id == w )
+                    return it.current();
             return NULL;
             }
         QPtrList< Win > wins;
@@ -1282,6 +1283,7 @@ bool Effects::buildScene()
         }
     if( out != None && ( out_below || old_limit != scene->limit ))
         placeWindow();
+
     return true;
     }
 
@@ -1738,10 +1740,11 @@ void Effects::renderFrame( bool immediate )
          anim = anims.next())
         if( anim->use_below && anim->below == None )
             drawAnim( anim, dst );
-    for( EffectScene::Win* win = scene->wins.first();
-         win != NULL;
-         win = scene->wins.next())
+    for( QPtrListIterator< EffectScene::Win > wit( scene->wins );
+         wit.current() != NULL;
+         ++wit )
         {
+        EffectScene::Win* win = wit.current();
         EffectAnim* in_place = NULL;
         bool animated = false;
         for( EffectAnim* anim = anims.first();
