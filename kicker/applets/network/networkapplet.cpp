@@ -243,6 +243,16 @@ void NetworkApplet::setIcon(const QString &key, const QImage &image)
     m_button->setImage(image);
 }
 
+// Lines for the tooltip and the passive popups, which take text with
+// something like a tag for rich text: an SSID is anything a network near
+// by calls itself.
+static QString richText(const QString &plain, bool wrap)
+{
+    QString text = QStyleSheet::escape(plain);
+    text.replace('\n', "<br>");
+    return wrap ? "<qt>" + text + "</qt>" : "<qt><nobr>" + text + "</nobr></qt>";
+}
+
 static QImage themeIcon(const char *name)
 {
     return KGlobal::iconLoader()
@@ -371,7 +381,7 @@ void NetworkApplet::updateState()
     {
         m_tip = tipText;
         QToolTip::remove(m_button);
-        QToolTip::add(m_button, tipText);
+        QToolTip::add(m_button, richText(tipText, false));
     }
 
     m_popup->setState(s, m_backend->networks(), m_backend->isScanning(), airplane,
@@ -756,7 +766,7 @@ void NetworkApplet::notify(const QString &caption, const QString &text,
     {
         return;
     }
-    KPassivePopup::message(caption, text, icon, this);
+    KPassivePopup::message(caption, richText(text, true), icon, this);
 }
 
 void NetworkApplet::connected(const QString &name, bool wifi)
@@ -815,7 +825,7 @@ void NetworkApplet::error(const QString &message)
         return;
     }
     // Shown even with the notifications off: the user asked for something.
-    KPassivePopup::message(i18n("Network"), message, DesktopIcon("messagebox_warning", 32),
+    KPassivePopup::message(i18n("Network"), richText(message, true), DesktopIcon("messagebox_warning", 32),
                            this);
 }
 
