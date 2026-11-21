@@ -160,6 +160,9 @@
 /* Define if the KWin overview can use XInput 2.3, XFixes 5 barriers and RandR 1.5 monitors */
 #cmakedefine KWIN_OVERVIEW_XI2 1
 
+/* KWin compositor: the GLES 3 backend */
+#cmakedefine KWIN_HAVE_GLES 1
+
 /* ---- kdesktop ----------------------------------------------------- */
 
 /* Define if you have the XScreenSaver extension */

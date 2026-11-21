@@ -31,6 +31,9 @@ kde3_add_kdeinit_executable(kwin
     overview.cpp
     compositing.cpp
     effects.cpp
+    render.cpp
+    render_xrender.cpp
+    shadow.cpp
   MOC
     client.h
     compositing.h
@@ -47,7 +50,11 @@ kde3_add_kdeinit_executable(kwin
     KDE3::kdeui
     kdecorations
     ${LIB_KWIN_OVERVIEW}
+    ${LIB_KWIN_GLES}
 )
+if(KWIN_HAVE_GLES)
+  target_sources(kdeinit_kwin PRIVATE render_gles.cpp)
+endif()
 
 install(FILES
   KWinInterface.h
@@ -70,6 +77,10 @@ add_subdirectory(pics)
 add_subdirectory(clients)
 add_subdirectory(oldheaders)
 add_subdirectory(data)
+option(KWIN_COMPOSITOR_TESTS "Build the compositor benchmark (kwin/tests)" OFF)
+if(KWIN_COMPOSITOR_TESTS)
+  add_subdirectory(tests)
+endif()
 if(KDE3_BUILD_KOMPMGR)
   add_subdirectory(kompmgr)
 endif()

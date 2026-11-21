@@ -339,6 +339,18 @@ if(KDE3_WITH_COMPOSITE AND X11_Xcomposite_FOUND AND X11_Xdamage_FOUND
   endif()
 endif()
 
+# the GLES 3 backend of the KWin compositor: EGL on GBM, the buffers shared
+# with the X server as DMA-BUFs through DRI3 (else the compositor uses XRender)
+set(LIB_KWIN_GLES "")
+if(HAVE_XDAMAGE AND X11_Xrender_FOUND)
+  pkg_check_modules(KWIN_GLES QUIET IMPORTED_TARGET
+    egl glesv2 gbm>=21.3 libdrm xcb xcb-dri3>=1.13 xcb-sync x11-xcb xshmfence)
+  if(KWIN_GLES_FOUND)
+    set(KWIN_HAVE_GLES 1)
+    set(LIB_KWIN_GLES PkgConfig::KWIN_GLES)
+  endif()
+endif()
+
 # ---- ksysguard (ksysguard/configure.in.in, ksysguardd/configure.in.in) ---
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(KSYSGUARDD_UNAME Linux)
@@ -916,6 +928,7 @@ foreach(_what
     "HAVE_XDAMAGE:KDE3_WITH_COMPOSITE:Xcomposite, Xdamage and Xfixes (window contents in the KWin overview)"
     "HAVE_XPRESENT:-:Xpresent (tear-free KWin overview)"
     "KWIN_OVERVIEW_XI2:-:Xi 1.7 and Xrandr 1.5 (KWin overview: Super key, hot corner of the primary monitor)"
+    "KWIN_HAVE_GLES:-:EGL, GLESv2, GBM, libdrm, xcb-dri3, xcb-sync, xshmfence (GPU compositing in KWin; else XRender)"
     "HAVE_XINERAMA:KDE3_WITH_XINERAMA:Xinerama (ksplashsimple)"
     "HAVE_DPMS:KDE3_WITH_DPMS:DPMS (power saving)"
     "HAVE_LOGIND_SLEEP:KDEBASE_LOGIND_SLEEP:Sleep and hibernate in the logout dialog (GIO, systemd-logind)"
