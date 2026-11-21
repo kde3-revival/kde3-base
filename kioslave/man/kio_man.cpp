@@ -482,16 +482,14 @@ void MANProtocol::get(const KURL& url )
     {
        pageFound=false;
        //check for the case that there is foo.1 and foo.1.gz found:
-       // ### TODO make it more generic (other extensions)
-       if ((foundPages.count()==2) &&
-           (((foundPages[0]+".gz") == foundPages[1]) ||
-            (foundPages[0] == (foundPages[1]+".gz")) ||
-            ((foundPages[0]+".xz") == foundPages[1]) ||
-            (foundPages[0] == (foundPages[1]+".xz")) ||
-            ((foundPages[0]+".zst") == foundPages[1]) ||
-            (foundPages[0] == (foundPages[1]+".zst"))))
-          pageFound=true;
-       else
+       // (with any compression kio_man reads)
+       static const char * const compressed[] = { ".gz", ".bz2", ".xz", ".zst", ".lzma", ".lz4", 0 };
+       if (foundPages.count()==2)
+          for (int i = 0; compressed[i]; ++i)
+             if (((foundPages[0]+compressed[i]) == foundPages[1]) ||
+                 (foundPages[0] == (foundPages[1]+compressed[i])))
+                pageFound=true;
+       if (!pageFound)
           outputMatchingPages(foundPages);
     }
     //yes, we found exactly one man page
