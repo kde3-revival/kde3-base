@@ -232,18 +232,19 @@ void TEmuVt102::reset()
 
 void TEmuVt102::resetToken()
 {
-  ppos = 0; argc = 0; argv[0] = 0; argv[1] = 0;
+  ppos = 0; argc = 0; argv[0] = 0; argv[1] = 0; argsub[0] = false;
 }
 
 void TEmuVt102::addDigit(int dig)
 {
-  argv[argc] = 10*argv[argc] + dig;
+  argv[argc] = QMIN(10*argv[argc] + dig, 0xffff);
 }
 
-void TEmuVt102::addArgument()
+void TEmuVt102::addArgument(bool sub)
 {
   argc = QMIN(argc+1,MAXARGS-1);
   argv[argc] = 0;
+  argsub[argc] = sub;
 }
 
 void TEmuVt102::pushToToken(int cc)
@@ -272,7 +273,7 @@ void TEmuVt102::initTokenizer()
   for(s = (UINT8*)"t"; *s; s++) tbl[*s] |= CPS;
   for(s = (UINT8*)"0123456789"        ; *s; s++) tbl[*s] |= DIG;
   for(s = (UINT8*)"()+*%"             ; *s; s++) tbl[*s] |= SCS;
-  for(s = (UINT8*)"()+*#[]%"          ; *s; s++) tbl[*s] |= GRP;
+  for(s = (UINT8*)"()+*#[]%P_^X"      ; *s; s++) tbl[*s] |= GRP;
   resetToken();
 }
 
@@ -302,6 +303,9 @@ void TEmuVt102::initTokenizer()
 #define egt(     ) (p >=  3  && s[2] == '>'                              )
 #define Xpe        (ppos>=2  && pbuf[1] == ']'                           )
 #define Xte        (Xpe                        &&     cc           ==  7 )
+// DCS, APC, PM and SOS strings: <ESC> one of `P_^X' ... <ESC>'\\'
+#define Xstr       (ppos>=2  && (pbuf[1] == 'P' || pbuf[1] == '_' || \
+                                 pbuf[1] == '^' || pbuf[1] == 'X')        )
 #define ces(C)     (            cc < 256 &&    (tbl[  cc  ] & (C)) == (C) && !Xte)
 
 #define ESC 27
@@ -318,6 +322,10 @@ void TEmuVt102::onRcvChar(int cc)
     // This means, they do neither a resetToken nor a pushToToken. Some of them, do
     // of course. Guess this originates from a weakly layered handling of the X-on
     // X-off protocol, which comes really below this level.
+    // Strings end with ST (<ESC>'\\'); the other controls inside them
+    // are ignored. An OSC may also end with BEL (see Xte).
+    if (cc == ESC && Xpe) XtermHack();
+    if (Xstr && cc != CNTL('X') && cc != CNTL('Z') && cc != ESC) return;
     if (cc == CNTL('X') || cc == CNTL('Z') || cc == ESC) resetToken(); //VT100: CAN or SUB
     if (cc != ESC)    { tau( TY_CTL(cc+'@' ),    0,   0); return; }
   }
@@ -334,13 +342,23 @@ void TEmuVt102::onRcvChar(int cc)
     if (les(2,1,GRP)) {                                                       return; }
     if (Xte         ) { XtermHack();                            resetToken(); return; }
     if (Xpe         ) {                                                       return; }
+    if (Xstr        ) { /* IGNORED: DCS, APC, PM, SOS strings */              return; }
     if (lec(3,2,'?')) {                                                       return; }
     if (lec(3,2,'>')) {                                                       return; }
     if (lec(3,2,'!')) {                                                       return; }
+    if (lec(3,2,'<')) {                                                       return; }
+    if (lec(3,2,'=')) {                                                       return; }
     if (lun(       )) { tau( TY_CHR(), applyCharset(cc), 0); resetToken(); return; }
     if (lec(2,0,ESC)) { tau( TY_ESC(s[1]),    0,   0);       resetToken(); return; }
     if (les(3,1,SCS)) { tau( TY_ESC_CS(s[1],s[2]),    0,   0);  resetToken(); return; }
     if (lec(3,1,'#')) { tau( TY_ESC_DE(s[2]),    0,   0);       resetToken(); return; }
+    if (p >= 3 && s[1] == '[' && (s[2] == '<' || s[2] == '=' || csiHasIntermediate()))
+    { // CSI with the private markers `<' or `=' or with intermediate bytes
+      if (cc >= 0x40 && cc <= 0x7e) { csiExtended(cc);          resetToken(); return; }
+      if (ees(    DIG)) { addDigit(cc-'0');                                     return; }
+      if (eec(    ';')) { addArgument();                                        return; }
+                                                                                return;
+    }
     if (eps(    CPN)) { tau( TY_CSI_PN(cc), argv[0],argv[1]);   resetToken(); return; }
 
 // resize = \e[8;<row>;<col>t
@@ -349,9 +367,28 @@ void TEmuVt102::onRcvChar(int cc)
     if (epe(       )) { tau( TY_CSI_PE(cc),      0,   0);       resetToken(); return; }
     if (ees(    DIG)) { addDigit(cc-'0');                                     return; }
     if (eec(    ';')) { addArgument();                                        return; }
+    if (eec(    ':')) { addArgument(true);                                    return; }
     for (i=0;i<=argc;i++)
+    {
+    // number of `:' separated sub-parameters following argv[i] (ITU T.416)
+    int nsub = 0;
+    while (i+nsub < argc && argsub[i+nsub+1]) nsub++;
     if ( epp(     ))  { tau( TY_CSI_PR(cc,argv[i]),    0,   0); }
     else if(egt(    ))   { tau( TY_CSI_PG(cc     ),    0,   0); } // spec. case for ESC]>0c or ESC]>c
+    else if (cc == 'm' && nsub && (argv[i] == 38 || argv[i] == 48))
+    { // ESC[ ... 38:2:[<colour space>:]<red>:<green>:<blue> ... m -or- ESC[ ... 38:5:<index> ... m
+      if (argv[i+1] == 2 && nsub >= 4)
+      {
+        int c = i + nsub - 2;
+        tau( TY_CSI_PS(cc, argv[i]), CO_RGB, (argv[c] << 16) | (argv[c+1] << 8) | argv[c+2]);
+      }
+      else if (argv[i+1] == 5 && nsub >= 2)
+        tau( TY_CSI_PS(cc, argv[i]), CO_256, argv[i+2]);
+    }
+    else if (cc == 'm' && nsub && argv[i] == 4)
+    { // ESC[ 4:0 m: no underline, 4:<style>: some kind of underline
+      tau( TY_CSI_PS(cc, argv[i+1] ? 4 : 24), 0, 0);
+    }
     else if (cc == 'm' && argc - i >= 4 && (argv[i] == 38 || argv[i] == 48) && argv[i+1] == 2)
     { // ESC[ ... 48;2;<red>;<green>;<blue> ... m -or- ESC[ ... 38;2;<red>;<green>;<blue> ... m
       i += 2;
@@ -364,6 +401,8 @@ void TEmuVt102::onRcvChar(int cc)
       tau( TY_CSI_PS(cc, argv[i-2]), CO_256, argv[i]);
     }
     else              { tau( TY_CSI_PS(cc,argv[i]),    0,   0); }
+    i += nsub; // sub-parameters of other attributes are ignored
+    }
     resetToken();
   }
   else // mode VT52
@@ -377,11 +416,30 @@ void TEmuVt102::onRcvChar(int cc)
   }
 }
 
+bool TEmuVt102::csiHasIntermediate()
+{
+  // pbuf[2] == '!' is DECSTR (ESC[!p), handled by the normal tokenizer.
+  for (int i = (pbuf[2] == '!') ? 3 : 2; i < ppos; i++)
+    if (pbuf[i] >= 0x20 && pbuf[i] <= 0x2f)
+      return true;
+  return false;
+}
+
+/* Control sequences the table driven tokenizer cannot express: those with
+   intermediate bytes (ESC[ Ps SP q, ESC[ ? Ps $ p, ...) and those with the
+   private markers `<' and `='. Unknown ones are consumed silently, so
+   that their final byte does not end up on the screen. */
+
+void TEmuVt102::csiExtended(int /*cc*/)
+{
+}
+
 void TEmuVt102::XtermHack()
 { int i,arg = 0;
-  for (i = 2; i < ppos && '0'<=pbuf[i] && pbuf[i]<'9' ; i++)
+  for (i = 2; i < ppos && '0'<=pbuf[i] && pbuf[i]<='9' ; i++)
     arg = 10*arg + (pbuf[i]-'0');
   if (pbuf[i] != ';') { ReportErrorToken(); return; }
+  if (arg == 8) return; // IGNORED: OSC 8 hyperlink, the text follows as usual
   QString unistr;
   for (int j = 0; j < ppos-i-2; j++)
   {
@@ -501,6 +559,7 @@ switch( N )
     case TY_ESC('M'      ) : scr->reverseIndex         (          ); break; //VT100
     case TY_ESC('Z'      ) :      reportTerminalType   (          ); break;
     case TY_ESC('c'      ) :      reset                (          ); break;
+    case TY_ESC('\\'     ) : /* ST: end of an ignored string       */ break;
 
     case TY_ESC('n'      ) :      useCharset           (         2); break;
     case TY_ESC('o'      ) :      useCharset           (         3); break;

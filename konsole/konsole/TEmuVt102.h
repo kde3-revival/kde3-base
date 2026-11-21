@@ -101,8 +101,9 @@ private:
   int ppos;
 #define MAXARGS 15
   void addDigit(int dig);
-  void addArgument();
+  void addArgument(bool sub = false);
   int argv[MAXARGS];
+  bool argsub[MAXARGS]; // argv[i] is a `:' separated sub-parameter
   int argc;
   void initTokenizer();
   int tbl[256];
@@ -112,6 +113,8 @@ private:
 
   void tau(int code, int p, int q);
   void XtermHack();
+  bool csiHasIntermediate();
+  void csiExtended(int cc);
 
   //
 
