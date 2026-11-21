@@ -537,6 +537,106 @@ static void testValidate()
     CHECK( !validateLayout( l ) );
 }
 
+static Layout row( int n, int w, int h )
+{
+    Layout l;
+    for ( int i = 0; i < n; ++i ) {
+	OutputSetting s;
+	s.key = s.name = QString( "M%1" ).arg( i );
+	s.enabled = true;
+	s.width = w; s.height = h;
+	s.x = i * w;
+	s.primary = ( i == 0 );
+	l.append( s );
+    }
+    return l;
+}
+
+static void testEditing()
+{
+    // dropped somewhere above the right half of the left monitor: on top
+    // of it, aligned to its right edge (within the threshold)
+    Layout l = row( 2, 1920, 1080 );
+    l[1].x = 10; l[1].y = -900;
+    snapMonitor( l, 1, 50 );
+    CHECK( l[1].x == 0 && l[1].y == -1080 );
+    normalizeLayout( l );
+    CHECK( l[0].x == 0 && l[0].y == 1080 && l[1].y == 0 );
+    CHECK( validateLayout( l ) );
+
+    // dropped onto the other one: moved to the nearest free side (below)
+    l = row( 2, 1920, 1080 );
+    l[1].x = 300; l[1].y = 20;
+    snapMonitor( l, 1, 50 );
+    CHECK( validateLayout( l ) );
+    CHECK( l[1].x == 300 && l[1].y == 1080 );
+    // more to the right: at the right side, top aligned
+    l[1].x = 1500; l[1].y = 20;
+    snapMonitor( l, 1, 50 );
+    CHECK( l[1].x == 1920 && l[1].y == 0 );
+
+    // dropped left of it, a bit lower: stays lower (no alignment)
+    l = row( 2, 1920, 1080 );
+    l[1].x = -2500; l[1].y = 400;
+    snapMonitor( l, 1, 50 );
+    CHECK( l[1].x == -1920 && l[1].y == 400 );
+
+    // under the second one, nearly at the left edge of the first one:
+    // aligned with that edge
+    l = row( 3, 2560, 1440 );
+    l[0].width = 1920; l[0].height = 1200;
+    l[1].x = 1920; l[2].x = 1920 + 2560;
+    l[2].x = -136; l[2].y = 1500;
+    snapMonitor( l, 2, 300 );
+    CHECK( l[2].x == 0 && l[2].y == 1440 );
+    CHECK( validateLayout( l ) );
+
+    // far away: still edge to edge
+    l = row( 3, 1000, 800 );
+    l[2].x = 5000; l[2].y = 3000;
+    snapMonitor( l, 2, 30 );
+    CHECK( validateLayout( l ) );
+    bool touches = false;
+    for ( int i = 0; i < 2; ++i ) {
+	QRect a = monitorRect( l[i] ), b = monitorRect( l[2] );
+	if ( a.x() + a.width() == b.x() || b.x() + b.width() == a.x() ||
+	     a.y() + a.height() == b.y() || b.y() + b.height() == a.y() )
+	    touches = true;
+    }
+    CHECK( touches );
+
+    // the middle one gets bigger: the right one moves along
+    l = row( 3, 1000, 800 );
+    QRect before = monitorRect( l[1] );
+    l[1].width = 1600; l[1].height = 900;
+    adjustNeighbours( l, 1, before.x(), before.y(), before.width(), before.height() );
+    CHECK( l[2].x == 2600 && l[0].x == 0 );
+    CHECK( validateLayout( l ) );
+    // rotated: narrower
+    before = monitorRect( l[1] );
+    l[1].rotation = Rotate90;
+    adjustNeighbours( l, 1, before.x(), before.y(), before.width(), before.height() );
+    CHECK( l[2].x == 1000 + 900 );
+    // switched off: the gap closes
+    before = monitorRect( l[1] );
+    l[1].enabled = false;
+    adjustNeighbours( l, 1, before.x(), before.y(), before.width(), before.height() );
+    CHECK( l[2].x == 1000 );
+    // on again: at the right
+    l[1].enabled = true;
+    placeAtRight( l, 1 );
+    CHECK( l[1].x == 2000 && l[1].y == 0 );
+    CHECK( validateLayout( l ) );
+
+    // a stack: the lower one follows the upper one's bottom edge
+    l = row( 2, 1000, 800 );
+    l[1].x = 0; l[1].y = 800;
+    before = monitorRect( l[0] );
+    l[0].height = 1000;
+    adjustNeighbours( l, 0, before.x(), before.y(), before.width(), before.height() );
+    CHECK( l[1].y == 1000 );
+}
+
 static void testProfiles()
 {
     KTempFile tmp;
@@ -600,6 +700,7 @@ int main( int argc, char **argv )
     testCrtcMove();
     testModes();
     testValidate();
+    testEditing();
     testProfiles();
 
     printf( "=== %d failure(s)\n", failures );

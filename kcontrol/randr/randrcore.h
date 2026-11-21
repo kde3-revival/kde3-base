@@ -18,6 +18,7 @@
 #define RANDRCORE_H
 
 #include <qmap.h>
+#include <qrect.h>
 #include <qstring.h>
 #include <qstringlist.h>
 #include <qvaluelist.h>
@@ -178,6 +179,26 @@ Layout defaultLayout( const ScreenState &state );
 
 // moves the layout so that its top left corner is 0,0
 void normalizeLayout( Layout &layout );
+
+// after the size of monitor index changed from before (its rotated
+// rectangle; empty if it was off): the monitors that were at its right
+// or below it move with its right or bottom edge, so that monitors
+// side by side stay side by side
+void adjustNeighbours( Layout &layout, int index, int beforeX, int beforeY,
+		       int beforeW, int beforeH );
+
+// puts the enabled monitor index to the right of the other enabled ones,
+// top aligned
+void placeAtRight( Layout &layout, int index );
+
+// the rectangle of an enabled monitor (its rotated size)
+QRect monitorRect( const OutputSetting &s );
+
+// places the enabled monitor index next to the others, as close as
+// possible to where it is now: edge to edge with one of them, without
+// overlapping any, its other edges aligned with that one's when they
+// are closer than threshold (layout pixels)
+void snapMonitor( Layout &layout, int index, int threshold );
 
 // checks: at least one enabled output, no overlaps; message on failure
 bool validateLayout( const Layout &layout, QString *error = 0 );

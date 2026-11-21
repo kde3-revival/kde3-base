@@ -43,50 +43,39 @@ kde3_add_executable(randrtest NO_INSTALL
 )
 add_test(NAME randrtest COMMAND randrtest)
 
-kde3_add_library(randrinternal OBJECT
+# the monitor canvas of the control module
+kde3_add_library(randrcanvas STATIC
   SOURCES
-    ktimerdialog.cpp
-    randr.cpp
+    monitorcanvas.cpp
   MOC
-    ktimerdialog.h
-    randr.h
+    monitorcanvas.h
   LINK
+    randrcore
     KDE3::kdeui
-    KDE3::kio
-    KDE3::kutils
 )
 
+# the canvas alone, to try by hand
+kde3_add_executable(canvastest NO_INSTALL
+  SOURCES
+    tests/canvastest.cpp
+  MOC
+    tests/canvastest.cpp
+  LINK
+    randrcanvas
+)
+
+# the control module (Peripherals, Display, Monitors)
 kde3_add_module(kcm_randr
   SOURCES
-    krandrmodule.cpp
+    displaymodule.cpp
+    ktimerdialog.cpp
   MOC
-    krandrmodule.h
+    displaymodule.h
+    ktimerdialog.h
   LINK
-    randrinternal
+    randrcanvas
     KDE3::kdeui
-    ${LIB_XRANDR}
 )
-
-kde3_add_executable(krandrtray
-  SOURCES
-    main.cpp
-    krandrtray.cpp
-    krandrapp.cpp
-    krandrpassivepopup.cpp
-  MOC
-    krandrapp.h
-    krandrpassivepopup.h
-    krandrtray.h
-  LINK
-    randrinternal
-    KDE3::kio
-    KDE3::kutils
-    ${LIB_XRANDR}
-)
-
-install(FILES
-  krandrtray.desktop
-  DESTINATION ${KDE3_XDG_APPS_INSTALL_DIR})
 
 install(FILES
   randr.desktop

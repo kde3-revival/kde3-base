@@ -404,6 +404,169 @@ void normalizeLayout( Layout &layout )
     }
 }
 
+void adjustNeighbours( Layout &layout, int index, int bx, int by, int bw, int bh )
+{
+    if ( index < 0 || index >= (int) layout.count() )
+	return;
+    int w = 0, h = 0;
+    const OutputSetting &s = layout[index];
+    if ( s.enabled )
+	settingSize( s, w, h );
+    // without a previous rectangle the monitor was off: nothing moves
+    if ( bw <= 0 || bh <= 0 )
+	return;
+    int dx = s.enabled ? ( s.x + w ) - ( bx + bw ) : -bw;
+    int dy = s.enabled ? ( s.y + h ) - ( by + bh ) : -bh;
+    for ( int i = 0; i < (int) layout.count(); ++i ) {
+	OutputSetting &o = layout[i];
+	if ( i == index || !o.enabled )
+	    continue;
+	int ow, oh;
+	settingSize( o, ow, oh );
+	// right of it, sharing some rows
+	if ( dx && o.x >= bx + bw && o.y < by + bh && o.y + oh > by )
+	    o.x += dx;
+	// below it, sharing some columns
+	else if ( dy && o.y >= by + bh && o.x < bx + bw && o.x + ow > bx )
+	    o.y += dy;
+    }
+}
+
+void placeAtRight( Layout &layout, int index )
+{
+    if ( index < 0 || index >= (int) layout.count() )
+	return;
+    bool any = false;
+    int right = 0, top = 0;
+    for ( int i = 0; i < (int) layout.count(); ++i ) {
+	const OutputSetting &o = layout[i];
+	if ( i == index || !o.enabled )
+	    continue;
+	int w, h;
+	settingSize( o, w, h );
+	if ( !any || o.x + w > right )
+	    right = o.x + w;
+	if ( !any || o.y < top )
+	    top = o.y;
+	any = true;
+    }
+    layout[index].x = any ? right : 0;
+    layout[index].y = any ? top : 0;
+}
+
+QRect monitorRect( const OutputSetting &s )
+{
+    int w, h;
+    settingSize( s, w, h );
+    return QRect( s.x, s.y, QMAX( w, 1 ), QMAX( h, 1 ) );
+}
+
+// --- snapping ----------------------------------------------------------------
+
+static bool overlapsOthers( const Layout &layout, int index, const QRect &r )
+{
+    for ( int j = 0; j < (int) layout.count(); ++j ) {
+	if ( j == index || !layout[j].enabled )
+	    continue;
+	if ( monitorRect( layout[j] ).intersects( r ) )
+	    return true;
+    }
+    return false;
+}
+
+static int clampInt( int v, int lo, int hi )
+{
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+// along an edge: the position closest to v that keeps some common edge
+// with the other monitor (oStart, oSize), aligned with the start or end
+// of any monitor (edges: their starts and ends on this axis) when one
+// is closer than threshold
+static int alongEdge( int v, int size, int oStart, int oSize,
+		      const QValueList<int> &edges, int threshold )
+{
+    int lo = oStart - size + 1, hi = oStart + oSize - 1;
+    int p = clampInt( v, lo, hi );
+    int best = p, bestDist = threshold + 1;
+    for ( QValueList<int>::ConstIterator it = edges.begin(); it != edges.end(); ++it ) {
+	// start at the edge, or end at it
+	int c[2] = { *it, *it - size };
+	for ( int k = 0; k < 2; ++k ) {
+	    if ( c[k] < lo || c[k] > hi )
+		continue;
+	    int d = abs( c[k] - p );
+	    if ( d < bestDist ) {
+		best = c[k];
+		bestDist = d;
+	    }
+	}
+    }
+    return best;
+}
+
+void snapMonitor( Layout &layout, int index, int threshold )
+{
+    if ( index < 0 || index >= (int) layout.count() || !layout[index].enabled )
+	return;
+    OutputSetting &s = layout[index];
+    QRect r = monitorRect( s );
+    int w = r.width(), h = r.height();
+
+    QValueList<int> xEdges, yEdges;
+    for ( int j = 0; j < (int) layout.count(); ++j ) {
+	if ( j == index || !layout[j].enabled )
+	    continue;
+	QRect o = monitorRect( layout[j] );
+	xEdges << o.x() << o.x() + o.width();
+	yEdges << o.y() << o.y() + o.height();
+    }
+
+    bool found = false;
+    QPoint best;
+    long bestDist = 0;
+    bool others = false;
+    for ( int j = 0; j < (int) layout.count(); ++j ) {
+	if ( j == index || !layout[j].enabled )
+	    continue;
+	others = true;
+	QRect o = monitorRect( layout[j] );
+	QPoint cand[4];
+	int ay = alongEdge( r.y(), h, o.y(), o.height(), yEdges, threshold );
+	int ax = alongEdge( r.x(), w, o.x(), o.width(), xEdges, threshold );
+	cand[0] = QPoint( o.x() + o.width(), ay );
+	cand[1] = QPoint( o.x() - w, ay );
+	cand[2] = QPoint( ax, o.y() + o.height() );
+	cand[3] = QPoint( ax, o.y() - h );
+	for ( int c = 0; c < 4; ++c ) {
+	    QRect nr( cand[c], QSize( w, h ) );
+	    if ( overlapsOthers( layout, index, nr ) )
+		continue;
+	    long dist = labs( (long) cand[c].x() - r.x() ) + labs( (long) cand[c].y() - r.y() );
+	    if ( !found || dist < bestDist ) {
+		found = true;
+		best = cand[c];
+		bestDist = dist;
+	    }
+	}
+    }
+    if ( !others ) {
+	s.x = 0;
+	s.y = 0;
+	return;
+    }
+    if ( !found ) {
+	// all sides taken: to the right of everything
+	QRect bounds;
+	for ( int j = 0; j < (int) layout.count(); ++j )
+	    if ( j != index && layout[j].enabled )
+		bounds |= monitorRect( layout[j] );
+	best = QPoint( bounds.x() + bounds.width(), bounds.y() );
+    }
+    s.x = best.x();
+    s.y = best.y();
+}
+
 bool validateLayout( const Layout &layout, QString *error )
 {
     QValueList<QRect> rects;

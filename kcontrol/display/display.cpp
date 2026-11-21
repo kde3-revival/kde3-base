@@ -36,7 +36,7 @@ KCMDisplay::KCMDisplay( QWidget *parent, const char *name, const QStringList& )
 {
   m_tabs = new QTabWidget( this );
 
-  addTab( "randr", i18n( "Size && Orientation" ) );
+  addTab( "randr", i18n( "Monitors" ) );
   addTab( "nvidiadisplay", i18n( "Graphics Adaptor" ) );
   addTab( "nvidia3d", i18n( "3D Options" ) );
   addTab( "kgamma", i18n( "Monitor Gamma" ) );
@@ -78,9 +78,17 @@ void KCMDisplay::load()
 
 void KCMDisplay::save()
 {
+  // a module that is not saved after all (a display change that was
+  // reverted) says so again while it saves
   for (QMap<KCModule*, bool>::Iterator it = m_modules.begin(); it != m_modules.end(); ++it)
-    if (it.data())
+    if (it.data()) {
+      it.data() = false;
       it.key()->save();
+    }
+  m_changed = false;
+  for (QMap<KCModule*, bool>::ConstIterator it = m_modules.begin(); it != m_modules.end(); ++it)
+    if (it.data())
+      m_changed = true;
 }
 
 void KCMDisplay::moduleChanged( bool isChanged )
