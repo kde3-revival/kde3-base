@@ -443,6 +443,7 @@ void TEScreen::resizeImage(int new_lines, int new_columns)
     for (int x = 0; x < cpy_columns; x++)
     {
       newimg[y*new_columns+x].c = image[loc(x,y)].c;
+      newimg[y*new_columns+x].p = image[loc(x,y)].p;
       newimg[y*new_columns+x].f = image[loc(x,y)].f;
       newimg[y*new_columns+x].b = image[loc(x,y)].b;
       newimg[y*new_columns+x].r = image[loc(x,y)].r;
@@ -649,7 +650,7 @@ void TEScreen::clear()
 void TEScreen::BackSpace()
 {
   cuX = QMAX(0,cuX-1);
-  if (BS_CLEARS) image[loc(cuX,cuY)].c = ' ';
+  if (BS_CLEARS) { image[loc(cuX,cuY)].c = ' '; image[loc(cuX,cuY)].p = 0; }
 }
 
 /*!
@@ -740,12 +741,6 @@ void TEScreen::ShowCharacter(int c)
   if (w <= 0)
      return;
 
-  // A cell holds one UTF-16 unit only: show characters above U+FFFF
-  // (emoji, supplementary CJK, ...) as a replacement character that
-  // takes up their width, so the rest of the line stays aligned.
-  if (c > 0xffff)
-     c = QChar::replacement.unicode();
-
   if (cuX+w > columns) {
     if (getMode(MODE_Wrap)) {
       line_wrapped[cuY]=true;
@@ -765,11 +760,13 @@ void TEScreen::ShowCharacter(int c)
   // would draw the remaining half (or the new character) two columns
   // wide. A cell with c == 0 is the right half of the character before.
   if (cuX > 0 && image[i].c == 0)
-    image[i-1].c = ' ';
+    { image[i-1].c = ' '; image[i-1].p = 0; }
   if (cuX+w < columns && image[i+w].c == 0)
     image[i+w].c = ' ';
 
-  image[i].c = c;
+  // Characters above U+FFFF (emoji, supplementary CJK, ...) keep their
+  // plane in the cell; the widget draws them as U+FFFD of their width.
+  image[i].setUcs(c);
   image[i].f = ef_fg;
   image[i].b = ef_bg;
   image[i].r = ef_re;
@@ -782,6 +779,7 @@ void TEScreen::ShowCharacter(int c)
   {
      i++;
      image[i].c = 0;
+     image[i].p = 0;
      image[i].f = ef_fg;
      image[i].b = ef_bg;
      image[i].r = ef_re;
@@ -791,7 +789,7 @@ void TEScreen::ShowCharacter(int c)
 
 void TEScreen::compose(QString compose)
 {
-  if (lastPos == -1)
+  if (lastPos == -1 || image[lastPos].p)
      return;
      
   QChar c(image[lastPos].c);
@@ -934,6 +932,7 @@ void TEScreen::clearImage(int loca, int loce, char c)
     // Use the current colors but the default rendition
     // Check with: echo -e '\033[41;33;07m\033[2Khello world\033[00m'
     image[i].c = c;
+    image[i].p = 0;
     image[i].f = cu_fg;
     image[i].b = cu_bg;
     image[i].r = DEFAULT_RENDITION;
@@ -1204,7 +1203,7 @@ QString TEScreen::getSelText(bool preserve_line_breaks)
 
 static QString makeString(int *m, int d, bool stripTrailingSpaces)
 {
-  QChar* qc = new QChar[d];
+  QChar* qc = new QChar[2*d]; // characters above U+FFFF take two
 
   int last_space = -1;
   int j = 0;
@@ -1220,7 +1219,13 @@ static QString makeString(int *m, int d, bool stripTrailingSpaces)
         {
           last_space = -1;
         }
-      qc[j] = m[i];
+      if (m[i] > 0xffff)
+        { // surrogate pair
+          qc[j++] = QChar(0xd800 + ((m[i] - 0x10000) >> 10));
+          qc[j] = QChar(0xdc00 + ((m[i] - 0x10000) & 0x3ff));
+        }
+      else
+        qc[j] = m[i];
     }
 
   if ((last_space != -1) && stripTrailingSpaces)
@@ -1295,7 +1300,7 @@ void TEScreen::getSelText(bool preserve_line_breaks, QTextStream *stream)
 
 	  while (hX < eol && hX <= sel_Right % columns)
           {
-            Q_UINT16 c = hist->getCell(hY, hX++).c;
+            int c = hist->getCell(hY, hX++).ucs();
             if (c)
               m[d++] = c;
             s++;
@@ -1307,7 +1312,7 @@ void TEScreen::getSelText(bool preserve_line_breaks, QTextStream *stream)
       }
       else {				// or from screen image.
         if (testIsSelected((s - hist_BR) % columns, (s - hist_BR) / columns)) {
-          Q_UINT16 c = image[s++ - hist_BR].c;
+          int c = image[s++ - hist_BR].ucs();
           if (c) {
             m[d++] = c;
             newlineneeded = true;
@@ -1348,7 +1353,7 @@ void TEScreen::getSelText(bool preserve_line_breaks, QTextStream *stream)
 
           while (hX < eol)
           {
-              Q_UINT16 c = hist->getCell(hY, hX++).c;
+              int c = hist->getCell(hY, hX++).ucs();
               if (c)
                  m[d++] = c;
               s++;
@@ -1397,7 +1402,7 @@ void TEScreen::getSelText(bool preserve_line_breaks, QTextStream *stream)
         if (eol < sel_BR)
         {
             while ((eol > s) &&
-                   (!image[eol - hist_BR].c || isSpace(image[eol - hist_BR].c)) &&
+                   (!image[eol - hist_BR].c || isSpace(image[eol - hist_BR].glyph())) &&
                    !line_wrapped[(eol-hist_BR)/columns])
             {
                 eol--;
@@ -1415,7 +1420,7 @@ void TEScreen::getSelText(bool preserve_line_breaks, QTextStream *stream)
 
         while (s <= eol)
         {
-            Q_UINT16 c = image[s++ - hist_BR].c;
+            int c = image[s++ - hist_BR].ucs();
             if (c)
                  m[d++] = c;
         }

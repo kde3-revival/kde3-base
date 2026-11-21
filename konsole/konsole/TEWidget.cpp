@@ -1028,7 +1028,7 @@ void TEWidget::setImage(const ca* const newimg, int lines, int columns)
       // where characters exceed their cell width.
       if (dirtyMask[x])
       {
-        Q_UINT16 c = ext[x+0].c;
+        Q_UINT16 c = ext[x+0].glyph();
         if ( !c )
             continue;
         int p = 0;
@@ -1041,7 +1041,7 @@ void TEWidget::setImage(const ca* const newimg, int lines, int columns)
         int lln = cols - x;
         for (len = 1; len < lln; len++)
         {
-          c = ext[x+len].c;
+          c = ext[x+len].glyph();
           if (!c)
             continue; // Skip trailing part of multi-col chars.
 
@@ -1285,7 +1285,7 @@ void TEWidget::paintContents(QPainter &paint, const QRect &rect, bool pm)
   QChar *disstrU = new QChar[columns];
   for (int y = luy; y <= rly; y++)
   {
-    Q_UINT16 c = image[loc(lux,y)].c;
+    Q_UINT16 c = image[loc(lux,y)].glyph();
     int x = lux;
     if(!c && x)
       x--; // Search for start of multi-col char
@@ -1293,7 +1293,7 @@ void TEWidget::paintContents(QPainter &paint, const QRect &rect, bool pm)
     {
       int len = 1;
       int p = 0;
-      c = image[loc(x,y)].c;
+      c = image[loc(x,y)].glyph();
       if (c)
          disstrU[p++] = c; //fontMap(c);
       bool lineDraw = isLineChar(c);
@@ -1306,7 +1306,7 @@ void TEWidget::paintContents(QPainter &paint, const QRect &rect, bool pm)
              image[loc(x+len,y)].b == cb &&
              image[loc(x+len,y)].r == cr &&
              (image[loc(x+len,y)+1].c == 0) == doubleWidth &&
-             isLineChar( c = image[loc(x+len,y)].c) == lineDraw) // Assignment!
+             isLineChar( c = image[loc(x+len,y)].glyph()) == lineDraw) // Assignment!
       {
         if (c)
           disstrU[p++] = c; //fontMap(c);
@@ -1649,8 +1649,8 @@ void TEWidget::extendSelection( QPoint pos )
     QPoint left = left_not_right ? here : iPntSelCorr;
     i = loc(left.x(),left.y());
     if (i>=0 && i<=image_size) {
-      selClass = charClass(image[i].c);
-      while ( ((left.x()>0) || (left.y()>0 && m_line_wrapped[left.y()-1])) && charClass(image[i-1].c) == selClass )
+      selClass = charClass(image[i].glyph());
+      while ( ((left.x()>0) || (left.y()>0 && m_line_wrapped[left.y()-1])) && charClass(image[i-1].glyph()) == selClass )
       { i--; if (left.x()>0) left.rx()--; else {left.rx()=columns-1; left.ry()--;} }
     }
 
@@ -1658,8 +1658,8 @@ void TEWidget::extendSelection( QPoint pos )
     QPoint right = left_not_right ? iPntSelCorr : here;
     i = loc(right.x(),right.y());
     if (i>=0 && i<=image_size) {
-      selClass = charClass(image[i].c);
-      while( ((right.x()<columns-1) || (right.y()<lines-1 && m_line_wrapped[right.y()])) && charClass(image[i+1].c) == selClass )
+      selClass = charClass(image[i].glyph());
+      while( ((right.x()<columns-1) || (right.y()<lines-1 && m_line_wrapped[right.y()])) && charClass(image[i+1].glyph()) == selClass )
       { i++; if (right.x()<columns-1) right.rx()++; else {right.rx()=0; right.ry()++; } }
     }
 
@@ -1729,10 +1729,10 @@ void TEWidget::extendSelection( QPoint pos )
     {
       i = loc(right.x(),right.y());
       if (i>=0 && i<=image_size) {
-        selClass = charClass(image[i-1].c);
+        selClass = charClass(image[i-1].glyph());
         if (selClass == ' ')
         {
-          while ( right.x() < columns-1 && charClass(image[i+1].c) == selClass && (right.y()<lines-1) && !m_line_wrapped[right.y()])
+          while ( right.x() < columns-1 && charClass(image[i+1].glyph()) == selClass && (right.y()<lines-1) && !m_line_wrapped[right.y()])
           { i++; right.rx()++; }
           if (right.x() < columns-1)
             right = left_not_right ? iPntSelCorr : here;
@@ -1847,11 +1847,11 @@ void TEWidget::mouseDoubleClickEvent(QMouseEvent* ev)
   word_selection_mode = true;
 
   // find word boundaries...
-  int selClass = charClass(image[i].c);
+  int selClass = charClass(image[i].glyph());
   {
     // set the start...
      int x = bgnSel.x();
-     while ( ((x>0) || (bgnSel.y()>0 && m_line_wrapped[bgnSel.y()-1])) && charClass(image[i-1].c) == selClass )
+     while ( ((x>0) || (bgnSel.y()>0 && m_line_wrapped[bgnSel.y()-1])) && charClass(image[i-1].glyph()) == selClass )
      { i--; if (x>0) x--; else {x=columns-1; bgnSel.ry()--;} }
      bgnSel.setX(x);
      emit beginSelectionSignal( bgnSel.x(), bgnSel.y(), false );
@@ -1859,7 +1859,7 @@ void TEWidget::mouseDoubleClickEvent(QMouseEvent* ev)
      // set the end...
      i = loc( endSel.x(), endSel.y() );
      x = endSel.x();
-     while( ((x<columns-1) || (endSel.y()<lines-1 && m_line_wrapped[endSel.y()])) && charClass(image[i+1].c) == selClass )
+     while( ((x<columns-1) || (endSel.y()<lines-1 && m_line_wrapped[endSel.y()])) && charClass(image[i+1].glyph()) == selClass )
      { i++; if (x<columns-1) x++; else {x=0; endSel.ry()++; } }
      endSel.setX(x);
 
@@ -1918,9 +1918,9 @@ void TEWidget::mouseTripleClickEvent(QMouseEvent* ev)
   if (cuttobeginningofline) {
     // find word boundary start
     int i = loc(iPntSel.x(),iPntSel.y());
-    int selClass = charClass(image[i].c);
+    int selClass = charClass(image[i].glyph());
     int x = iPntSel.x();
-    while ( ((x>0) || (iPntSel.y()>0 && m_line_wrapped[iPntSel.y()-1])) && charClass(image[i-1].c) == selClass )
+    while ( ((x>0) || (iPntSel.y()>0 && m_line_wrapped[iPntSel.y()-1])) && charClass(image[i-1].glyph()) == selClass )
     { i--; if (x>0) x--; else {x=columns-1; iPntSel.ry()--;} }
 
     emit beginSelectionSignal( x, iPntSel.y(), false );
@@ -2338,6 +2338,7 @@ void TEWidget::clearImage()
   for (int i = 0; i <= image_size; i++)
   {
     image[i].c = ' ';
+    image[i].p = 0;
     image[i].f = cacol(CO_DFT,DEFAULT_FORE_COLOR);
     image[i].b = cacol(CO_DFT,DEFAULT_BACK_COLOR);
     image[i].r = DEFAULT_RENDITION;

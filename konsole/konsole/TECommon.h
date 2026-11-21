@@ -181,6 +181,8 @@ inline void cacol::toggleIntensive()
   }
 }
 
+#define PLANE_LOW0 0x80
+
 /*! \class ca
  *  \brief a character with rendition attributes.
 */
@@ -192,12 +194,27 @@ public:
             cacol  _f = cacol(CO_DFT,DEFAULT_FORE_COLOR),
             cacol  _b = cacol(CO_DFT,DEFAULT_BACK_COLOR),
             UINT8  _r = DEFAULT_RENDITION)
-       : c(_c), r(_r), f(_f), b(_b) {}
+       : c(_c), r(_r), f(_f), b(_b), p(0) {}
 public:
-  UINT16 c; // character
+  UINT16 c; // character, or its low 16 bits if p != 0
   UINT8  r; // rendition
   cacol  f; // foreground color
   cacol  b; // background color
+  UINT8  p; // 0, or the plane (1..16) of a character above U+FFFF, with
+            // PLANE_LOW0 if its low 16 bits are 0 (c is never 0 then:
+            // c == 0 marks the right half of a double-width character).
+            // This byte used to be padding; the cell size is unchanged.
+public:
+  // the character as a code point
+  Q_UINT32 ucs() const
+    { return p ? ((Q_UINT32)(p & 0x1f) << 16) | ((p & PLANE_LOW0) ? 0 : c) : c; }
+  void setUcs(Q_UINT32 u)
+    {
+      c = u & 0xffff; p = u >> 16;
+      if (p && !c) { p |= PLANE_LOW0; c = 0xfffd; }
+    }
+  // what the widget draws: Qt 3 cannot draw characters above U+FFFF
+  UINT16 glyph() const { return p ? 0xfffd : c; }
 public:
   //FIXME: following a hack to cope with various color spaces
   // it brings the rendition pipeline further out of balance,
@@ -211,12 +228,12 @@ public:
 
 inline bool operator == (ca a, ca b)
 { 
-  return a.c == b.c && a.f == b.f && a.b == b.b && a.r == b.r;
+  return a.c == b.c && a.p == b.p && a.f == b.f && a.b == b.b && a.r == b.r;
 }
 
 inline bool operator != (ca a, ca b)
 {
-  return a.c != b.c || a.f != b.f || a.b != b.b || a.r != b.r;
+  return a.c != b.c || a.p != b.p || a.f != b.f || a.b != b.b || a.r != b.r;
 }
 
 inline bool ca::isTransparent(const ColorEntry* base) const
