@@ -146,6 +146,9 @@ void SystemTrayApplet::initialize()
 
     WId root = qt_xrootwin();
 
+    // the icon size is there before the clients look
+    announceIconSize();
+
     if (XGetSelectionOwner (display, net_system_tray_selection) == winId())
     {
         XClientMessageEvent xev;
@@ -164,7 +167,6 @@ void SystemTrayApplet::initialize()
         XSendEvent (display, root, False, StructureNotifyMask, (XEvent *)&xev);
     }
 
-    announceIconSize();
     setBackground();
 
 #ifdef HAVE_STATUSNOTIFIER
@@ -833,8 +835,7 @@ int SystemTrayApplet::widthForHeight(int h) const
     }
 
     int currentHeight = height();
-    int minHeight = iconSizeFor(h) + 4;
-    if (currentHeight != h && currentHeight != minHeight)
+    if (currentHeight != h)
     {
         SystemTrayApplet* me = const_cast<SystemTrayApplet*>(this);
         me->setMinimumSize(0, 0);
@@ -853,8 +854,7 @@ int SystemTrayApplet::heightForWidth(int w) const
     }
 
     int currentWidth = width();
-    int minSize = iconSizeFor(w) + 4;
-    if (currentWidth != w && currentWidth != minSize)
+    if (currentWidth != w)
     {
         SystemTrayApplet* me = const_cast<SystemTrayApplet*>(this);
         me->setMinimumSize(0, 0);

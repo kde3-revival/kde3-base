@@ -115,7 +115,8 @@ public:
     // The data of an item; 0 if there is no such item (any more).
     const StatusNotifierItemData *item(const QString &key) const;
 
-    void activate(const QString &key, int x, int y);
+    // Returns the serial of activateFailed() if the item has no Activate.
+    int activate(const QString &key, int x, int y);
     void secondaryActivate(const QString &key, int x, int y);
     void scroll(const QString &key, int delta, bool horizontal);
     void contextMenu(const QString &key, int x, int y);
@@ -132,7 +133,7 @@ signals:
     void itemRemoved(const QString &key);
     void itemChanged(const QString &key);
     // Activate is not implemented by the item: show its menu instead.
-    void activateFailed(const QString &key, int x, int y);
+    void activateFailed(const QString &key, int serial, int x, int y);
     void menuReady(const QString &key, int serial, const StatusNotifierMenuNode &menu);
     void menuFailed(const QString &key, int serial);
 

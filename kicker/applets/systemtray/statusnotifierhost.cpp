@@ -216,12 +216,22 @@ static void readMenuNode(GVariant *node, StatusNotifierMenuNode &out, int depth,
             gsize length = 0;
             const char *data = static_cast<const char *>(
                 g_variant_get_fixed_array(value, &length, 1));
+            // PNG only (as the specification says), and its size read from
+            // the header before anything is decoded
+            static const guchar signature[] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' };
+            const guchar *bytes = reinterpret_cast<const guchar *>(data);
             QImage image;
-            if (data && length > 0 && length <= MaxMenuIconBytes
-                && image.loadFromData(reinterpret_cast<const uchar *>(data), uint(length))
-                && image.width() <= MaxMenuIconSide && image.height() <= MaxMenuIconSide)
+            if (data && length >= 24 && length <= MaxMenuIconBytes
+                && !memcmp(bytes, signature, 8) && !memcmp(bytes + 12, "IHDR", 4))
             {
-                out.icon = image;
+                guint32 w = (guint32(bytes[16]) << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+                guint32 h = (guint32(bytes[20]) << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+                if (w > 0 && h > 0 && w <= guint32(MaxMenuIconSide) && h <= guint32(MaxMenuIconSide)
+                    && image.loadFromData(bytes, uint(length), "PNG")
+                    && image.width() <= MaxMenuIconSide && image.height() <= MaxMenuIconSide)
+                {
+                    out.icon = image;
+                }
             }
         }
         else if (!strcmp(name, "toggle-type"))
@@ -289,12 +299,14 @@ class StatusNotifierHostPrivate
 public:
     struct Item
     {
-        Item() : signalId(0), serial(0), pending(false), valid(false) {}
+        Item() : signalId(0), serial(0), failures(0), pending(false), inFlight(false), valid(false) {}
         QString service;        // unique bus name
         QString path;
         guint signalId;
         int serial;             // of the newest GetAll
+        int failures;           // of GetAll before the first answer
         bool pending;           // a refresh is due
+        bool inFlight;          // a GetAll is under way
         bool valid;             // the properties came at least once
         StatusNotifierItemData data;
     };
@@ -417,6 +429,8 @@ void StatusNotifierHostPrivate::start()
             g_error_free(error);
         return;
     }
+    // the session bus going away must not end the panel
+    g_dbus_connection_set_exit_on_close(connection, FALSE);
     cancellable = g_cancellable_new();
 
     nameOwnerSignalId = g_dbus_connection_signal_subscribe(
@@ -756,7 +770,14 @@ void StatusNotifierHostPrivate::removeItem(const QString &key)
 void StatusNotifierHostPrivate::refresh(const QString &key)
 {
     Item &item = items[key];
+    if (item.inFlight)
+    {
+        // once more when the answer is there
+        item.pending = true;
+        return;
+    }
     item.pending = false;
+    item.inFlight = true;
     item.serial = ++serial;
     g_dbus_connection_call(connection, item.service.utf8(), item.path.utf8(),
                            "org.freedesktop.DBus.Properties", "GetAll",
@@ -807,17 +828,32 @@ void StatusNotifierHostPrivate::propertiesReady(GObject *source, GAsyncResult *r
         QMap<QString, Item>::Iterator it = d->items.find(c->key);
         if (it != d->items.end() && (*it).serial == c->serial)
         {
+            (*it).inFlight = false;
+            bool again = (*it).pending;
             if (reply)
             {
                 d->readProperties(c->key, c->serial, reply);
             }
             else if (!(*it).valid)
             {
-                // not an item at all
+                // Not there (yet: exported after registering, or the
+                // panel busy): a few more tries, then it is not an item.
                 kdDebug() << "System tray: no StatusNotifierItem at " << c->key
                           << ": " << error->message << endl;
-                d->removeItem(c->key);
+                if (++(*it).failures <= 3)
+                {
+                    (*it).pending = true;
+                    QTimer::singleShot(1000, d->q, SLOT(refreshPending()));
+                    again = false;
+                }
+                else
+                {
+                    d->removeItem(c->key);
+                    again = false;
+                }
             }
+            if (again)
+                d->scheduleRefresh(c->key);
         }
         if (reply)
             g_variant_unref(reply);
@@ -999,7 +1035,7 @@ void StatusNotifierHostPrivate::activateReady(GObject *source, GAsyncResult *res
             if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT)
                 && c->d->items.contains(c->key))
             {
-                emit c->d->q->activateFailed(c->key, c->x, c->y);
+                emit c->d->q->activateFailed(c->key, c->serial, c->x, c->y);
             }
             g_error_free(error);
         }
@@ -1053,6 +1089,11 @@ void StatusNotifierHostPrivate::watcherNameAcquired(GDBusConnection *, const cha
 {
     StatusNotifierHostPrivate *d = static_cast<StatusNotifierHostPrivate *>(data);
     d->isWatcher = true;
+    // our own host is there from the start (IsStatusNotifierHostRegistered
+    // decides for some programs whether they use the tray at all)
+    QString self = QString::fromUtf8(g_dbus_connection_get_unique_name(d->connection));
+    if (!d->hosts.contains(self))
+        d->hosts.append(self);
 }
 
 void StatusNotifierHostPrivate::watcherNameLost(GDBusConnection *, const char *, gpointer data)
@@ -1304,19 +1345,21 @@ const StatusNotifierItemData *StatusNotifierHost::item(const QString &key) const
     return &(*it).data;
 }
 
-void StatusNotifierHost::activate(const QString &key, int x, int y)
+int StatusNotifierHost::activate(const QString &key, int x, int y)
 {
     QMap<QString, StatusNotifierHostPrivate::Item>::ConstIterator it = d->items.find(key);
     if (it == d->items.end())
     {
-        return;
+        return -1;
     }
-    StatusNotifierHostPrivate::Call *c = new StatusNotifierHostPrivate::Call(d, key);
+    int serial = ++d->serial;
+    StatusNotifierHostPrivate::Call *c = new StatusNotifierHostPrivate::Call(d, key, serial);
     c->x = x;
     c->y = y;
     g_dbus_connection_call(d->connection, (*it).service.utf8(), (*it).path.utf8(), ItemInterface,
                            "Activate", g_variant_new("(ii)", x, y), 0, G_DBUS_CALL_FLAGS_NONE,
                            ActivateTimeout, d->cancellable, StatusNotifierHostPrivate::activateReady, c);
+    return serial;
 }
 
 void StatusNotifierHost::secondaryActivate(const QString &key, int x, int y)

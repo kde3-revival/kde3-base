@@ -61,7 +61,7 @@ protected:
     void wheelEvent(QWheelEvent *);
 
 private slots:
-    void activateFailed(const QString &key, int x, int y);
+    void activateFailed(const QString &key, int serial, int x, int y);
     void menuReady(const QString &key, int serial, const StatusNotifierMenuNode &menu);
     void menuFailed(const QString &key, int serial);
     void menuActivated(int id);
@@ -86,6 +86,9 @@ private:
     // the menu shown or asked for
     QGuardedPtr<QPopupMenu> m_menu;
     int m_menuSerial;
+    int m_activateSerial;
+    int m_nextMenuId;
+    QMap<int, int> m_menuIds;                               // Qt id -> dbusmenu id
     QMap<int, QGuardedPtr<QPopupMenu> > m_submenuFetches;  // serial -> submenu
     QMap<const QObject *, int> m_submenuIds;                // submenu -> its id
     QMap<const QObject *, QString> m_submenuContents;       // what it shows

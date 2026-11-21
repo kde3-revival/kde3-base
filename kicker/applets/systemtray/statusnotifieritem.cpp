@@ -17,7 +17,10 @@
     02110-1301, USA.
 */
 
+#include <string.h>
+
 #include <qdir.h>
+#include <qfile.h>
 #include <qfileinfo.h>
 #include <qimage.h>
 #include <qkeysequence.h>
@@ -50,23 +53,71 @@ static bool isIconFile(const QString &path)
     return info.isFile() && info.isReadable() && info.size() <= MaxIconFile;
 }
 
+// An icon file named by an item: a PNG of at most 1024 x 1024 pixels (its
+// header is read before it is decoded; a program may rewrite it under the
+// same name, so it is not cached), or an SVG rendered by KIconLoader.
 static QImage loadIconFile(const QString &path, int size)
 {
     if (!isIconFile(path))
     {
         return QImage();
     }
-    QPixmap pixmap = KGlobal::iconLoader()->loadIcon(path, KIcon::Panel, size,
-                                                     KIcon::DefaultState, 0, true);
-    return pixmap.isNull() ? QImage() : pixmap.convertToImage();
+    if (path.endsWith(".svg") || path.endsWith(".svgz"))
+    {
+        QPixmap pixmap = KGlobal::iconLoader()->loadIcon(path, KIcon::Panel, size,
+                                                         KIcon::DefaultState, 0, true);
+        return pixmap.isNull() ? QImage() : pixmap.convertToImage();
+    }
+
+    QFile file(path);
+    if (!file.open(IO_ReadOnly))
+    {
+        return QImage();
+    }
+    QByteArray data = file.readAll();
+    static const uchar signature[] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' };
+    const uchar *bytes = reinterpret_cast<const uchar *>(data.data());
+    if (data.size() < 24 || memcmp(bytes, signature, 8) || memcmp(bytes + 12, "IHDR", 4))
+    {
+        return QImage();
+    }
+    Q_UINT32 w = (Q_UINT32(bytes[16]) << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
+    Q_UINT32 h = (Q_UINT32(bytes[20]) << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
+    QImage image;
+    if (w == 0 || h == 0 || w > 1024 || h > 1024 || !image.loadFromData(data, "PNG"))
+    {
+        return QImage();
+    }
+    return image;
 }
 
 // The file of the icon `name` in the IconThemePath `dir` of an item: either
 // right in it, or in an icon theme there (dir/hicolor/22x22/apps/name.png),
 // or dir is such a theme.  The size nearest to `size`, larger ones first.
+static QString scanThemeIcon(const QString &dir, const QString &name, int size);
+
 static QString findThemeIcon(const QString &dir, const QString &name, int size)
 {
-    static const char * const extensions[] = { ".png", ".svg", ".svgz", ".xpm", 0 };
+    // the directories are not read again on each change of the icon
+    static QMap<QString, QString> cache;
+    QString key = dir + '\n' + name + '\n' + QString::number(size);
+    QMap<QString, QString>::ConstIterator it = cache.find(key);
+    if (it != cache.end())
+    {
+        return *it;
+    }
+    if (cache.count() > 256)
+    {
+        cache.clear();
+    }
+    QString path = scanThemeIcon(dir, name, size);
+    cache.insert(key, path);
+    return path;
+}
+
+static QString scanThemeIcon(const QString &dir, const QString &name, int size)
+{
+    static const char * const extensions[] = { ".png", ".svg", ".svgz", 0 };
 
     for (int e = 0; extensions[e]; ++e)
     {
@@ -242,9 +293,10 @@ static QString menuSignature(const StatusNotifierMenuNode &node)
     for (QPtrListIterator<StatusNotifierMenuNode> it(node.children); it.current(); ++it)
     {
         const StatusNotifierMenuNode *n = it.current();
-        s += QString("%1|%2|%3|%4|%5|%6|%7|%8\n").arg(n->id).arg(n->label)
-                 .arg(n->enabled).arg(n->checked).arg(n->separator)
-                 .arg(n->submenu).arg(n->iconName).arg(n->shortcut);
+        s += QString::number(n->id) + '|' + n->label + '|' + QString::number(n->enabled)
+           + QString::number(n->checked) + QString::number(n->separator)
+           + QString::number(n->submenu) + QString::number(n->toggle) + '|'
+           + n->iconName + '|' + QString::number(n->icon.width()) + '|' + n->shortcut + '\n';
     }
     return s;
 }
@@ -256,13 +308,15 @@ StatusNotifierWidget::StatusNotifierWidget(StatusNotifierHost *host, const QStri
       m_key(key),
       m_applet(applet),
       m_size(22),
-      m_menuSerial(-1)
+      m_menuSerial(-1),
+      m_activateSerial(-1),
+      m_nextMenuId(1)
 {
     setBackgroundOrigin(AncestorOrigin);
     setFixedSize(m_size, m_size);
 
-    connect(m_host, SIGNAL(activateFailed(const QString &, int, int)),
-            SLOT(activateFailed(const QString &, int, int)));
+    connect(m_host, SIGNAL(activateFailed(const QString &, int, int, int)),
+            SLOT(activateFailed(const QString &, int, int, int)));
     connect(m_host, SIGNAL(menuReady(const QString &, int, const StatusNotifierMenuNode &)),
             SLOT(menuReady(const QString &, int, const StatusNotifierMenuNode &)));
     connect(m_host, SIGNAL(menuFailed(const QString &, int)),
@@ -463,7 +517,7 @@ void StatusNotifierWidget::mouseReleaseEvent(QMouseEvent *e)
         if (m_data.itemIsMenu && !m_data.menuPath.isEmpty())
             showMenu();
         else
-            m_host->activate(m_key, global.x(), global.y());
+            m_activateSerial = m_host->activate(m_key, global.x(), global.y());
         break;
     case MidButton:
         m_host->secondaryActivate(m_key, global.x(), global.y());
@@ -485,12 +539,14 @@ void StatusNotifierWidget::wheelEvent(QWheelEvent *e)
     e->accept();
 }
 
-void StatusNotifierWidget::activateFailed(const QString &key, int x, int y)
+void StatusNotifierWidget::activateFailed(const QString &key, int serial, int x, int y)
 {
-    if (key != m_key)
+    // (another tray applet's icon of the same item may have been clicked)
+    if (key != m_key || serial != m_activateSerial)
     {
         return;
     }
+    m_activateSerial = -1;
     // libappindicator has no Activate: its menu, as in other trays
     if (!m_data.menuPath.isEmpty())
         showMenu();
@@ -540,17 +596,24 @@ void StatusNotifierWidget::menuReady(const QString &key, int serial, const Statu
         int depth = 1;
         for (QObject *o = submenu->parent(); o && o != m_menu; o = o->parent())
             ++depth;
-        // its submenus go with it
-        QObjectList *nested = submenu->queryList("QPopupMenu", 0, false, false);
+        // its submenus go with it, also open ones
+        QObjectList *nested = submenu->queryList("QPopupMenu", 0, false, true);
         if (nested)
         {
             for (QObjectListIt it(*nested); it.current(); ++it)
             {
                 m_submenuIds.remove(it.current());
                 m_submenuContents.remove(it.current());
-                it.current()->deleteLater();
             }
             delete nested;
+        }
+        nested = submenu->queryList("QPopupMenu", 0, false, false);
+        if (nested)
+        {
+            QObjectList direct = *nested;
+            delete nested;
+            for (QObjectListIt it(direct); it.current(); ++it)
+                delete it.current();
         }
         submenu->clear();
         fillMenu(submenu, node, depth);
@@ -576,6 +639,7 @@ void StatusNotifierWidget::menuReady(const QString &key, int serial, const Statu
     m_submenuIds.clear();
     m_submenuContents.clear();
     m_submenuFetches.clear();
+    m_menuIds.clear();
 
     KPopupMenu *menu = new KPopupMenu(this);
     m_menu = menu;
@@ -624,16 +688,24 @@ void StatusNotifierWidget::fillMenu(QPopupMenu *menu, const StatusNotifierMenuNo
             m_submenuContents[submenu] = menuSignature(child);
             connect(submenu, SIGNAL(aboutToShow()), SLOT(submenuAboutToShow()));
             connect(submenu, SIGNAL(aboutToHide()), SLOT(submenuAboutToHide()));
-            id = icon.isNull() ? menu->insertItem(label, submenu, child.id)
-                               : menu->insertItem(icon, label, submenu, child.id);
+            id = icon.isNull() ? menu->insertItem(label, submenu, m_nextMenuId++)
+                               : menu->insertItem(icon, label, submenu, m_nextMenuId++);
         }
         else
         {
-            id = icon.isNull() ? menu->insertItem(label, child.id)
-                               : menu->insertItem(icon, label, child.id);
+            // the shortcut is only shown: the program has it
             if (!child.shortcut.isEmpty())
             {
-                menu->setAccel(QKeySequence(child.shortcut), id);
+                label += "\t" + QString(QKeySequence(child.shortcut));
+            }
+            id = icon.isNull() ? menu->insertItem(label, m_nextMenuId++)
+                               : menu->insertItem(icon, label, m_nextMenuId++);
+            m_menuIds[id] = child.id;
+            if (child.submenu)
+            {
+                // deeper than the menus go
+                menu->setItemEnabled(id, false);
+                continue;
             }
         }
 
@@ -655,7 +727,11 @@ void StatusNotifierWidget::fillMenu(QPopupMenu *menu, const StatusNotifierMenuNo
 
 void StatusNotifierWidget::menuActivated(int id)
 {
-    m_host->menuEvent(m_key, id, "clicked");
+    if (!m_menuIds.contains(id))
+    {
+        return;
+    }
+    m_host->menuEvent(m_key, m_menuIds[id], "clicked");
 }
 
 void StatusNotifierWidget::submenuAboutToShow()
@@ -666,13 +742,13 @@ void StatusNotifierWidget::submenuAboutToShow()
         return;
     }
     int id = m_submenuIds[submenu];
-    m_host->menuEvent(m_key, id, "opened");
-    // the item may fill or change it now
+    // the item may fill or change it now (AboutToShow, then the layout)
     int serial = m_host->fetchMenu(m_key, id);
     if (serial >= 0)
     {
         m_submenuFetches[serial] = static_cast<QPopupMenu *>(const_cast<QObject *>(submenu));
     }
+    m_host->menuEvent(m_key, id, "opened");
 }
 
 void StatusNotifierWidget::submenuAboutToHide()
