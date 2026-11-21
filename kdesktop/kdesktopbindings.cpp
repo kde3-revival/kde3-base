@@ -45,10 +45,11 @@
 #endif
 
 	// through ksmserver (which locks the screen first if so configured);
-	// the keyboards' sleep keys by default, like GNOME
+	// the keyboards' sleep keys by default, as systemd-logind treats them:
+	// KEY_SLEEP (XF86Sleep) suspends, KEY_SUSPEND (XF86Suspend) hibernates
 	keys->insert( "Group:Power", i18n("Power") );
-	DEF( I18N_NOOP("Suspend"), "XF86Sleep;XF86Suspend", "XF86Sleep;XF86Suspend", slotSuspend() );
-	DEF( I18N_NOOP("Hibernate"), "XF86Hibernate", "XF86Hibernate", slotHibernate() );
+	DEF( I18N_NOOP("Suspend"), "XF86Sleep", "XF86Sleep", slotSuspend() );
+	DEF( I18N_NOOP("Hibernate"), "XF86Suspend;XF86Hibernate", "XF86Suspend;XF86Hibernate", slotHibernate() );
 
 #undef DEF
 #undef DEF2

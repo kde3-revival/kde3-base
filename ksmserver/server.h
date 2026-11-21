@@ -108,6 +108,7 @@ public slots:
     void cleanUp();
 
 private slots:
+    void dcopApplicationRemoved( const QCString& appId );
     void newConnection( int socket );
     void processData( int socket );
     void restoreSessionInternal();

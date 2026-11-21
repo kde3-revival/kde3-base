@@ -397,8 +397,8 @@ void KSMServer::sleepInternal( bool hibernate )
  GNOME, KDE takes logind's "block" inhibitor for its suspend key
  (KEY_SLEEP, XF86Sleep) and/or its hibernate key (KEY_SUSPEND,
  XF86Suspend) while kdesktop has them bound, and gives them back to
- logind when they are not bound any more.  The lock goes away with
- ksmserver.
+ logind when they are not bound any more, or kdesktop is gone.  The lock
+ goes away with ksmserver.
 
  While the screen saver or the locker runs, it has the keyboard grabbed
  and no global shortcut works: logind gets the keys back meanwhile (the
@@ -414,11 +414,25 @@ void KSMServer::setSleepKeysHandled( bool suspendKey, bool hibernateKey )
                            "screensaverStarted()", false );
         connectDCOPSignal( "kdesktop", "KScreensaverIface", "KDE_stop_screensaver()",
                            "screensaverStopped()", false );
+        // kdesktop gone (crashed, quit): nobody handles the keys any more
+        kapp->dcopClient()->setNotifications( true );
+        connect( kapp->dcopClient(), SIGNAL( applicationRemoved( const QCString& ) ),
+                 SLOT( dcopApplicationRemoved( const QCString& ) ) );
     }
     boundSuspendKey = suspendKey;
     boundHibernateKey = hibernateKey;
     if ( !screensaverRunning )
         inhibitSleepKeys( suspendKey, hibernateKey );
+}
+
+// a restarted kdesktop tells its keys again
+void KSMServer::dcopApplicationRemoved( const QCString& appId )
+{
+    if ( appId != "kdesktop" )
+        return;
+    boundSuspendKey = boundHibernateKey = false;
+    screensaverRunning = false;
+    inhibitSleepKeys( false, false );
 }
 
 void KSMServer::screensaverStarted()
