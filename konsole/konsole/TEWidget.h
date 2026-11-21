@@ -152,7 +152,9 @@ public slots:
 signals:
 
     void keyPressedSignal(QKeyEvent *e);
-    void mouseSignal(int cb, int cx, int cy);
+    // button: 0-2 left, middle, right, 3 none, 4/5 wheel up/down;
+    // eventType: 0 press, 1 motion, 2 release
+    void mouseSignal(int button, int cx, int cy, int eventType);
     void focusChangedSignal(bool in);
     void changedFontMetricSignal(int height, int width);
     void changedContentSizeSignal(int height, int width);
@@ -255,6 +257,7 @@ private:
     bool bidiEnabled;
     bool mouse_marks;
     bool m_bracketedPaste; // wrap pasted text in ESC[200~ ... ESC[201~
+    QPoint lastMotionCell; // cell of the last reported mouse motion
 
     void makeImage();
 

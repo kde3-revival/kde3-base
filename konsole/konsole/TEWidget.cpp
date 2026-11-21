@@ -1330,7 +1330,7 @@ void TEWidget::mousePressEvent(QMouseEvent* ev)
       }
       else
       {
-        emit mouseSignal( 0, (ev->x()-tLx-bX)/font_w +1, (ev->y()-tLy-bY)/font_h +1 +scrollbar->value() -scrollbar->maxValue() );
+        emit mouseSignal( 0, (ev->x()-tLx-bX)/font_w +1, (ev->y()-tLy-bY)/font_h +1 +scrollbar->value() -scrollbar->maxValue(), 0 );
       }
     }
   }
@@ -1339,7 +1339,7 @@ void TEWidget::mousePressEvent(QMouseEvent* ev)
     if ( mouse_marks || (!mouse_marks && (ev->state() & ShiftButton)) )
       emitSelection(true,ev->state() & ControlButton);
     else
-      emit mouseSignal( 1, (ev->x()-tLx-bX)/font_w +1, (ev->y()-tLy-bY)/font_h +1 +scrollbar->value() -scrollbar->maxValue() );
+      emit mouseSignal( 1, (ev->x()-tLx-bX)/font_w +1, (ev->y()-tLy-bY)/font_h +1 +scrollbar->value() -scrollbar->maxValue(), 0 );
   }
   else if ( ev->button() == RightButton )
   {
@@ -1348,12 +1348,30 @@ void TEWidget::mousePressEvent(QMouseEvent* ev)
       emit configureRequest( this, ev->state()&(ShiftButton|ControlButton), ev->x(), ev->y() );
     }
     else
-      emit mouseSignal( 2, (ev->x()-tLx-bX)/font_w +1, (ev->y()-tLy-bY)/font_h +1 +scrollbar->value() -scrollbar->maxValue() );
+      emit mouseSignal( 2, (ev->x()-tLx-bX)/font_w +1, (ev->y()-tLy-bY)/font_h +1 +scrollbar->value() -scrollbar->maxValue(), 0 );
   }
 }
 
 void TEWidget::mouseMoveEvent(QMouseEvent* ev)
 {
+  if (!mouse_marks && actSel == 0 && dragInfo.state == diNone &&
+      !(ev->state() & ShiftButton))
+  {
+    // The application tracks the mouse: report the cell under it,
+    // clamped to the screen, whenever it changes. The emulation
+    // decides whether the application asked for motion events.
+    QPoint tL  = contentsRect().topLeft();
+    int cx = QMIN(QMAX((ev->x()-tL.x()-bX)/font_w, 0), columns-1) + 1;
+    int cy = QMIN(QMAX((ev->y()-tL.y()-bY)/font_h, 0), lines-1) + 1;
+    if (cx == lastMotionCell.x() && cy == lastMotionCell.y()) return;
+    lastMotionCell = QPoint(cx, cy);
+    int button = (ev->state() & LeftButton)  ? 0 :
+                 (ev->state() & MidButton)   ? 1 :
+                 (ev->state() & RightButton) ? 2 : 3;
+    emit mouseSignal( button, cx, cy +scrollbar->value() -scrollbar->maxValue(), 1 );
+    return;
+  }
+
   // for auto-hiding the cursor, we need mouseTracking
   if (ev->state() == NoButton ) return;
 
@@ -1594,9 +1612,9 @@ void TEWidget::mouseReleaseEvent(QMouseEvent* ev)
       int    tLy = tL.y();
 
       if (!mouse_marks && !(ev->state() & ShiftButton))
-        emit mouseSignal( 3, // release
+        emit mouseSignal( 0, // release
                         (ev->x()-tLx-bX)/font_w + 1,
-                        (ev->y()-tLy-bY)/font_h + 1 +scrollbar->value() -scrollbar->maxValue());
+                        (ev->y()-tLy-bY)/font_h + 1 +scrollbar->value() -scrollbar->maxValue(), 2);
       releaseMouse();
     }
     dragInfo.state = diNone;
@@ -1607,7 +1625,8 @@ void TEWidget::mouseReleaseEvent(QMouseEvent* ev)
     int    tLx = tL.x();
     int    tLy = tL.y();
 
-    emit mouseSignal( 3, (ev->x()-tLx-bX)/font_w +1, (ev->y()-tLy-bY)/font_h +1 +scrollbar->value() -scrollbar->maxValue() );
+    emit mouseSignal( ev->button() == MidButton ? 1 : 2,
+                      (ev->x()-tLx-bX)/font_w +1, (ev->y()-tLy-bY)/font_h +1 +scrollbar->value() -scrollbar->maxValue(), 2 );
     releaseMouse();
   }
 }
@@ -1626,7 +1645,7 @@ void TEWidget::mouseDoubleClickEvent(QMouseEvent* ev)
   {
     // Send just _ONE_ click event, since the first click of the double click
     // was already sent by the click handler!
-    emit mouseSignal( 0, pos.x()+1, pos.y()+1 +scrollbar->value() -scrollbar->maxValue() ); // left button
+    emit mouseSignal( 0, pos.x()+1, pos.y()+1 +scrollbar->value() -scrollbar->maxValue(), 0 ); // left button
     return;
   }
 
@@ -1683,7 +1702,7 @@ void TEWidget::wheelEvent( QWheelEvent* ev )
     int    tLx = tL.x();
     int    tLy = tL.y();
     QPoint pos = QPoint((ev->x()-tLx-bX)/font_w,(ev->y()-tLy-bY)/font_h);
-    emit mouseSignal( ev->delta() > 0 ? 4 : 5, pos.x() + 1, pos.y() + 1 +scrollbar->value() -scrollbar->maxValue() );
+    emit mouseSignal( ev->delta() > 0 ? 4 : 5, pos.x() + 1, pos.y() + 1 +scrollbar->value() -scrollbar->maxValue(), 0 );
   }
 }
 

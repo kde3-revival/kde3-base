@@ -81,8 +81,8 @@
 TEmuVt102::TEmuVt102(TEWidget* gui) : TEmulation(gui)
 {
   //kdDebug(1211)<<"TEmuVt102 ctor() connecting"<<endl;
-  QObject::connect(gui,SIGNAL(mouseSignal(int,int,int)),
-                   this,SLOT(onMouse(int,int,int)));
+  QObject::connect(gui,SIGNAL(mouseSignal(int,int,int,int)),
+                   this,SLOT(onMouse(int,int,int,int)));
   QObject::connect(gui,SIGNAL(focusChangedSignal(bool)),
                    this,SLOT(onFocusChange(bool)));
   QObject::connect(gui, SIGNAL(sendStringToEmu(const char*)),
@@ -102,16 +102,16 @@ void TEmuVt102::changeGUI(TEWidget* newgui)
   if (static_cast<TEWidget *>( gui )==newgui) return;
 
   if ( gui ) {
-    QObject::disconnect(gui,SIGNAL(mouseSignal(int,int,int)),
-                        this,SLOT(onMouse(int,int,int)));
+    QObject::disconnect(gui,SIGNAL(mouseSignal(int,int,int,int)),
+                        this,SLOT(onMouse(int,int,int,int)));
     QObject::disconnect(gui,SIGNAL(focusChangedSignal(bool)),
                         this,SLOT(onFocusChange(bool)));
     QObject::disconnect(gui, SIGNAL(sendStringToEmu(const char*)),
                         this, SLOT(sendString(const char*)));
   }
   TEmulation::changeGUI(newgui);
-  QObject::connect(gui,SIGNAL(mouseSignal(int,int,int)),
-                   this,SLOT(onMouse(int,int,int)));
+  QObject::connect(gui,SIGNAL(mouseSignal(int,int,int,int)),
+                   this,SLOT(onMouse(int,int,int,int)));
   QObject::connect(gui,SIGNAL(focusChangedSignal(bool)),
                    this,SLOT(onFocusChange(bool)));
   QObject::connect(gui, SIGNAL(sendStringToEmu(const char*)),
@@ -773,33 +773,39 @@ switch( N )
     case TY_CSI_PR('r',   67) : /* IGNORED: DECBKM                   */ break; //XTERM
 
     // XTerm defines the following modes:
-    // SET_VT200_MOUSE             1000
-    // SET_VT200_HIGHLIGHT_MOUSE   1001
-    // SET_BTN_EVENT_MOUSE         1002
-    // SET_ANY_EVENT_MOUSE         1003
+    // SET_VT200_MOUSE             1000  press and release
+    // SET_VT200_HIGHLIGHT_MOUSE   1001  (not supported)
+    // SET_BTN_EVENT_MOUSE         1002  also motion while a button is down
+    // SET_ANY_EVENT_MOUSE         1003  also motion without a button
+    // SET_SGR_EXT_MODE_MOUSE      1006  report as ESC[<b;x;yM / m
     //
-    // FIXME: Modes 1000,1002 and 1003 have subtle differences which we don't
-    // support yet, we treat them all the same.
+    // Only one of 1000, 1002 and 1003 is active; resetting any of them
+    // turns mouse tracking off. MODE_Mouse1000 is set for all three.
 
-    case TY_CSI_PR('h', 1000) :          setMode      (MODE_Mouse1000); break; //XTERM
-    case TY_CSI_PR('l', 1000) :        resetMode      (MODE_Mouse1000); break; //XTERM
-    case TY_CSI_PR('s', 1000) :         saveMode      (MODE_Mouse1000); break; //XTERM
-    case TY_CSI_PR('r', 1000) :      restoreMode      (MODE_Mouse1000); break; //XTERM
+    case TY_CSI_PR('h', 1000) :      setMouseTracking     (      1000); break; //XTERM
+    case TY_CSI_PR('l', 1000) :      setMouseTracking     (         0); break; //XTERM
+    case TY_CSI_PR('s', 1000) :     saveMouseTracking     (          ); break; //XTERM
+    case TY_CSI_PR('r', 1000) :  restoreMouseTracking     (          ); break; //XTERM
 
     case TY_CSI_PR('h', 1001) : /* IGNORED: hilite mouse tracking    */ break; //XTERM
-    case TY_CSI_PR('l', 1001) :        resetMode      (MODE_Mouse1000); break; //XTERM
+    case TY_CSI_PR('l', 1001) :      setMouseTracking     (         0); break; //XTERM
     case TY_CSI_PR('s', 1001) : /* IGNORED: hilite mouse tracking    */ break; //XTERM
     case TY_CSI_PR('r', 1001) : /* IGNORED: hilite mouse tracking    */ break; //XTERM
 
-    case TY_CSI_PR('h', 1002) :          setMode      (MODE_Mouse1000); break; //XTERM
-    case TY_CSI_PR('l', 1002) :        resetMode      (MODE_Mouse1000); break; //XTERM
-    case TY_CSI_PR('s', 1002) :         saveMode      (MODE_Mouse1000); break; //XTERM
-    case TY_CSI_PR('r', 1002) :      restoreMode      (MODE_Mouse1000); break; //XTERM
+    case TY_CSI_PR('h', 1002) :      setMouseTracking     (      1002); break; //XTERM
+    case TY_CSI_PR('l', 1002) :      setMouseTracking     (         0); break; //XTERM
+    case TY_CSI_PR('s', 1002) :     saveMouseTracking     (          ); break; //XTERM
+    case TY_CSI_PR('r', 1002) :  restoreMouseTracking     (          ); break; //XTERM
 
-    case TY_CSI_PR('h', 1003) :          setMode      (MODE_Mouse1000); break; //XTERM
-    case TY_CSI_PR('l', 1003) :        resetMode      (MODE_Mouse1000); break; //XTERM
-    case TY_CSI_PR('s', 1003) :         saveMode      (MODE_Mouse1000); break; //XTERM
-    case TY_CSI_PR('r', 1003) :      restoreMode      (MODE_Mouse1000); break; //XTERM
+    case TY_CSI_PR('h', 1003) :      setMouseTracking     (      1003); break; //XTERM
+    case TY_CSI_PR('l', 1003) :      setMouseTracking     (         0); break; //XTERM
+    case TY_CSI_PR('s', 1003) :     saveMouseTracking     (          ); break; //XTERM
+    case TY_CSI_PR('r', 1003) :  restoreMouseTracking     (          ); break; //XTERM
+
+    case TY_CSI_PR('h', 1006) :          setMode      (MODE_Mouse1006); break; //XTERM
+    case TY_CSI_PR('l', 1006) :        resetMode      (MODE_Mouse1006); break; //XTERM
+    case TY_CSI_PR('s', 1006) :         saveMode      (MODE_Mouse1006); break; //XTERM
+    case TY_CSI_PR('r', 1006) :      restoreMode      (MODE_Mouse1006); break; //XTERM
 
     case TY_CSI_PR('h', 1047) :          setMode      (MODE_AppScreen); break; //XTERM
     case TY_CSI_PR('l', 1047) : screen[1]->clearEntireScreen(); resetMode(MODE_AppScreen); break; //XTERM
@@ -956,18 +962,52 @@ void TEmuVt102::reportAnswerBack()
     when gui->setMouseMarks is set via setMode(MODE_Mouse1000).
 
     `x',`y' are 1-based.
-    `ev' (event) indicates the button pressed (0-2)
-                 or a general mouse release (3).
+    `button' is the button pressed or released (0-2), 3 for none
+             (motion only) or 4/5 for the mouse wheel.
+    `eventType' is 0 for a press, 1 for motion and 2 for a release.
 */
 
-void TEmuVt102::onMouse( int cb, int cx, int cy )
-{ char tmp[20];
+void TEmuVt102::onMouse( int button, int cx, int cy, int eventType )
+{ char tmp[40];
   if (!connected || cx<1 || cy<1) return;
-  // normal buttons are passed as 0x20 + button,
-  // mouse wheel (buttons 4,5) as 0x5c + button
-  if (cb >= 4) cb += 0x3c;
-  sprintf(tmp,"\033[M%c%c%c",cb+0x20,cx+0x20,cy+0x20);
+  if (eventType == 1 && !getMode(MODE_Mouse1003) &&
+      !(getMode(MODE_Mouse1002) && button != 3))
+    return; // motion not asked for
+  // buttons are 0-2, the mouse wheel 64/65, motion adds 32
+  int cb = (button >= 4) ? button - 4 + 64 : button;
+  if (eventType == 1) cb += 32;
+  if (getMode(MODE_Mouse1006))
+  {
+    sprintf(tmp,"\033[<%d;%d;%d%c",cb,cx,cy,eventType == 2 ? 'm' : 'M');
+  }
+  else
+  {
+    if (eventType == 2) cb = 3; // the X10 encoding does not tell which button
+    if (cx > 223 || cy > 223) return; // cannot be encoded in a byte
+    sprintf(tmp,"\033[M%c%c%c",cb+0x20,cx+0x20,cy+0x20);
+  }
   sendString(tmp);
+}
+
+void TEmuVt102::setMouseTracking(int mode)
+{
+  if (mode) setMode(MODE_Mouse1000); else resetMode(MODE_Mouse1000);
+  if (mode == 1002) setMode(MODE_Mouse1002); else resetMode(MODE_Mouse1002);
+  if (mode == 1003) setMode(MODE_Mouse1003); else resetMode(MODE_Mouse1003);
+}
+
+void TEmuVt102::saveMouseTracking()
+{
+  saveMode(MODE_Mouse1000);
+  saveMode(MODE_Mouse1002);
+  saveMode(MODE_Mouse1003);
+}
+
+void TEmuVt102::restoreMouseTracking()
+{
+  restoreMode(MODE_Mouse1000);
+  restoreMode(MODE_Mouse1002);
+  restoreMode(MODE_Mouse1003);
 }
 
 /*!
@@ -1223,7 +1263,8 @@ void TEmuVt102::restoreCursor()
 
 void TEmuVt102::resetModes()
 {
-  resetMode(MODE_Mouse1000); saveMode(MODE_Mouse1000);
+  setMouseTracking(0); saveMouseTracking();
+  resetMode(MODE_Mouse1006); saveMode(MODE_Mouse1006);
   resetMode(MODE_AppScreen); saveMode(MODE_AppScreen);
   resetMode(MODE_BracketedPaste); saveMode(MODE_BracketedPaste);
   resetMode(MODE_FocusEvents); saveMode(MODE_FocusEvents);

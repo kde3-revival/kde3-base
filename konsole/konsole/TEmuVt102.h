@@ -35,7 +35,10 @@
 #define MODE_Ansi      (MODES_SCREEN+4)
 #define MODE_BracketedPaste (MODES_SCREEN+5)
 #define MODE_FocusEvents (MODES_SCREEN+6)
-#define MODE_total     (MODES_SCREEN+7)
+#define MODE_Mouse1002 (MODES_SCREEN+7)
+#define MODE_Mouse1003 (MODES_SCREEN+8)
+#define MODE_Mouse1006 (MODES_SCREEN+9)
+#define MODE_total     (MODES_SCREEN+10)
 
 struct DECpar
 {
@@ -65,7 +68,7 @@ public:
   virtual void onKeyPress(QKeyEvent*);
 public slots: // signals incoming from TEWidget
 
-  void onMouse(int cb, int cx, int cy);
+  void onMouse(int button, int cx, int cy, int eventType);
   void onFocusChange(bool in);
 
 signals:
@@ -127,6 +130,10 @@ private:
   void reportAnswerBack();
   void reportCursorPosition();
   void reportTerminalParms(int p);
+
+  void setMouseTracking(int mode);
+  void saveMouseTracking();
+  void restoreMouseTracking();
 
   void onScrollLock();
   void scrollLock(const bool lock);
