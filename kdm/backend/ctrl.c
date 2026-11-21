@@ -81,6 +81,19 @@ nukeSock( struct cmdsock *cs )
 
 static CtrlRec ctrl = { 0, 0, -1, 0, 0, { -1, 0, 0 } };
 
+/* Make dir, which must be a directory, ours and accessible only by us. */
+static int
+isPrivateDir( const char *dir )
+{
+	struct stat st;
+
+	if (lstat( dir, &st ) || !S_ISDIR(st.st_mode))
+		return 0;
+	if (chown( dir, geteuid(), getegid() ) || chmod( dir, 0700 ))
+		return 0;
+	return 1;
+}
+
 void
 openCtrl( struct display *d )
 {
@@ -141,13 +154,22 @@ openCtrl( struct display *d )
 				if (strlen( cr->path ) >= sizeof(sa.sun_path))
 					LogError( "path %\"s too long; no control sockets will be available\n",
 					          cr->path );
-				else if (mkdir( sockdir, 0755 ) && errno != EEXIST)
+				else if (mkdir( sockdir, 0700 ) && errno != EEXIST)
 					LogError( "mkdir %\"s failed; no control sockets will be available\n",
 					          sockdir );
+				/*
+				 * The directory may be left over from a session:
+				 * chownCtrl() gave it to that user, who may have
+				 * put a symlink in place of the socket, so that the
+				 * chmod() below would hit another file (CVE-2010-0436).
+				 * Take it back and close it before touching what is
+				 * inside; nobody but us can replace the directory
+				 * itself in fifoDir.
+				 */
+				else if (!isPrivateDir( sockdir ))
+					LogError( "Cannot secure %\"s; no control sockets will be available\n",
+					          sockdir );
 				else {
-					if (!d)
-						chown( sockdir, -1, fifoGroup );
-					chmod( sockdir, 0750 );
 					if ((cr->fd = socket( PF_UNIX, SOCK_STREAM, 0 )) < 0)
 						LogError( "Cannot create control socket\n" );
 					else {
@@ -157,6 +179,9 @@ openCtrl( struct display *d )
 						if (!bind( cr->fd, (struct sockaddr *)&sa, sizeof(sa) )) {
 							if (!listen( cr->fd, 5 )) {
 								chmod( cr->path, 0666 );
+								if (!d)
+									chown( sockdir, -1, fifoGroup );
+								chmod( sockdir, 0750 );
 								RegisterCloseOnFork( cr->fd );
 								RegisterInput( cr->fd );
 								free( sockdir );
