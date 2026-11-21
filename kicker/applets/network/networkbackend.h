@@ -41,8 +41,12 @@ class NetworkBackendPrivate;
  * give it back with deref().
  *
  * Settings the applet creates keep the Wi-Fi password in the connection
- * profile, where NetworkManager stores it readable by root only: it
- * connects before anyone logs in, without a keyring.
+ * profile, where NetworkManager stores it readable by root only, without
+ * a keyring.  With the permission to change the connections of the system
+ * without asking (polkit settings.modify.system "yes") they are for all
+ * users and connect before anyone logs in; otherwise (also "auth", the
+ * default of many distributions) they belong to the user, and connect only
+ * while the user is logged in.
  */
 class NetworkBackend : public QObject
 {

@@ -97,12 +97,14 @@ public:
     // A request of NetworkManager for a password, waiting for the user.
     struct SecretRequest
     {
-        SecretRequest() : id(0), connection(0), callback(0), userData(0) {}
+        SecretRequest()
+            : id(0), connection(0), agentOwned(false), callback(0), userData(0) {}
         int id;
         NMConnection *connection;   // referenced
         QCString path;
         QCString setting;
         QString ssid;
+        bool agentOwned;            // the profile leaves the password to agents
         NMSecretAgentOldGetSecretsFunc callback;
         gpointer userData;
     };
@@ -164,6 +166,7 @@ public:
                                gpointer data);
     static void scanDone(GObject *source, GAsyncResult *result, gpointer data);
     static void deleteDone(GObject *source, GAsyncResult *result, gpointer data);
+    static void updateDone(GObject *source, GAsyncResult *result, gpointer data);
 
     static void getSecrets(NMSecretAgentOld *agent, NMConnection *connection,
                            const char *path, const char *settingName,
@@ -1331,6 +1334,27 @@ void NetworkBackendPrivate::scanDone(GObject *source, GAsyncResult *result,
     g_error_free(error);
 }
 
+void NetworkBackendPrivate::updateDone(GObject *source, GAsyncResult *result,
+                                       gpointer)
+{
+    GError *error = 0;
+    GVariant *reply = nm_remote_connection_update2_finish(NM_REMOTE_CONNECTION(source),
+                                                          result, &error);
+    if (reply)
+    {
+        g_variant_unref(reply);
+        return;
+    }
+    // e.g. a profile of the system without the permission: the password
+    // is asked for again next time
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+        kdWarning() << "network applet: could not keep the password: "
+                    << dbusError(error) << endl;
+    }
+    g_error_free(error);
+}
+
 void NetworkBackendPrivate::deleteDone(GObject *source, GAsyncResult *result,
                                        gpointer)
 {
@@ -1382,12 +1406,48 @@ void NetworkBackendPrivate::getSecrets(NMSecretAgentOld *agent,
         return;
     }
 
+    // A password NetworkManager keeps in a profile of the system (one for
+    // all users) is changed only with the permission to change those:
+    // without it NetworkManager throws away the one typed in.  Say so
+    // instead of asking for nothing.
+    NMSettingSecretFlags pskFlags = NM_SETTING_SECRET_FLAG_NONE;
+    nm_setting_get_secret_flags(NM_SETTING(sec), NM_SETTING_WIRELESS_SECURITY_PSK,
+                                &pskFlags, 0);
+    NMSettingConnection *sc = nm_connection_get_setting_connection(connection);
+    bool systemProfile = !sc || nm_setting_connection_get_num_permissions(sc) == 0;
+    bool systemOwned = (pskFlags & (NM_SETTING_SECRET_FLAG_AGENT_OWNED |
+                                    NM_SETTING_SECRET_FLAG_NOT_SAVED)) == 0;
+    if (systemProfile && systemOwned && d->client)
+    {
+        NMClientPermissionResult allowed = nm_client_get_permission_result(
+            d->client, NM_CLIENT_PERMISSION_SETTINGS_MODIFY_SYSTEM);
+        if (allowed == NM_CLIENT_PERMISSION_RESULT_NO ||
+            allowed == NM_CLIENT_PERMISSION_RESULT_AUTH)
+        {
+            kdDebug() << "network applet: password of the system connection "
+                      << ssid << " requested, not allowed to change it" << endl;
+            GError *error = g_error_new(NM_SECRET_AGENT_ERROR,
+                                        NM_SECRET_AGENT_ERROR_NO_SECRETS,
+                                        "Not allowed to change %s",
+                                        nm_connection_get_id(connection));
+            callback(agent, connection, 0, error, userData);
+            g_error_free(error);
+            emit d->q->error(i18n("The Wi-Fi network %1 needs a new password. Its "
+                                  "connection is shared by all users of this "
+                                  "computer: only an administrator can change "
+                                  "the password, in the network settings.")
+                                 .arg(ssid));
+            return;
+        }
+    }
+
     SecretRequest request;
     request.id = d->nextRequest++;
     request.connection = NM_CONNECTION(g_object_ref(connection));
     request.path = path;
     request.setting = settingName;
     request.ssid = ssid;
+    request.agentOwned = pskFlags & NM_SETTING_SECRET_FLAG_AGENT_OWNED;
     request.callback = callback;
     request.userData = userData;
     d->requests.append(request);
@@ -1427,7 +1487,8 @@ void NetworkBackendPrivate::cancelGetSecrets(NMSecretAgentOld *agent,
 }
 
 // The passwords this agent gives are kept in the profiles by
-// NetworkManager: there is nothing to save or delete here.
+// NetworkManager (answerSecret() moves the ones left to agents there):
+// there is nothing to save or delete here.
 void NetworkBackendPrivate::saveSecrets(NMSecretAgentOld *agent,
                                         NMConnection *connection, const char *,
                                         NMSecretAgentOldSaveSecretsFunc callback,
@@ -1759,6 +1820,36 @@ void NetworkBackend::answerSecret(int request, const QString &password)
 
     r.callback(d->agent, r.connection, result, 0, r.userData);
     g_variant_unref(result);
+
+    // A profile made elsewhere (GNOME's applet, plasma-nm) can leave the
+    // password to the agent of the user, who keeps it in a keyring.  This
+    // one has none: keep the password in the profile, as for the ones the
+    // applet makes, or it is asked for at each connection and the
+    // automatic ones fail.
+    NMRemoteConnection *remote =
+        r.agentOwned && d->client
+            ? nm_client_get_connection_by_path(d->client, r.path.data()) : 0;
+    if (remote)
+    {
+        NMConnection *copy = nm_simple_connection_new_clone(NM_CONNECTION(remote));
+        NMSettingWirelessSecurity *sec =
+            nm_connection_get_setting_wireless_security(copy);
+        if (sec)
+        {
+            kdDebug() << "network applet: keeping the password of " << r.ssid
+                      << " in its connection" << endl;
+            g_object_set(sec,
+                         NM_SETTING_WIRELESS_SECURITY_PSK, password.utf8().data(),
+                         NM_SETTING_WIRELESS_SECURITY_PSK_FLAGS,
+                         NM_SETTING_SECRET_FLAG_NONE,
+                         (char *)0);
+            nm_remote_connection_update2(
+                remote, nm_connection_to_dbus(copy, NM_CONNECTION_SERIALIZE_ALL),
+                NM_SETTINGS_UPDATE2_FLAG_NONE, 0, d->cancellable,
+                NetworkBackendPrivate::updateDone, 0);
+        }
+        g_object_unref(copy);
+    }
     g_object_unref(r.connection);
 }
 
