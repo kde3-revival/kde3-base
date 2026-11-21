@@ -137,6 +137,10 @@ int main( int argc, char* argv[] )
             QMessageBox::Ok | QMessageBox::Default | QMessageBox::Escape,
             QMessageBox::NoButton, QMessageBox::NoButton );
         box.setTextFormat( Qt::PlainText );
+        // Not centered: the startup splash screen is centered, stays on top
+        // and keeps running when kdeinit or ksmserver could not be started.
+        // xmessage also showed up in the top left corner.
+        box.move( 0, 0 );
         box.exec();
     }
 
