@@ -772,6 +772,18 @@ endif()
 # konsole/fonts: the console fonts need bdftopcf (checked there)
 option(KDEBASE_KONSOLE_FONTS "Install Konsole's console fonts (needs bdftopcf)" ON)
 
+# kicker/applets/volume: the volume control applet talks to the sound
+# server (PulseAudio, or PipeWire's PulseAudio server) with libpulse
+option(KDEBASE_VOLUME_APPLET "Build the volume control panel applet (needs libpulse)" ON)
+if(KDEBASE_VOLUME_APPLET)
+  pkg_check_modules(LIBPULSE QUIET IMPORTED_TARGET libpulse)
+  if(NOT LIBPULSE_FOUND)
+    message(FATAL_ERROR "libpulse (PulseAudio's client library) was not found; it "
+      "is needed for the volume control panel applet.  Install it, or configure "
+      "with -DKDEBASE_VOLUME_APPLET=OFF to build without the applet.")
+  endif()
+endif()
+
 # configure.in.bot of kioslave/smb, kcontrol/* etc.: the summary of what
 # is left out.  <result variable>:<option switching it off, or ->:<what>
 foreach(_what
@@ -793,7 +805,8 @@ foreach(_what
     "HAVE_XSCREENSAVER:KDE3_WITH_XSCREENSAVER:XScreenSaver extension"
     "KDE3_BUILD_KFONTINST:-:FreeType 2 and fontconfig (kfontinst)"
     "KDE3_BUILD_KDM:-:libXau and libXdmcp (kdm)"
-    "KDEBASE_KONSOLE_FONTS:KDEBASE_KONSOLE_FONTS:Konsole's console fonts")
+    "KDEBASE_KONSOLE_FONTS:KDEBASE_KONSOLE_FONTS:Konsole's console fonts"
+    "KDEBASE_VOLUME_APPLET:KDEBASE_VOLUME_APPLET:Volume control panel applet (libpulse)")
   string(REPLACE ":" ";" _what "${_what}")
   list(GET _what 0 _var)
   list(GET _what 1 _opt)

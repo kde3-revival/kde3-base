@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Plugin
+Name=Volume Control
+Comment=Volume and output device of the sound server (PulseAudio or PipeWire)
+Icon=kmix
+X-KDE-Library=volume_panelapplet
+X-KDE-UniqueApplet=false
