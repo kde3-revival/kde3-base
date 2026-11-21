@@ -64,6 +64,11 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <X11/extensions/Xdamage.h>
 #include <X11/extensions/Xfixes.h>
 #endif
+#if defined( OVERVIEW_COMPOSITE ) && defined( KWIN_PANORAMIX_CHECK )
+#define OVERVIEW_PANORAMIX_CHECK
+#include <X11/extensions/Xinerama.h>
+#include <X11/extensions/Xrandr.h>
+#endif
 #if defined( OVERVIEW_COMPOSITE ) && defined( HAVE_XPRESENT )
 #define OVERVIEW_PRESENT
 #include <X11/extensions/Xpresent.h>
@@ -442,6 +447,7 @@ bool Overview::checkExtensions()
     ext_checked = true;
     int ev, err;
     int major = 0, minor = 0;
+    bool panoramix = false;
     // solid fills need Render 0.10, transformations and filters 0.6
     if( XRenderQueryExtension( dpy, &ev, &err ) && XRenderQueryVersion( dpy, &major, &minor )
         && ( major > 0 || minor >= 10 ))
@@ -461,6 +467,46 @@ bool Overview::checkExtensions()
             have_composite = true;
         }
 #endif
+#ifdef OVERVIEW_PANORAMIX_CHECK
+    // Several X screens joined by Xinerama (PanoramiX, not RandR outputs):
+    // Composite redirection breaks there (the other screens' areas stay
+    // stale).  RandR then reports no CRTCs covering the whole root.
+    if( have_composite && XineramaIsActive( dpy ))
+        {
+        int screens = 0;
+        XineramaScreenInfo* info = XineramaQueryScreens( dpy, &screens );
+        if( info != NULL )
+            XFree( info );
+        int rr_event, rr_error;
+        int rr_major = 0, rr_minor = 0;
+        if( screens > 1 && XRRQueryExtension( dpy, &rr_event, &rr_error )
+            && XRRQueryVersion( dpy, &rr_major, &rr_minor ) && ( rr_major > 1 || rr_minor >= 2 ))
+            {
+            XRRScreenResources* res = XRRGetScreenResources( dpy, root );
+            QRect covered;
+            for( int i = 0;
+                 res != NULL && i < res->ncrtc;
+                 ++i )
+                {
+                XRRCrtcInfo* crtc = XRRGetCrtcInfo( dpy, res, res->crtcs[ i ] );
+                if( crtc != NULL && crtc->mode != None )
+                    covered |= QRect( crtc->x, crtc->y, crtc->width, crtc->height );
+                if( crtc != NULL )
+                    XRRFreeCrtcInfo( crtc );
+                }
+            if( res != NULL )
+                XRRFreeScreenResources( res );
+            if( covered != QRect( 0, 0, DisplayWidth( dpy, DefaultScreen( dpy )),
+                DisplayHeight( dpy, DefaultScreen( dpy ))))
+                {
+                have_composite = false;
+                panoramix = true;
+                kdWarning( 1212 ) << "Window overview without window contents: Composite doesn't work"
+                    " with several X screens joined by Xinerama" << endl;
+                }
+            }
+        }
+#endif
 #ifdef OVERVIEW_PRESENT
     if( have_composite && getenv( "KWIN_OVERVIEW_NO_PRESENT" ) == NULL )
         {
@@ -475,7 +521,7 @@ bool Overview::checkExtensions()
 #endif
     if( !have_render )
         kdWarning( 1212 ) << "Window overview disabled: the X server lacks RENDER 0.10" << endl;
-    else if( !have_composite )
+    else if( !have_composite && !panoramix )
         kdWarning( 1212 ) << "Window overview without window contents: no Composite 0.3/Damage/XFixes 2" << endl;
     if( debug )
         kdWarning( 1212 ) << "overview: render " << have_render << " composite " << have_composite

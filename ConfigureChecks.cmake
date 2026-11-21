@@ -315,6 +315,12 @@ if(KDE3_WITH_COMPOSITE AND X11_Xcomposite_FOUND AND X11_Xdamage_FOUND
     set(HAVE_XPRESENT 1)
     list(APPEND LIB_KWIN_OVERVIEW X11::Xpresent)
   endif()
+  # several X screens joined by Xinerama (no Composite there) are told
+  # from RandR outputs with Xrandr
+  if(X11_Xinerama_FOUND AND X11_Xrandr_FOUND)
+    set(KWIN_PANORAMIX_CHECK 1)
+    list(APPEND LIB_KWIN_OVERVIEW X11::Xinerama X11::Xrandr)
+  endif()
 endif()
 
 # ---- ksysguard (ksysguard/configure.in.in, ksysguardd/configure.in.in) ---

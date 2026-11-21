@@ -155,6 +155,8 @@
 #cmakedefine HAVE_XDAMAGE 1
 /* Define if you have the Present extension library */
 #cmakedefine HAVE_XPRESENT 1
+/* Define if KWin can tell several X screens joined by Xinerama (Xinerama and Xrandr libraries) */
+#cmakedefine KWIN_PANORAMIX_CHECK 1
 
 /* ---- kdesktop ----------------------------------------------------- */
 
