@@ -23,6 +23,29 @@ if kcheckrunning >/dev/null 2>&1; then
 	exit 1
 fi
 
+# The desktop's names for the freedesktop.org specifications (autostart
+# OnlyShowIn/NotShowIn, menus, xdg-desktop-portal's DESKTOP-portals.conf,
+# xdg-utils, ...).  KDE3 first, then GNOME as a fallback: the applications
+# that know no KDE3 take their GNOME path, so Chromium and the Electron
+# applications keep their passwords in the GNOME keyring (libsecret) and
+# xdg-open uses gio.  The GNOME-only autostart entries are still not
+# started (see kinit/autostart.cpp in kdelibs), and kde3-portals.conf
+# chooses the portal backends instead of gnome-portals.conf.
+# A display manager sets XDG_CURRENT_DESKTOP from DesktopNames=KDE3;GNOME;
+# of the session file; a value that does not start with KDE3 was inherited
+# from somewhere else (startx from another desktop's terminal, a session
+# file without DesktopNames) and is replaced.
+case "$XDG_CURRENT_DESKTOP" in
+  KDE3|KDE3:*) ;;
+  *) XDG_CURRENT_DESKTOP=KDE3:GNOME; export XDG_CURRENT_DESKTOP ;;
+esac
+if test -z "$XDG_SESSION_DESKTOP"; then
+  XDG_SESSION_DESKTOP=KDE3; export XDG_SESSION_DESKTOP
+fi
+if test -z "$DESKTOP_SESSION"; then
+  DESKTOP_SESSION=kde3; export DESKTOP_SESSION
+fi
+
 # Set the background to plain black.
 # The standard X background is nasty, causing moire effects and exploding
 # people's heads.
@@ -257,6 +280,23 @@ export KDE_FULL_SESSION
 kstartupx --set-full-session
 KDE_SESSION_UID=$UID
 export KDE_SESSION_UID
+
+# The services that D-Bus and the systemd user manager start on demand
+# (xdg-desktop-portal and its backends, gnome-keyring, ...) do not inherit
+# the session's environment: give them the display and the desktop's
+# names, as the other desktops do, so that xdg-desktop-portal reads
+# kde3-portals.conf (found through XDG_DATA_DIRS when KDE is not installed
+# in /usr).  Only when a session bus is there: without one, D-Bus would
+# start a new bus for the X display.
+if test -n "$DBUS_SESSION_BUS_ADDRESS" || test -S "$XDG_RUNTIME_DIR/bus"; then
+  session_env="DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP DESKTOP_SESSION XDG_DATA_DIRS XDG_CONFIG_DIRS"
+  if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+    dbus-update-activation-environment --systemd $session_env
+  elif command -v systemctl >/dev/null 2>&1; then
+    systemctl --user import-environment $session_env 2>/dev/null
+  fi
+  unset session_env
+fi
 
 # We set LD_BIND_NOW to increase the efficiency of kdeinit.
 # kdeinit unsets this variable before loading applications.

@@ -32,6 +32,10 @@ install(PROGRAMS
   kde3
   DESTINATION ${KDE3_BIN_INSTALL_DIR})
 
+# xdg-desktop-portal's backends for XDG_CURRENT_DESKTOP=KDE3:GNOME
+install(FILES kde3-portals.conf
+  DESTINATION ${KDE3_DATA_ROOT_INSTALL_DIR}/xdg-desktop-portal)
+
 add_subdirectory(libkonq)
 add_subdirectory(kcheckpass)
 add_subdirectory(kdesu)
