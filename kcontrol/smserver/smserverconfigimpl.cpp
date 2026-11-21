@@ -15,15 +15,24 @@
  *                                                                         *
  ***************************************************************************/
 
+#include <qcheckbox.h>
+#include <qradiobutton.h>
+
 #include "smserverconfigimpl.h"
+#include "logind.h" // from ksmserver
 #include "smserverconfigimpl.moc"
 
-SMServerConfigImpl::SMServerConfigImpl(QWidget *parent, const char *name ) : SMServerConfigDlg(parent,name) {
-
+SMServerConfigImpl::SMServerConfigImpl(QWidget *parent, const char *name ) : SMServerConfigDlg(parent,name),
+  canSuspend(Logind::canSuspend()), canHibernate(Logind::canHibernate()) {
+  connect(offerSleepCheck, SIGNAL(toggled(bool)), SLOT(sleepOffered(bool)));
 }
 SMServerConfigImpl::~SMServerConfigImpl(){
 }
 /** No descriptions */
+void SMServerConfigImpl::sleepOffered(bool on){
+  sleepRadio->setEnabled(on && canSuspend);
+  hibernateRadio->setEnabled(on && canHibernate);
+}
 void SMServerConfigImpl::configChanged(){
 
  emit changed();

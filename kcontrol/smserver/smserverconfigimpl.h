@@ -33,9 +33,13 @@ public:
 public slots: // Public slots
   /** No descriptions */
   void configChanged();
+  /** Sleeping is a default only where offered and the system allows it */
+  void sleepOffered(bool on);
 signals: // Signals
   /** No descriptions */
   void changed();
+private:
+  bool canSuspend, canHibernate;
 };
 
 #endif

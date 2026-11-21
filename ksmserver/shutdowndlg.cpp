@@ -88,7 +88,8 @@ void KSMShutdownFeedback::slotPaintEffect()
 KSMShutdownDlg::KSMShutdownDlg( QWidget* parent,
                                 bool mayHalt, bool mayReboot, bool dmBootOptions,
                                 bool maySuspend, bool mayHibernate,
-                                KApplication::ShutdownType sdtype )
+                                KApplication::ShutdownType sdtype,
+                                SleepType defaultSleep )
   : QDialog( parent, 0, TRUE, WType_Popup ),
     m_shutdownType( sdtype ), m_sleep( NoSleep ), targets(0)
     // this is a WType_Popup on purpose. Do not change that! Not
@@ -183,6 +184,8 @@ KSMShutdownDlg::KSMShutdownDlg( QWidget* parent,
         btnSuspend->setFont( btnFont );
         buttonlay->addWidget( btnSuspend );
         connect(btnSuspend, SIGNAL(clicked()), SLOT(slotSuspend()));
+        if ( defaultSleep == SleepSuspend )
+            btnSuspend->setFocus();
     }
 
     if (mayHibernate) {
@@ -191,6 +194,8 @@ KSMShutdownDlg::KSMShutdownDlg( QWidget* parent,
         btnHibernate->setFont( btnFont );
         buttonlay->addWidget( btnHibernate );
         connect(btnHibernate, SIGNAL(clicked()), SLOT(slotHibernate()));
+        if ( defaultSleep == SleepHibernate )
+            btnHibernate->setFocus();
     }
 
     buttonlay->addStretch( 1 );
@@ -261,7 +266,7 @@ bool KSMShutdownDlg::confirmShutdown( bool mayHalt, bool mayReboot, bool dmBootO
     KSMShutdownDlg* l = new KSMShutdownDlg( 0,
                                             //KSMShutdownFeedback::self(),
                                             mayHalt, mayReboot, dmBootOptions,
-                                            maySuspend, mayHibernate, sdtype );
+                                            maySuspend, mayHibernate, sdtype, sleep );
 
     // Show dialog (will save the background in showEvent)
     QSize sh = l->sizeHint();

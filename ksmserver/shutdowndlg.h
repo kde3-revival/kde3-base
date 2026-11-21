@@ -54,6 +54,7 @@ public:
     // to put the computer to sleep, or (if it is NoSleep) @p sdtype and
     // @p bopt say how to end the session.  The boot options to restart
     // into are offered only if @p dmBootOptions (the DM shuts down).
+    // On entry, @p sdtype or else @p sleep is the default (focused) action.
     static bool confirmShutdown( bool mayHalt, bool mayReboot, bool dmBootOptions,
                                  bool maySuspend, bool mayHibernate,
                                  KApplication::ShutdownType& sdtype, QString& bopt,
@@ -73,7 +74,7 @@ protected:
 private:
     KSMShutdownDlg( QWidget* parent, bool mayHalt, bool mayReboot, bool dmBootOptions,
                     bool maySuspend, bool mayHibernate,
-                    KApplication::ShutdownType sdtype );
+                    KApplication::ShutdownType sdtype, SleepType defaultSleep );
     KApplication::ShutdownType m_shutdownType;
     SleepType m_sleep;
     QString m_bootOption;

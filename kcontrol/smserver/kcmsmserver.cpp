@@ -69,10 +69,12 @@ void SMServerConfig::load(bool useDefaults )
   dialog->confirmLogoutCheck->setChecked(c->readBoolEntry("confirmLogout", true));
   bool en = c->readBoolEntry("offerShutdown", true);
   dialog->offerShutdownCheck->setChecked(en);
-  dialog->sdGroup->setEnabled(en);
+  dialog->haltRadio->setEnabled(en);
+  dialog->rebootRadio->setEnabled(en);
   en = c->readBoolEntry("offerSleep", true);
   dialog->offerSleepCheck->setChecked(en);
   dialog->lockBeforeSleepCheck->setEnabled(en);
+  dialog->sleepOffered(en);
   dialog->lockBeforeSleepCheck->setChecked(c->readBoolEntry("lockBeforeSleep", true));
 
   QString s = c->readEntry( "loginMode" );
@@ -83,16 +85,25 @@ void SMServerConfig::load(bool useDefaults )
   else // "restorePreviousLogout"
       dialog->previousSessionRadio->setChecked(true);
 
-  switch (c->readNumEntry("shutdownType", int(KApplication::ShutdownTypeNone))) {
-  case int(KApplication::ShutdownTypeHalt):
-    dialog->haltRadio->setChecked(true);
-    break;
-  case int(KApplication::ShutdownTypeReboot):
-    dialog->rebootRadio->setChecked(true);
-    break;
-  default:
-    dialog->logoutRadio->setChecked(true);
-    break;
+  // Sleeping keeps the session, so it is no KApplication::ShutdownType:
+  // a default to sleep is defaultSleep, with shutdownType None
+  QString sleep = c->readEntry("defaultSleep");
+  if ( sleep == "suspend" )
+    dialog->sleepRadio->setChecked(true);
+  else if ( sleep == "hibernate" )
+    dialog->hibernateRadio->setChecked(true);
+  else {
+    switch (c->readNumEntry("shutdownType", int(KApplication::ShutdownTypeNone))) {
+    case int(KApplication::ShutdownTypeHalt):
+      dialog->haltRadio->setChecked(true);
+      break;
+    case int(KApplication::ShutdownTypeReboot):
+      dialog->rebootRadio->setChecked(true);
+      break;
+    default:
+      dialog->logoutRadio->setChecked(true);
+      break;
+    }
   }
   dialog->excludeLineedit->setText( c->readEntry("excludeApps"));
 
@@ -122,6 +133,9 @@ void SMServerConfig::save()
                    dialog->rebootRadio->isChecked() ?
                      int(KApplication::ShutdownTypeReboot) :
                      int(KApplication::ShutdownTypeNone));
+  c->writeEntry( "defaultSleep",
+                 dialog->sleepRadio->isChecked() ? "suspend" :
+                   dialog->hibernateRadio->isChecked() ? "hibernate" : "none" );
   c->writeEntry("excludeApps", dialog->excludeLineedit->text());
   c->sync();
   delete c;

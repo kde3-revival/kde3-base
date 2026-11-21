@@ -147,7 +147,34 @@ void KSMServer::shutdown( KApplication::ShutdownConfirm confirm,
     bool maysd = mayHalt || mayReboot;
     bool explicitType = sdtype != KApplication::ShutdownTypeNone &&
                         sdtype != KApplication::ShutdownTypeDefault;
-    if (sdtype == KApplication::ShutdownTypeDefault)
+    // Sleeping does not end the session, so it does not depend on
+    // offerShutdown or on what the display manager allows
+    bool offerSleep = config->readBoolEntry( "offerSleep", true );
+    bool maySuspend = false;
+    bool mayHibernate = false;
+    // The default may be to sleep instead (defaultSleep, which keeps
+    // shutdownType at None for KApplication::ShutdownType has no such
+    // value), but only where the user is asked or has chosen not to be:
+    // a request not to confirm (a fast XSMP shutdown) ends the session
+    KSMShutdownDlg::SleepType defaultSleep = KSMShutdownDlg::NoSleep;
+    if ( sdtype == KApplication::ShutdownTypeDefault &&
+         confirm != KApplication::ShutdownConfirmNo && offerSleep ) {
+        QString s = config->readEntry( "defaultSleep" );
+        if ( s == "suspend" )
+            defaultSleep = KSMShutdownDlg::SleepSuspend;
+        else if ( s == "hibernate" )
+            defaultSleep = KSMShutdownDlg::SleepHibernate;
+    }
+    if ( offerSleep && ( !logoutConfirmed || defaultSleep != KSMShutdownDlg::NoSleep ) ) {
+        maySuspend = Logind::canSuspend();
+        mayHibernate = Logind::canHibernate();
+    }
+    if ( ( defaultSleep == KSMShutdownDlg::SleepSuspend && !maySuspend ) ||
+         ( defaultSleep == KSMShutdownDlg::SleepHibernate && !mayHibernate ) )
+        defaultSleep = KSMShutdownDlg::NoSleep; // as for an unavailable halt: log out
+    if ( defaultSleep != KSMShutdownDlg::NoSleep )
+        sdtype = KApplication::ShutdownTypeNone;
+    else if (sdtype == KApplication::ShutdownTypeDefault)
         sdtype = maysd ? (KApplication::ShutdownType)
                          config->readNumEntry( "shutdownType", (int)KApplication::ShutdownTypeNone )
                        : KApplication::ShutdownTypeNone;
@@ -162,16 +189,9 @@ void KSMServer::shutdown( KApplication::ShutdownConfirm confirm,
 
     dialogActive = true;
     QString bopt;
-    KSMShutdownDlg::SleepType sleep = KSMShutdownDlg::NoSleep;
+    // the dialog starts on the default, which is done if not confirming
+    KSMShutdownDlg::SleepType sleep = defaultSleep;
     if ( !logoutConfirmed ) {
-        // Sleeping does not end the session, so it does not depend on
-        // offerShutdown or on what the display manager allows
-        bool maySuspend = false;
-        bool mayHibernate = false;
-        if ( config->readBoolEntry( "offerSleep", true ) ) {
-            maySuspend = Logind::canSuspend();
-            mayHibernate = Logind::canHibernate();
-        }
         KSMShutdownFeedback::start(); // make the screen gray
         logoutConfirmed =
             KSMShutdownDlg::confirmShutdown( mayHalt, mayReboot, dmShutdown,

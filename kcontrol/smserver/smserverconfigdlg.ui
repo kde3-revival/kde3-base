@@ -141,7 +141,7 @@
                 <string>Default Shutdown Option</string>
             </property>
             <property name="whatsThis" stdset="0">
-                <string>Here you can choose what should happen by default when you log out. This only has meaning, if you logged in through KDM.</string>
+                <string>Here you can choose what should happen by default when you log out: the logout dialog starts on this choice, and it is carried out directly if the logout is not confirmed. Turning off or restarting the computer is possible only where the shutdown options are offered, sleeping or hibernating only where sleep and hibernate are offered and the system allows them; otherwise the session is ended. Sleeping and hibernating keep the session.</string>
             </property>
             <vbox>
                 <property name="name">
@@ -169,6 +169,22 @@
                     </property>
                     <property name="text">
                         <string>&amp;Restart computer</string>
+                    </property>
+                </widget>
+                <widget class="QRadioButton">
+                    <property name="name">
+                        <cstring>sleepRadio</cstring>
+                    </property>
+                    <property name="text">
+                        <string>P&amp;ut computer to sleep</string>
+                    </property>
+                </widget>
+                <widget class="QRadioButton">
+                    <property name="name">
+                        <cstring>hibernateRadio</cstring>
+                    </property>
+                    <property name="text">
+                        <string>Hi&amp;bernate computer</string>
                     </property>
                 </widget>
             </vbox>
@@ -252,7 +268,13 @@
     <connection>
         <sender>offerShutdownCheck</sender>
         <signal>toggled(bool)</signal>
-        <receiver>sdGroup</receiver>
+        <receiver>haltRadio</receiver>
+        <slot>setEnabled(bool)</slot>
+    </connection>
+    <connection>
+        <sender>offerShutdownCheck</sender>
+        <signal>toggled(bool)</signal>
+        <receiver>rebootRadio</receiver>
         <slot>setEnabled(bool)</slot>
     </connection>
     <connection>
