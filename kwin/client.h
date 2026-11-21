@@ -192,6 +192,8 @@ class Client : public QObject, public KDecorationDefines
         void demandAttention( bool set = true );
 
         void setMask( const QRegion& r, int mode = X::Unsorted );
+        // _NET_WM_ICON_GEOMETRY (the taskbar button)
+        QRect iconGeometry() const;
         QRegion mask() const;
 
         void updateDecoration( bool check_workspace_pos, bool force = false );
@@ -323,8 +325,7 @@ class Client : public QObject, public KDecorationDefines
         void setCursor( Position m );
         void setCursor( const QCursor& c );
 
-        void  animateMinimizeOrUnminimize( bool minimize );
-        QPixmap animationPixmap( int w );
+        void  animateMinimizeOrUnminimize( bool minimize, bool animate );
     // transparent stuff
         void drawbound( const QRect& geom );
         void clearbound();

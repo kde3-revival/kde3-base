@@ -312,6 +312,13 @@ class Options : public KDecorationOptions
         bool overviewSuperKey; // Super pressed and released alone toggles it
         bool overviewHotCornerRipple; // ripples from the corner when it fires
 
+        // window animations ([Effects])
+        bool effectsEnabled; // off: no window animations at all (reduced motion)
+        int effectsMinimizeAnimation; // 0 none, 1 scale, 2 genie
+        bool effectsMaximizeAnimation;
+        bool effectsOpenCloseAnimation;
+        int effectsAnimationSpeed; // 0 slow .. 10 fast, 5 normal
+
     private:
         WindowOperation OpTitlebarDblClick;
 

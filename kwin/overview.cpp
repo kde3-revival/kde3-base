@@ -50,6 +50,8 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "client.h"
 #include "options.h"
 #include "utils.h"
+#include "compositing.h"
+#include "effects.h"
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -68,10 +70,6 @@ License. See the file "COPYING" for the exact licensing terms.
 #define OVERVIEW_PANORAMIX_CHECK
 #include <X11/extensions/Xinerama.h>
 #include <X11/extensions/Xrandr.h>
-#endif
-#if defined( OVERVIEW_COMPOSITE ) && defined( HAVE_XPRESENT )
-#define OVERVIEW_PRESENT
-#include <X11/extensions/Xpresent.h>
 #endif
 #if defined( OVERVIEW_COMPOSITE ) && defined( KWIN_OVERVIEW_XI2 )
 #define OVERVIEW_XI2
@@ -93,16 +91,12 @@ namespace KWinInternal
 
 #ifdef HAVE_XRENDER
 
+using namespace Compositing;
+
 namespace
 {
 
-// extension state, checked once
-bool ext_checked = false;
-bool have_render = false;
-bool have_composite = false;
-int damage_event = 0;
-bool have_present = false;
-int present_opcode = 0;
+// more extension state (the rest in compositing.h), checked once
 // XInput 2.1 raw key events (also while another client has a grab)
 bool have_xi_raw = false;
 // XInput 2.3 barrier events and XFixes 5 pointer barriers
@@ -142,33 +136,6 @@ const struct { double delay, duration, scale0, scale1, opacity; } Ripples[ 3 ] =
     {{ 0, 500, 0.25, 1.5, 1.0 }, { 30, 600, 0.0, 1.25, 0.7 }, { 210, 600, 0.0, 1.0, 0.3 }};
 const double RippleTime = 810.0;
 
-struct RectF
-    {
-    double x, y, w, h;
-    RectF() : x( 0 ), y( 0 ), w( 0 ), h( 0 ) {}
-    RectF( double x_, double y_, double w_, double h_ ) : x( x_ ), y( y_ ), w( w_ ), h( h_ ) {}
-    RectF( const QRect& r ) : x( r.x()), y( r.y()), w( r.width()), h( r.height()) {}
-    bool contains( const QPoint& p ) const
-        { return p.x() >= x && p.x() < x + w && p.y() >= y && p.y() < y + h; }
-    double cx() const { return x + w / 2; }
-    double cy() const { return y + h / 2; }
-    };
-
-inline double mix( double a, double b, double t )
-    {
-    return a + ( b - a ) * t;
-    }
-
-inline RectF mix( const RectF& a, const RectF& b, double t )
-    {
-    return RectF( mix( a.x, b.x, t ), mix( a.y, b.y, t ), mix( a.w, b.w, t ), mix( a.h, b.h, t ));
-    }
-
-inline double clamp01( double v )
-    {
-    return v < 0 ? 0 : v > 1 ? 1 : v;
-    }
-
 // the mip level that is downscaled by at most a half
 int mipLevel( double scale )
     {
@@ -176,54 +143,6 @@ int mipLevel( double scale )
     while( level < MipLevels - 1 && scale * ( 1 << ( level + 1 )) <= 1.0 )
         ++level;
     return level;
-    }
-
-// GNOME's overview curve; ease out cubic puts too much of the motion
-// into the first frames
-inline double easeOutQuad( double t )
-    {
-    t = 1 - t;
-    return 1 - t * t;
-    }
-
-// error trapping around requests on windows that may vanish any time
-int trapped_errors = 0;
-int (*old_error_handler)( Display*, XErrorEvent* ) = NULL;
-
-int trapHandler( Display*, XErrorEvent* )
-    {
-    ++trapped_errors;
-    return 0;
-    }
-
-void trapErrors( Display* dpy )
-    {
-    XSync( dpy, False );
-    trapped_errors = 0;
-    old_error_handler = XSetErrorHandler( trapHandler );
-    }
-
-int untrapErrors( Display* dpy )
-    {
-    XSync( dpy, False );
-    XSetErrorHandler( old_error_handler );
-    return trapped_errors;
-    }
-
-XRenderColor renderColor( const QColor& c, double alpha )
-    {
-    XRenderColor col;
-    col.alpha = (unsigned short)( clamp01( alpha ) * 0xffff );
-    col.red = (unsigned short)( c.red() * 0x101 * alpha );
-    col.green = (unsigned short)( c.green() * 0x101 * alpha );
-    col.blue = (unsigned short)( c.blue() * 0x101 * alpha );
-    return col;
-    }
-
-Picture solidPicture( Display* dpy, const QColor& c, double alpha )
-    {
-    XRenderColor col = renderColor( c, alpha );
-    return XRenderCreateSolidFill( dpy, &col );
     }
 
 // an anti-aliased rounded rectangle
@@ -255,16 +174,6 @@ void roundedRect( Display* dpy, Picture dst, const RectF& r, double radius, cons
     XRenderCompositeDoublePoly( dpy, PictOpOver, src, dst,
         XRenderFindStandardFormat( dpy, PictStandardA8 ), 0, 0, 0, 0, pts, n, WindingRule );
     XRenderFreePicture( dpy, src );
-    }
-
-void setTransform( Display* dpy, Picture pic, double sx, double sy, double tx, double ty )
-    {
-    XTransform xf = {{
-        { XDoubleToFixed( sx ), XDoubleToFixed( 0 ), XDoubleToFixed( tx ) },
-        { XDoubleToFixed( 0 ), XDoubleToFixed( sy ), XDoubleToFixed( ty ) },
-        { XDoubleToFixed( 0 ), XDoubleToFixed( 0 ), XDoubleToFixed( 1 ) }
-        }};
-    XRenderSetPictureTransform( dpy, pic, &xf );
     }
 
 // a premultiplied ARGB picture from a QPixmap (icons)
@@ -372,43 +281,14 @@ class OverviewRenderer
     {
     public:
         OverviewRenderer()
-            : width( 0 ), height( 0 ), format( NULL ), gc( NULL ), current( 0 ),
-              present( false ), present_eid( None ), serial( 0 ), queued( 0 ), next_msc( 0 ),
-              last_msc( 0 ), last_ust( 0 ), period( 1000.0 / 60 ), last_complete( 0 ), stat_msc( 0 ),
+            : width( 0 ), height( 0 ), format( NULL ),
               snapshot( None ), snapshot_picture( None ), filter_picture( None )
             {
-            for( int i = 0;
-                 i < Buffers;
-                 ++i )
-                {
-                buffers[ i ] = None;
-                pictures[ i ] = None;
-                busy[ i ] = false;
-                }
             close_pixmap[ 0 ] = close_pixmap[ 1 ] = None;
             close_picture[ 0 ] = close_picture[ 1 ] = None;
             }
         int width, height;
         XRenderPictFormat* format;
-        enum { Buffers = 3 };
-        Pixmap buffers[ Buffers ];
-        Picture pictures[ Buffers ];
-        bool busy[ Buffers ];
-        GC gc;
-        int current;
-        bool present;
-        XID present_eid;
-        unsigned int serial;
-        // presentations queued in the server, at consecutive MSCs
-        int queued;
-        unsigned long long next_msc;
-        unsigned long long last_msc;
-        unsigned long long last_ust;
-        double period; // of the refresh, ms
-        double last_complete; // when the last completion event came
-        unsigned long long stat_msc;
-        // the MSC of the next refresh is known only while frames are flowing
-        bool mscKnown( double t ) const { return last_complete > 0 && t - last_complete < 2.5 * period; }
         Pixmap snapshot; // the screen, without Composite
         Picture snapshot_picture;
         QPixmap filter_pixmap;
@@ -555,6 +435,7 @@ Overview::Overview( Workspace* w )
       keep_redirected( false ),
       temp_redirected( false ),
       r( NULL ),
+      presenter( NULL ),
       settle_start( 0 ),
       last_damage( 0 ),
       last_frame( 0 ),
@@ -580,13 +461,15 @@ Overview::Overview( Workspace* w )
     debug = getenv( "KWIN_OVERVIEW_DEBUG" ) != NULL;
     dump_dir = QFile::decodeName( getenv( "KWIN_OVERVIEW_DUMP" ));
     connect( &frame_timer, SIGNAL( timeout()), SLOT( frameTimeout()));
-    connect( &watchdog_timer, SIGNAL( timeout()), SLOT( presentWatchdog()));
     connect( &settle_timer, SIGNAL( timeout()), SLOT( settleTimeout()));
     connect( &corner_timer, SIGNAL( timeout()), SLOT( cornerTimeout()));
     connect( &monitors_timer, SIGNAL( timeout()), SLOT( monitorsChanged()));
     connect( &dialog_timer, SIGNAL( timeout()), SLOT( dialogTimeout()));
     connect( &ripple_timer, SIGNAL( timeout()), SLOT( rippleTimeout()));
     checkExtensions();
+    presenter = new Presenter( dpy );
+    connect( presenter, SIGNAL( completed( bool, int )), SLOT( presentCompleted( bool, int )));
+    connect( presenter, SIGNAL( idle()), SLOT( presentIdle()));
 #ifdef OVERVIEW_XI2
     if( have_monitors ) // monitors arranged anew without a new screen size
         XRRSelectInput( dpy, root, RRScreenChangeNotifyMask | RRCrtcChangeNotifyMask | RROutputChangeNotifyMask );
@@ -600,82 +483,22 @@ Overview::~Overview()
     stopRipple();
     destroyCorners();
     setKeepRedirected( false );
+    delete presenter;
     }
 
 double Overview::now()
     {
-    struct timespec ts;
-    clock_gettime( CLOCK_MONOTONIC, &ts );
-    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
+    return Compositing::now();
     }
 
 bool Overview::checkExtensions()
     {
-    if( ext_checked )
+    static bool checked = false;
+    if( checked )
         return have_render;
-    ext_checked = true;
-    int ev, err;
-    int major = 0, minor = 0;
-    bool panoramix = false;
-    // solid fills need Render 0.10, transformations and filters 0.6
-    if( XRenderQueryExtension( dpy, &ev, &err ) && XRenderQueryVersion( dpy, &major, &minor )
-        && ( major > 0 || minor >= 10 ))
-        have_render = true;
-#ifdef OVERVIEW_COMPOSITE
-    major = minor = 0;
-    // the overlay window needs Composite 0.3
-    if( have_render && XCompositeQueryExtension( dpy, &ev, &err )
-        && XCompositeQueryVersion( dpy, &major, &minor ) && ( major > 0 || minor >= 3 ))
-        {
-        int damage_error;
-        int fixes_event, fixes_error;
-        int fixes_major = 0, fixes_minor = 0;
-        if( XDamageQueryExtension( dpy, &damage_event, &damage_error )
-            && XFixesQueryExtension( dpy, &fixes_event, &fixes_error )
-            && XFixesQueryVersion( dpy, &fixes_major, &fixes_minor ) && fixes_major >= 2 )
-            have_composite = true;
-        }
-#endif
-#ifdef OVERVIEW_PANORAMIX_CHECK
-    // Several X screens joined by Xinerama (PanoramiX, not RandR outputs):
-    // Composite redirection breaks there (the other screens' areas stay
-    // stale).  RandR then reports no CRTCs covering the whole root.
-    if( have_composite && XineramaIsActive( dpy ))
-        {
-        int screens = 0;
-        XineramaScreenInfo* info = XineramaQueryScreens( dpy, &screens );
-        if( info != NULL )
-            XFree( info );
-        int rr_event, rr_error;
-        int rr_major = 0, rr_minor = 0;
-        if( screens > 1 && XRRQueryExtension( dpy, &rr_event, &rr_error )
-            && XRRQueryVersion( dpy, &rr_major, &rr_minor ) && ( rr_major > 1 || rr_minor >= 2 ))
-            {
-            XRRScreenResources* res = XRRGetScreenResources( dpy, root );
-            QRect covered;
-            for( int i = 0;
-                 res != NULL && i < res->ncrtc;
-                 ++i )
-                {
-                XRRCrtcInfo* crtc = XRRGetCrtcInfo( dpy, res, res->crtcs[ i ] );
-                if( crtc != NULL && crtc->mode != None )
-                    covered |= QRect( crtc->x, crtc->y, crtc->width, crtc->height );
-                if( crtc != NULL )
-                    XRRFreeCrtcInfo( crtc );
-                }
-            if( res != NULL )
-                XRRFreeScreenResources( res );
-            if( covered != QRect( 0, 0, DisplayWidth( dpy, DefaultScreen( dpy )),
-                DisplayHeight( dpy, DefaultScreen( dpy ))))
-                {
-                have_composite = false;
-                panoramix = true;
-                kdWarning( 1212 ) << "Window overview without window contents: Composite doesn't work"
-                    " with several X screens joined by Xinerama" << endl;
-                }
-            }
-        }
-#endif
+    checked = true;
+    Compositing::checkExtensions( dpy );
+    const bool panoramix = composite_panoramix;
 #ifdef OVERVIEW_XI2
     if( have_render )
         {
@@ -697,18 +520,6 @@ bool Overview::checkExtensions()
             && XRRQueryVersion( dpy, &rr_major, &rr_minor ) && ( rr_major > 1 || rr_minor >= 5 );
         }
 #endif
-#ifdef OVERVIEW_PRESENT
-    if( have_composite && getenv( "KWIN_OVERVIEW_NO_PRESENT" ) == NULL )
-        {
-        int present_event, present_error;
-        if( XPresentQueryExtension( dpy, &present_opcode, &present_event, &present_error ))
-            {
-            major = minor = 0;
-            if( XPresentQueryVersion( dpy, &major, &minor ) && major >= 1 )
-                have_present = true;
-            }
-        }
-#endif
     if( !have_render )
         kdWarning( 1212 ) << "Window overview disabled: the X server lacks RENDER 0.10" << endl;
     else if( !have_composite && !panoramix )
@@ -723,6 +534,11 @@ bool Overview::checkExtensions()
 bool Overview::isActive() const
     {
     return state != Hidden;
+    }
+
+bool Overview::isRedirected( Window frame ) const
+    {
+    return state == Hidden && !temp_redirected && redirected.contains( frame );
     }
 
 void Overview::setShortcut( const KShortcut& c )
@@ -1373,6 +1189,10 @@ void Overview::show()
             kdWarning( 1212 ) << "overview: not shown, state " << state << " blocked " << blocked() << endl;
         return;
         }
+    // the window animations draw the same windows (and the overview
+    // changes their redirection meanwhile)
+    if( ws->windowEffects() != NULL )
+        ws->windowEffects()->abort();
     if( !grabInput())
         {
         kdWarning( 1212 ) << "overview: cannot grab the keyboard or the pointer" << endl;
@@ -1451,20 +1271,7 @@ void Overview::show()
         r->snapshot_picture = XRenderCreatePicture( dpy, r->snapshot, r->format, 0, NULL );
         }
 
-    r->present = composite && have_present;
-    const int buffers = r->present ? (int) OverviewRenderer::Buffers : 1;
-    for( int i = 0;
-         i < buffers;
-         ++i )
-        {
-        r->buffers[ i ] = XCreatePixmap( dpy, root, r->width, r->height, DefaultDepth( dpy, DefaultScreen( dpy )));
-        r->pictures[ i ] = XRenderCreatePicture( dpy, r->buffers[ i ], r->format, 0, NULL );
-        }
-    r->gc = XCreateGC( dpy, overlay, 0, NULL );
-#ifdef OVERVIEW_PRESENT
-    if( r->present )
-        r->present_eid = XPresentSelectInput( dpy, overlay, PresentCompleteNotifyMask | PresentIdleNotifyMask );
-#endif
+    presenter->start( overlay, 0, 0, r->width, r->height, composite && have_present );
 
     buildItems( true );
     computeLayout();
@@ -1609,7 +1416,6 @@ void Overview::finish()
 void Overview::cleanup()
     {
     frame_timer.stop();
-    watchdog_timer.stop();
     settle_timer.stop();
     if( r == NULL )
         {
@@ -1627,19 +1433,7 @@ void Overview::cleanup()
         XCompositeUnredirectSubwindows( dpy, root, CompositeRedirectAutomatic );
     temp_redirected = false;
 #endif
-#ifdef OVERVIEW_PRESENT
-    if( r->present_eid != None )
-        XPresentFreeInput( dpy, overlay, r->present_eid );
-#endif
-    for( int i = 0;
-         i < OverviewRenderer::Buffers;
-         ++i )
-        {
-        if( r->pictures[ i ] != None )
-            XRenderFreePicture( dpy, r->pictures[ i ] );
-        if( r->buffers[ i ] != None )
-            XFreePixmap( dpy, r->buffers[ i ] );
-        }
+    presenter->stop();
     if( r->snapshot_picture != None )
         XRenderFreePicture( dpy, r->snapshot_picture );
     if( r->snapshot != None )
@@ -1666,8 +1460,6 @@ void Overview::cleanup()
         XFreePixmap( dpy, (*it).col_pixmap );
         XFreePixmap( dpy, (*it).row_pixmap );
         }
-    if( r->gc != NULL )
-        XFreeGC( dpy, r->gc );
     if( ripple_start > 0 )
         showRippleWindow(); // (or no more ripples)
     if( own_overlay )
@@ -1768,10 +1560,10 @@ bool Overview::bindContents( OverviewItem* item, bool can_copy )
         named = true;
     else
         { // kompmgr? (inside the error trap of buildItems())
-        int errors = trapped_errors;
+        int errors = trappedErrors();
         item->pixmap = XCompositeNameWindowPixmap( dpy, item->id );
         XSync( dpy, False );
-        named = trapped_errors == errors;
+        named = trappedErrors() == errors;
         if( !named )
             item->pixmap = None; // never valid
         }
@@ -2421,7 +2213,7 @@ void Overview::startTransition( double target )
     trans_duration = dist > 0.001 ? full * QMAX( 0.4, dist ) : full;
     trans_start = now();
     if( r != NULL )
-        r->stat_msc = 0;
+        presenter->resetStats();
     for( OverviewItem* item = items.first();
          item != NULL;
          item = items.next())
@@ -2450,9 +2242,9 @@ void Overview::requestFrame()
     if( frame_timer.isActive() || state == Finishing )
         return;
     double delay = 0;
-    if( r->present )
+    if( presenter->usesPresent())
         {
-        if( r->queued >= ( r->mscKnown( now()) ? 2 : 1 ))
+        if( !presenter->canQueue())
             return; // the next completion asks again
         }
     else
@@ -2470,20 +2262,27 @@ void Overview::frameTimeout()
         requestFrame();
     }
 
-// no completion events from Present: don't hang
-void Overview::presentWatchdog()
+// a presentation completed (or the server stopped telling: the watchdog)
+void Overview::presentCompleted( bool skipped, int missed )
     {
     if( r == NULL )
         return;
-    r->queued = 0;
-    r->next_msc = 0;
-    for( int i = 0;
-         i < OverviewRenderer::Buffers;
-         ++i )
-        r->busy[ i ] = false;
+    if( skipped )
+        ++stat_skipped;
+    else if( state == Showing || state == Hiding || dragged != NULL )
+        stat_gaps += missed;
     if( state == Finishing )
-        finish();
+        {
+        if( presenter->queued() == 0 )
+            finish();
+        }
     else if( frame_wanted )
+        requestFrame();
+    }
+
+void Overview::presentIdle()
+    {
+    if( r != NULL && frame_wanted )
         requestFrame();
     }
 
@@ -2526,22 +2325,15 @@ void Overview::renderFrame()
     if( r == NULL )
         return;
     // the buffer
-    int buf = -1;
-    for( int i = 0;
-         i < ( r->present ? (int) OverviewRenderer::Buffers : 1 ) && buf < 0;
-         ++i )
-        if( !r->busy[ i ] )
-            buf = i;
-    if( buf < 0 )
+    Picture dst = presenter->beginFrame();
+    if( dst == None )
         { // all still used by the server, wait for an idle event
         frame_wanted = true;
         return;
         }
-    r->current = buf;
-    Picture dst = r->pictures[ buf ];
     const double t_start = now();
     // the time when this frame will be seen
-    const double t0 = t_start + ( r->present ? r->queued * r->period : 0 );
+    const double t0 = presenter->frameTime( t_start );
     // the transition
     double lin = trans_duration > 0 ? clamp01(( t0 - trans_start ) / trans_duration ) : 1.0;
     double e = easeOutQuad( lin );
@@ -2726,7 +2518,7 @@ void Overview::renderFrame()
                 << ( frame_count ? stat_render / frame_count : 0 ) << " max " << stat_max_render << " ms, skipped " << stat_skipped << " missed refreshes " << stat_gaps << endl;
             }
         state = Finishing;
-        if( !r->present || r->queued == 0 )
+        if( !presenter->usesPresent() || presenter->queued() == 0 )
             {
             XSync( dpy, False );
             finish();
@@ -2975,30 +2767,12 @@ void Overview::setHover( OverviewItem* item, bool on_close )
 
 void Overview::present()
     {
-    int buf = r->current;
-#ifdef OVERVIEW_PRESENT
-    if( r->present )
-        {
-        r->busy[ buf ] = true;
-        if( !r->mscKnown( now()))
-            r->next_msc = 0; // as soon as possible
-        ++r->queued;
-        XPresentPixmap( dpy, overlay, r->buffers[ buf ], ++r->serial, None, None, 0, 0,
-            None, None, None, PresentOptionNone, r->next_msc, 0, 0, NULL, 0 );
-        if( r->next_msc != 0 )
-            ++r->next_msc;
-        watchdog_timer.start( 200, true );
-        XFlush( dpy );
-        return;
-        }
-#endif
-    XCopyArea( dpy, r->buffers[ buf ], overlay, r->gc, 0, 0, r->width, r->height, 0, 0 );
-    XFlush( dpy );
+    presenter->endFrame();
     }
 
 void Overview::dumpFrame()
     {
-    XImage* img = XGetImage( dpy, r->buffers[ r->current ], 0, 0, r->width, r->height, AllPlanes, ZPixmap );
+    XImage* img = XGetImage( dpy, presenter->framePixmap(), 0, 0, r->width, r->height, AllPlanes, ZPixmap );
     if( img == NULL )
         return;
     static const char* names[] = { "hidden", "settling", "showing", "shown", "hiding", "finishing" };
@@ -3059,78 +2833,6 @@ bool Overview::handleDamage( XEvent* e )
     last_damage = now();
     if( state != Finishing )
         requestFrame();
-#else
-    Q_UNUSED( e );
-#endif
-    return true;
-    }
-
-bool Overview::handlePresent( XEvent* e )
-    {
-#ifdef OVERVIEW_PRESENT
-    XGenericEventCookie* cookie = &e->xcookie;
-    if( !XGetEventData( dpy, cookie ))
-        return true;
-    // only the events of this overview's overlay selection (an idle event
-    // may name a pixmap XID that was freed and reused meanwhile)
-    XID eid = None;
-    if( cookie->evtype == PresentCompleteNotify )
-        eid = ((XPresentCompleteNotifyEvent*) cookie->data )->eid;
-    else if( cookie->evtype == PresentIdleNotify )
-        eid = ((XPresentIdleNotifyEvent*) cookie->data )->eid;
-    if( r != NULL && eid != None && eid == r->present_eid )
-        {
-        if( cookie->evtype == PresentCompleteNotify )
-            {
-            XPresentCompleteNotifyEvent* ce = (XPresentCompleteNotifyEvent*) cookie->data;
-            if( ce->kind == PresentCompleteKindPixmap )
-                {
-                r->queued = QMAX( 0, r->queued - 1 );
-                if( ce->mode == PresentCompleteModeSkip )
-                    ++stat_skipped;
-                else
-                    {
-                    if( r->stat_msc != 0 && ce->msc > r->stat_msc + 1 && ( state == Showing || state == Hiding || dragged != NULL ))
-                        stat_gaps += ce->msc - r->stat_msc - 1;
-                    r->stat_msc = ce->msc;
-                    }
-                r->last_complete = now();
-                if( r->last_ust != 0 && ce->msc > r->last_msc && ce->ust > r->last_ust )
-                    {
-                    double p = ( ce->ust - r->last_ust ) / 1000.0 / ( ce->msc - r->last_msc );
-                    if( p > 4 && p < 50 )
-                        r->period = p;
-                    }
-                r->last_msc = ce->msc;
-                r->last_ust = ce->ust;
-                if( r->next_msc <= ce->msc )
-                    r->next_msc = ce->msc + 1;
-                if( r->queued == 0 )
-                    watchdog_timer.stop();
-                else
-                    watchdog_timer.start( 200, true );
-                if( state == Finishing )
-                    {
-                    if( r->queued == 0 )
-                        finish();
-                    }
-                else if( frame_wanted )
-                    requestFrame();
-                }
-            }
-        else if( cookie->evtype == PresentIdleNotify )
-            {
-            XPresentIdleNotifyEvent* ie = (XPresentIdleNotifyEvent*) cookie->data;
-            for( int i = 0;
-                 i < OverviewRenderer::Buffers;
-                 ++i )
-                if( r->buffers[ i ] == ie->pixmap )
-                    r->busy[ i ] = false;
-            if( frame_wanted )
-                requestFrame();
-            }
-        }
-    XFreeEventData( dpy, cookie );
 #else
     Q_UNUSED( e );
 #endif
@@ -3533,7 +3235,7 @@ void Overview::startDrag( const QPoint& p )
     stat_render = stat_max_render = 0;
     stat_skipped = stat_gaps = 0;
     if( r != NULL )
-        r->stat_msc = 0;
+        presenter->resetStats();
     if( debug )
         kdWarning( 1212 ) << "overview: dragging " << item->caption << " from monitor " << item->screen << endl;
     requestFrame();
@@ -3801,11 +3503,7 @@ bool Overview::x11Event( XEvent* e )
         return false; // Qt needs RRScreenChangeNotify too
         }
 #endif
-#ifdef OVERVIEW_PRESENT
-    // also the late ones after the overview closed: nobody else uses Present here
-    if( have_present && e->type == GenericEvent && e->xgeneric.extension == present_opcode )
-        return handlePresent( e );
-#endif
+    // (the Present events go to Compositing::Presenter::dispatch())
     if( state == Hidden )
         return false;
 #ifdef OVERVIEW_COMPOSITE
@@ -3856,6 +3554,7 @@ void Overview::toggle() {}
 void Overview::show() {}
 void Overview::hide( Client* ) {}
 bool Overview::isActive() const { return false; }
+bool Overview::isRedirected( Window ) const { return false; }
 bool Overview::x11Event( XEvent* ) { return false; }
 void Overview::reconfigure() {}
 void Overview::setShortcut( const KShortcut& ) {}
@@ -3868,7 +3567,8 @@ void Overview::frameTimeout() {}
 void Overview::settleTimeout() {}
 void Overview::cornerTimeout() {}
 void Overview::monitorsChanged() {}
-void Overview::presentWatchdog() {}
+void Overview::presentCompleted( bool, int ) {}
+void Overview::presentIdle() {}
 void Overview::frameCreated( Window ) {}
 void Overview::stackingChanged() {}
 void Overview::raiseCorners() {}

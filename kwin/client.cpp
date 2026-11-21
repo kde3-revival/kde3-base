@@ -29,6 +29,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "notifications.h"
 #include "rules.h"
 #include "overview.h"
+#include "effects.h"
 
 #include <X11/extensions/shape.h>
 
@@ -183,6 +184,8 @@ void Client::deleteClient( Client* c, allowed_t )
 void Client::releaseWindow( bool on_shutdown )
     {
     assert( !deleting );
+    if( !on_shutdown && workspace()->windowEffects() != NULL )
+        workspace()->windowEffects()->windowClosing( this ); // its last contents, before the frame goes
     deleting = true;
     workspace()->discardUsedWindowRules( this, true ); // remove ForceTemporarily rules
     StackingUpdatesBlocker blocker( workspace());
@@ -244,6 +247,8 @@ void Client::releaseWindow( bool on_shutdown )
 void Client::destroyClient()
     {
     assert( !deleting );
+    if( workspace()->windowEffects() != NULL )
+        workspace()->windowEffects()->windowClosing( this ); // its last contents, before the frame goes
     deleting = true;
     workspace()->discardUsedWindowRules( this, true ); // remove ForceTemporarily rules
     StackingUpdatesBlocker blocker( workspace());
@@ -602,8 +607,8 @@ void Client::minimize( bool avoid_animation )
     Notify::raise( Notify::Minimize );
 
     // SELI mainClients().isEmpty() ??? - and in unminimize() too
-    if ( mainClients().isEmpty() && isOnCurrentDesktop() && isShown( true ) && !avoid_animation )
-        animateMinimizeOrUnminimize( true ); // was visible or shaded
+    if ( isOnCurrentDesktop() && isShown( true ))
+        animateMinimizeOrUnminimize( true, mainClients().isEmpty() && !avoid_animation ); // was visible or shaded
 
     minimized = true;
 
@@ -622,10 +627,9 @@ void Client::unminimize( bool avoid_animation )
     Notify::raise( Notify::UnMinimize );
     minimized = false;
     if( isOnCurrentDesktop() && isShown( true ))
-        {
-        if( mainClients().isEmpty() && !avoid_animation )
-            animateMinimizeOrUnminimize( FALSE );
-        }
+        animateMinimizeOrUnminimize( FALSE, mainClients().isEmpty() && !avoid_animation );
+    else if( workspace()->windowEffects() != NULL )
+        workspace()->windowEffects()->unminimize( this, false ); // (no use for its old contents)
     updateVisibility();
     updateAllowedActions();
     workspace()->updateMinimizedOfTransients( this );
@@ -634,125 +638,30 @@ void Client::unminimize( bool avoid_animation )
 
 extern bool         blockAnimation;
 
-void Client::animateMinimizeOrUnminimize( bool minimize )
-    {
-    if ( blockAnimation )
-        return;
-    if ( !options->animateMinimize )
-        return;
-
-    if( decoration != NULL && decoration->animateMinimize( minimize ))
-        return; // decoration did it
-
-    // the function is a bit tricky since it will ensure that an
-    // animation action needs always the same time regardless of the
-    // performance of the machine or the X-Server.
-
-    float lf,rf,tf,bf,step;
-
-    int speed = options->animateMinimizeSpeed;
-    if ( speed > 10 )
-        speed = 10;
-    if ( speed < 0 )
-        speed = 0;
-
-    step = 40. * (11 - speed );
-
-    NETRect r = info->iconGeometry();
-    QRect icongeom( r.pos.x, r.pos.y, r.size.width, r.size.height );
-    if ( !icongeom.isValid() )
-        return;
-
-    QPixmap pm = animationPixmap( minimize ? width() : icongeom.width() );
-
-    QRect before, after;
-    if ( minimize ) 
-        {
-        before = QRect( x(), y(), width(), pm.height() );
-        after = QRect( icongeom.x(), icongeom.y(), icongeom.width(), pm.height() );
-        }
-    else 
-        {
-        before = QRect( icongeom.x(), icongeom.y(), icongeom.width(), pm.height() );
-        after = QRect( x(), y(), width(), pm.height() );
-        }
-
-    lf = (after.left() - before.left())/step;
-    rf = (after.right() - before.right())/step;
-    tf = (after.top() - before.top())/step;
-    bf = (after.bottom() - before.bottom())/step;
-
-    grabXServer();
-
-    QRect area = before;
-    QRect area2;
-    QPixmap pm2;
-
-    QTime t;
-    t.start();
-    float diff;
-
-    QPainter p ( workspace()->desktopWidget() );
-    bool need_to_clear = FALSE;
-    QPixmap pm3;
-    do 
-        {
-        if (area2 != area)
-            {
-            pm = animationPixmap( area.width() );
-            pm2 = QPixmap::grabWindow( qt_xrootwin(), area.x(), area.y(), area.width(), area.height() );
-            p.drawPixmap( area.x(), area.y(), pm );
-            if ( need_to_clear ) 
-                {
-                p.drawPixmap( area2.x(), area2.y(), pm3 );
-                need_to_clear = FALSE;
-                }
-            area2 = area;
-            }
-        XFlush(qt_xdisplay());
-        XSync( qt_xdisplay(), FALSE );
-        diff = t.elapsed();
-        if (diff > step)
-            diff = step;
-        area.setLeft(before.left() + int(diff*lf));
-        area.setRight(before.right() + int(diff*rf));
-        area.setTop(before.top() + int(diff*tf));
-        area.setBottom(before.bottom() + int(diff*bf));
-        if (area2 != area ) 
-            {
-            if ( area2.intersects( area ) )
-                p.drawPixmap( area2.x(), area2.y(), pm2 );
-            else 
-                { // no overlap, we can clear later to avoid flicker
-                pm3 = pm2;
-                need_to_clear = TRUE;
-                }
-            }
-        } while ( t.elapsed() < step);
-    if (area2 == area || need_to_clear )
-        p.drawPixmap( area2.x(), area2.y(), pm2 );
-
-    p.end();
-    ungrabXServer();
-    }
-
-
-/*!
-  The pixmap shown during (un)minimalization animation
+/*
+  The minimize animation (effects.cpp): the window flies into its taskbar
+  button, or back.  Without animation (a transient minimized along with its
+  main window, the animation off) its contents are still kept for the
+  animation of the restore.
  */
-QPixmap Client::animationPixmap( int w )
+void Client::animateMinimizeOrUnminimize( bool minimize, bool animate )
     {
-    QFont font = options->font(isActive());
-    QFontMetrics fm( font );
-    QPixmap pm( w, fm.lineSpacing() );
-    pm.fill( options->color(Options::ColorTitleBar, isActive() || isMinimized() ) );
-    QPainter p( &pm );
-    p.setPen(options->color(Options::ColorFont, isActive() || isMinimized() ));
-    p.setFont(options->font(isActive()));
-    p.drawText( pm.rect(), AlignLeft|AlignVCenter|SingleLine, caption() );
-    return pm;
+    Effects* effects = workspace()->windowEffects();
+    if( effects == NULL )
+        return;
+    if( blockAnimation )
+        animate = false;
+    if( minimize )
+        effects->minimize( this, animate );
+    else
+        effects->unminimize( this, animate );
     }
 
+QRect Client::iconGeometry() const
+    {
+    NETRect r = info->iconGeometry();
+    return QRect( r.pos.x, r.pos.y, r.size.width, r.size.height );
+    }
 
 bool Client::isShadeable() const
     {

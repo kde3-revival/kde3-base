@@ -199,6 +199,18 @@ unsigned long Options::updateSettings()
     overviewKeepRedirected = config->readBoolEntry( "KeepRedirected", true );
     overviewSuperKey = config->readBoolEntry( "SuperKey", true );
     overviewHotCornerRipple = config->readBoolEntry( "HotCornerRipple", true );
+
+    // the window animations; the old minimize animation's keys when not set
+    config->setGroup( "Effects" );
+    effectsEnabled = config->readBoolEntry( "Enabled", true );
+    QString minimize_anim = config->readEntry( "MinimizeAnimation" ).lower();
+    if( minimize_anim.isEmpty())
+        minimize_anim = animateMinimize ? "scale" : "none";
+    effectsMinimizeAnimation = minimize_anim == "none" ? 0 : minimize_anim == "genie" ? 2 : 1;
+    effectsMaximizeAnimation = config->readBoolEntry( "MaximizeAnimation", true );
+    effectsOpenCloseAnimation = config->readBoolEntry( "OpenCloseAnimation", true );
+    effectsAnimationSpeed = QMAX( 0, QMIN( 10, config->readNumEntry( "AnimationSpeed",
+        animateMinimizeSpeed )));
     
     
     

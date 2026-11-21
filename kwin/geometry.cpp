@@ -30,6 +30,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "geometrytip.h"
 #include "rules.h"
 #include "overview.h"
+#include "effects.h"
 
 extern Time qt_x_time;
 
@@ -1988,6 +1989,9 @@ void Client::postponeGeometryUpdates( bool postpone )
         }
     }
 
+// (no animation of the maximize state that follows a new geometry)
+static int check_maximize_recursion = 0;
+
 void Client::maximize( MaximizeMode m )
     {
     setMaximize( m & MaximizeVertical, m & MaximizeHorizontal );
@@ -2023,6 +2027,10 @@ void Client::changeMaximize( bool vertical, bool horizontal, bool adjust )
     if( !adjust && max_mode == old_mode )
         return;
 
+    // the morph from the old geometry to the new one (also when the
+    // application asks, not when only the work area changed or when the
+    // geometry already is the maximized one)
+    EffectsMaximize effects_maximize( this, !adjust && check_maximize_recursion == 0 );
     GeometryUpdatesPostponer blocker( this );
 
     // maximing one way and unmaximizing the other way shouldn't happen
@@ -2199,7 +2207,7 @@ void Client::checkMaximizeGeometry()
     if( isMove() || isResize()) // this is because of the option to disallow moving/resizing of max-ed windows
         return;
     // Just in case.
-    static int recursion_protection = 0;
+    static int& recursion_protection = check_maximize_recursion;
     if( recursion_protection > 3 )
         {
         kdWarning( 1212 ) << "Check maximize overflow - you loose!" << endl;

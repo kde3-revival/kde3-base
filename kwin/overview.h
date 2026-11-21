@@ -29,6 +29,10 @@ class Workspace;
 class Client;
 class OverviewItem;
 class OverviewRenderer;
+namespace Compositing
+{
+class Presenter;
+}
 
 /*
  The window overview: all windows of the current desktop zoom out into
@@ -59,6 +63,9 @@ class Overview : public QObject
         // starts the zoom-in; activates c (if not NULL) first
         void hide( Client* c = NULL );
         bool isActive() const;
+        // the frame stays redirected (KeepRedirected): its named pixmap shows
+        // it, no exposure when something above it comes or goes
+        bool isRedirected( Window frame ) const;
 
         // all X events go here first; true means eaten
         bool x11Event( XEvent* e );
@@ -86,7 +93,8 @@ class Overview : public QObject
         void frameTimeout();
         void settleTimeout();
         void cornerTimeout();
-        void presentWatchdog();
+        void presentCompleted( bool skipped, int missed );
+        void presentIdle();
         void monitorsChanged();
         void dialogTimeout();
         void rippleTimeout();
@@ -157,7 +165,6 @@ class Overview : public QObject
         void forgetItem( OverviewItem* item );
         void drawBackdrop( XID dst, double dim, double t );
         bool handleDamage( XEvent* e );
-        bool handlePresent( XEvent* e );
 
         static double now();
 
@@ -218,9 +225,9 @@ class Overview : public QObject
         QMap< Window, bool > redirected;
 
         OverviewRenderer* r;
+        Compositing::Presenter* presenter;
 
         QTimer frame_timer;
-        QTimer watchdog_timer;
         QTimer settle_timer;
         double settle_start;
         double last_damage;

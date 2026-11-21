@@ -49,6 +49,7 @@ class Placement;
 class Rules;
 class WindowRules;
 class Overview;
+class Effects;
 
 class SystemTrayWindow
     {
@@ -292,6 +293,9 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void showOverview();
         void hideOverview();
         Overview* windowOverview() const { return overview; }
+        Effects* windowEffects() const { return effects; }
+        // KWin keeps all frames below this (unmapped) window
+        Window supportWindowId() const;
         bool tabBoxActive() const { return tab_grab || control_grab; }
         Client* moveResizeClient() const { return movingClient; }
 
@@ -556,6 +560,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
 
         TabBox* tab_box;
         Overview* overview;
+        Effects* effects;
         PopupInfo* popupinfo;
 
         QPopupMenu *popup;

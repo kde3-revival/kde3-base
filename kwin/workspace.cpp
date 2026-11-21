@@ -40,6 +40,8 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "group.h"
 #include "rules.h"
 #include "overview.h"
+#include "effects.h"
+#include "compositing.h"
 
 #include <X11/extensions/shape.h>
 #include <X11/keysym.h>
@@ -93,6 +95,7 @@ Workspace::Workspace( bool restore )
     block_focus       (0),
     tab_box           (0),
     overview          (NULL),
+    effects           (NULL),
     popupinfo         (0),
     popup             (0),
     advanced_popup    (0),
@@ -218,6 +221,7 @@ void Workspace::init()
     // after the electric borders, the hot corners are above them
     overview = new Overview( this );
     overview->setShortcut( keys->shortcut( "Show Window Overview" ));
+    effects = new Effects( this );
 
 // not used yet
 //     topDock = 0L;
@@ -434,6 +438,8 @@ void Workspace::init()
 
 Workspace::~Workspace()
     {
+    delete effects; // (before the overview: it asks it about the windows)
+    effects = NULL;
     delete overview; // gives the windows back if shown
     overview = NULL;
     if (kompmgr)
@@ -595,6 +601,8 @@ void Workspace::removeClient( Client* c, allowed_t )
     should_get_focus.remove( c );
     if( overview != NULL )
         overview->clientRemoved( c );
+    if( effects != NULL )
+        effects->clientRemoved( c );
     Q_ASSERT( c != active_client );
     if ( c == last_active_client )
         last_active_client = 0;
@@ -965,6 +973,8 @@ void Workspace::slotReconfigure()
     checkElectricBorders();
     if( overview != NULL )
         overview->reconfigure();
+    if( effects != NULL )
+        effects->reconfigure();
 
     if( options->topMenuEnabled() && !managingTopMenus())
         {
@@ -1210,6 +1220,8 @@ bool Workspace::setCurrentDesktop( int new_desktop )
         {
         if( overview != NULL )
             overview->abort(); // its windows are going away
+        if( effects != NULL )
+            effects->abort();
         ++block_showing_desktop;
         /*
           optimized Desktop switching: unmapping done from back to front
@@ -2006,6 +2018,11 @@ void Workspace::requestDelayFocus( Client* c )
     delayFocusTimer->start( options->delayFocusInterval, TRUE  );
     }
     
+Window Workspace::supportWindowId() const
+    {
+    return supportWindow->winId();
+    }
+
 void Workspace::showOverview()
     {
     if( overview != NULL )
@@ -2019,6 +2036,9 @@ void Workspace::slotShowOverview()
 
 void Workspace::hideOverview()
     {
+    // (the screen locker asks: no animations either)
+    if( effects != NULL )
+        effects->abort();
     if( overview != NULL && overview->isActive())
         {
         overview->abort();

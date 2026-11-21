@@ -29,8 +29,12 @@ kde3_add_kdeinit_executable(kwin
     geometry.cpp
     rules.cpp
     overview.cpp
+    compositing.cpp
+    effects.cpp
   MOC
     client.h
+    compositing.h
+    effects.h
     geometrytip.h
     main.h
     overview.h

@@ -25,6 +25,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "rules.h"
 #include "group.h"
 #include "overview.h"
+#include "effects.h"
 
 extern Time qt_x_time;
 
@@ -487,6 +488,9 @@ bool Client::manage( Window w, bool isMapped )
         else
             workspace()->raiseClient( this );
 
+        // a new window appears animated, when it has painted
+        if( !isMapped && !session && workspace()->windowEffects() != NULL )
+            workspace()->windowEffects()->windowOpening( this );
         updateVisibility();
 
         if( !isMapped )

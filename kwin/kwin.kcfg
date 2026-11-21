@@ -22,6 +22,23 @@
   <entry key="CommandInactiveTitlebar2" type="String" />
   <entry key="CommandInactiveTitlebar3" type="String" />
  </group>
+ <group name="Effects" >
+  <entry key="Enabled" type="Bool" >
+   <default>true</default>
+  </entry>
+  <entry key="MinimizeAnimation" type="String" >
+   <default>Scale</default>
+  </entry>
+  <entry key="MaximizeAnimation" type="Bool" >
+   <default>true</default>
+  </entry>
+  <entry key="OpenCloseAnimation" type="Bool" >
+   <default>true</default>
+  </entry>
+  <entry key="AnimationSpeed" type="Int" >
+   <default>5</default>
+  </entry>
+ </group>
  <group name="Overview" >
   <entry key="HotCorner" type="Bool" >
    <default>true</default>

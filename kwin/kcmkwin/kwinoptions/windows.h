@@ -136,7 +136,7 @@ public:
   void defaults();
 
 private slots:
-  void setMinimizeAnim( bool );
+  void setAnimations( bool );
   void setMinimizeAnimSpeed( int );
 	void changed() { emit KCModule::changed(true); }
   void slotBrdrSnapChanged( int );
@@ -144,7 +144,6 @@ private slots:
 
 private:
   int getMove( void );
-  bool getMinimizeAnim( void );
   int getMinimizeAnimSpeed( void );
   int getResizeOpaque ( void );
   bool getGeometryTip( void ); //KS
@@ -160,7 +159,13 @@ private:
   QCheckBox *opaque;
   QCheckBox *resizeOpaqueOn;
   QCheckBox *geometryTipOn;
-  QCheckBox* minimizeAnimOn;
+  // the window animations ([Effects])
+  QCheckBox* animationsOn;
+  QLabel* minimizeAnimLabel;
+  QComboBox* minimizeAnimCombo;
+  QCheckBox* maximizeAnimOn;
+  QCheckBox* openCloseAnimOn;
+  QLabel* minimizeAnimSpeedLabel;
   QSlider *minimizeAnimSlider;
   QLabel *minimizeAnimSlowLabel, *minimizeAnimFastLabel;
   QCheckBox *moveResizeMaximized;

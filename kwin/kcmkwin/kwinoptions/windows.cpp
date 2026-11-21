@@ -889,37 +889,70 @@ KMovingConfig::KMovingConfig (bool _standAlone, KConfig *_config, QWidget *paren
                                         " to the top-left corner of the screen is displayed together with"
                                         " its size."));
 
-    QGridLayout *rLay = new QGridLayout(2,3);
+    // the window animations (drawn by KWin from the window contents, see
+    // kwin/effects.cpp; they need the Composite extension)
+    animationsOn = new QCheckBox(i18n("Animate &windows"), windowsBox);
+    QWhatsThis::add( animationsOn, i18n("Enable this option if you want windows to be animated when they are"
+                                        " minimized, restored, maximized, opened or closed. Disable it to have"
+                                        " no window animations at all (reduced motion). The animations need the"
+                                        " Composite extension of the X server and the window overview option"
+                                        " to keep the windows redirected.") );
+    bLay->addWidget(animationsOn);
+
+    QGridLayout *rLay = new QGridLayout(5,3);
     bLay->addLayout(rLay);
     rLay->setColStretch(0,0);
     rLay->setColStretch(1,1);
+    rLay->addColSpacing(0, 20);
 
-    minimizeAnimOn = new QCheckBox(i18n("Animate minimi&ze and restore"),
-                                   windowsBox);
-    QWhatsThis::add( minimizeAnimOn, i18n("Enable this option if you want an animation shown when"
-                                          " windows are minimized or restored." ) );
-    rLay->addWidget(minimizeAnimOn,0,0);
+    minimizeAnimLabel = new QLabel(i18n("Minimi&ze and restore:"), windowsBox);
+    rLay->addWidget(minimizeAnimLabel,0,0);
+    minimizeAnimCombo = new QComboBox(false, windowsBox);
+    minimizeAnimCombo->insertItem(i18n("Scale into the taskbar"));
+    minimizeAnimCombo->insertItem(i18n("Genie"));
+    minimizeAnimCombo->insertItem(i18n("No animation"));
+    minimizeAnimLabel->setBuddy(minimizeAnimCombo);
+    rLay->addMultiCellWidget(minimizeAnimCombo,0,0,1,2);
+    wtstr = i18n("How a window goes into its taskbar button when it is minimized, and comes back when it is"
+                 " restored: <b>Scale</b> shrinks it into the button and fades it out, <b>Genie</b> pulls it"
+                 " into the button through a narrowing funnel.");
+    QWhatsThis::add( minimizeAnimLabel, wtstr );
+    QWhatsThis::add( minimizeAnimCombo, wtstr );
 
+    maximizeAnimOn = new QCheckBox(i18n("Animate ma&ximize and restore"), windowsBox);
+    QWhatsThis::add( maximizeAnimOn, i18n("Enable this option if you want a window to grow smoothly to its"
+                                          " maximized size and back. The application is resized once, its new"
+                                          " contents fade in when it has painted them.") );
+    rLay->addMultiCellWidget(maximizeAnimOn,1,1,0,2);
+
+    openCloseAnimOn = new QCheckBox(i18n("Animate &opening and closing windows"), windowsBox);
+    QWhatsThis::add( openCloseAnimOn, i18n("Enable this option if you want new windows to fade in when they"
+                                           " have painted their contents, and closed windows to fade out.") );
+    rLay->addMultiCellWidget(openCloseAnimOn,2,2,0,2);
+
+    minimizeAnimSpeedLabel = new QLabel(i18n("Animation s&peed:"), windowsBox);
+    rLay->addWidget(minimizeAnimSpeedLabel,3,0);
     minimizeAnimSlider = new QSlider(0,10,10,0,QSlider::Horizontal, windowsBox);
     minimizeAnimSlider->setSteps(1, 1);
     // QSlider::Below clashes with a X11/X.h #define
     #undef Below
     minimizeAnimSlider->setTickmarks(QSlider::Below);
-    rLay->addMultiCellWidget(minimizeAnimSlider,0,0,1,2);
+    minimizeAnimSpeedLabel->setBuddy(minimizeAnimSlider);
+    rLay->addMultiCellWidget(minimizeAnimSlider,3,3,1,2);
 
-    connect(minimizeAnimOn, SIGNAL(toggled(bool)), this, SLOT(setMinimizeAnim(bool)));
+    connect(animationsOn, SIGNAL(toggled(bool)), this, SLOT(setAnimations(bool)));
     connect(minimizeAnimSlider, SIGNAL(valueChanged(int)), this, SLOT(setMinimizeAnimSpeed(int)));
 
     minimizeAnimSlowLabel= new QLabel(i18n("Slow"),windowsBox);
     minimizeAnimSlowLabel->setAlignment(Qt::AlignTop|Qt::AlignLeft);
-    rLay->addWidget(minimizeAnimSlowLabel,1,1);
+    rLay->addWidget(minimizeAnimSlowLabel,4,1);
 
     minimizeAnimFastLabel= new QLabel(i18n("Fast"),windowsBox);
     minimizeAnimFastLabel->setAlignment(Qt::AlignTop|Qt::AlignRight);
-    rLay->addWidget(minimizeAnimFastLabel,1,2);
+    rLay->addWidget(minimizeAnimFastLabel,4,2);
 
-    wtstr = i18n("Here you can set the speed of the animation shown when windows are"
-                 " minimized and restored. ");
+    wtstr = i18n("Here you can set the speed of the window animations.");
+    QWhatsThis::add( minimizeAnimSpeedLabel, wtstr );
     QWhatsThis::add( minimizeAnimSlider, wtstr );
     QWhatsThis::add( minimizeAnimSlowLabel, wtstr );
     QWhatsThis::add( minimizeAnimFastLabel, wtstr );
@@ -1021,7 +1054,10 @@ KMovingConfig::KMovingConfig (bool _standAlone, KConfig *_config, QWidget *paren
     connect( opaque, SIGNAL(clicked()), SLOT(changed()));
     connect( resizeOpaqueOn, SIGNAL(clicked()), SLOT(changed()));
     connect( geometryTipOn, SIGNAL(clicked()), SLOT(changed()));
-    connect( minimizeAnimOn, SIGNAL(clicked() ), SLOT(changed()));
+    connect( animationsOn, SIGNAL(clicked() ), SLOT(changed()));
+    connect( minimizeAnimCombo, SIGNAL(activated(int)), SLOT(changed()));
+    connect( maximizeAnimOn, SIGNAL(clicked() ), SLOT(changed()));
+    connect( openCloseAnimOn, SIGNAL(clicked() ), SLOT(changed()));
     connect( minimizeAnimSlider, SIGNAL(valueChanged(int)), SLOT(changed()));
     connect( moveResizeMaximized, SIGNAL(toggled(bool)), SLOT(changed()));
     connect( placementCombo, SIGNAL(activated(int)), SLOT(changed()));
@@ -1067,19 +1103,19 @@ void KMovingConfig::setPlacement(int plac)
     placementCombo->setCurrentItem(plac);
 }
 
-bool KMovingConfig::getMinimizeAnim()
-{
-    return minimizeAnimOn->isChecked();
-}
-
 int KMovingConfig::getMinimizeAnimSpeed()
 {
     return minimizeAnimSlider->value();
 }
 
-void KMovingConfig::setMinimizeAnim(bool anim)
+void KMovingConfig::setAnimations(bool anim)
 {
-    minimizeAnimOn->setChecked( anim );
+    animationsOn->setChecked( anim );
+    minimizeAnimLabel->setEnabled( anim );
+    minimizeAnimCombo->setEnabled( anim );
+    maximizeAnimOn->setEnabled( anim );
+    openCloseAnimOn->setEnabled( anim );
+    minimizeAnimSpeedLabel->setEnabled( anim );
     minimizeAnimSlider->setEnabled( anim );
     minimizeAnimSlowLabel->setEnabled( anim );
     minimizeAnimFastLabel->setEnabled( anim );
@@ -1124,13 +1160,23 @@ void KMovingConfig::load( void )
     else if( key == "Opaque")
         setMove(OPAQUE);
 
-    //CT 17Jun1998 - variable animation speed from 0 (none!!) to 10 (max)
+    // the window animations; the old minimize animation's keys when not set
+    // (keep the defaults consistent with kwin's options.cpp)
     bool anim = config->readBoolEntry(KWIN_MINIMIZE_ANIM, true );
     int animSpeed = config->readNumEntry(KWIN_MINIMIZE_ANIM_SPEED, 5);
+    config->setGroup( "Effects" );
+    QString minimizeAnim = config->readEntry( "MinimizeAnimation" ).lower();
+    if( minimizeAnim.isEmpty())
+        minimizeAnim = anim ? "scale" : "none";
+    minimizeAnimCombo->setCurrentItem( minimizeAnim == "none" ? 2 : minimizeAnim == "genie" ? 1 : 0 );
+    maximizeAnimOn->setChecked( config->readBoolEntry( "MaximizeAnimation", true ));
+    openCloseAnimOn->setChecked( config->readBoolEntry( "OpenCloseAnimation", true ));
+    animSpeed = config->readNumEntry( "AnimationSpeed", animSpeed );
     if( animSpeed < 1 ) animSpeed = 0;
     if( animSpeed > 10 ) animSpeed = 10;
-    setMinimizeAnim( anim );
+    setAnimations( config->readBoolEntry( "Enabled", true ));
     setMinimizeAnimSpeed( animSpeed );
+    config->setGroup( "Windows" );
 
     // DF: please keep the default consistent with kwin (options.cpp line 145)
     key = config->readEntry(KWIN_RESIZE_OPAQUE, "Opaque");
@@ -1232,8 +1278,17 @@ void KMovingConfig::save( void )
     else
         config->writeEntry(KWIN_PLACEMENT, "Smart");
 
-    config->writeEntry(KWIN_MINIMIZE_ANIM, getMinimizeAnim());
+    // (the old keys too, for older KWins)
+    config->writeEntry(KWIN_MINIMIZE_ANIM, animationsOn->isChecked() && minimizeAnimCombo->currentItem() != 2);
     config->writeEntry(KWIN_MINIMIZE_ANIM_SPEED, getMinimizeAnimSpeed());
+    config->setGroup( "Effects" );
+    config->writeEntry( "Enabled", animationsOn->isChecked());
+    const int minimizeAnim = minimizeAnimCombo->currentItem();
+    config->writeEntry( "MinimizeAnimation", minimizeAnim == 2 ? "None" : minimizeAnim == 1 ? "Genie" : "Scale" );
+    config->writeEntry( "MaximizeAnimation", maximizeAnimOn->isChecked());
+    config->writeEntry( "OpenCloseAnimation", openCloseAnimOn->isChecked());
+    config->writeEntry( "AnimationSpeed", getMinimizeAnimSpeed());
+    config->setGroup( "Windows" );
 
     v = getResizeOpaque();
     if (v == RESIZE_OPAQUE)
@@ -1271,7 +1326,10 @@ void KMovingConfig::defaults()
     setBorderSnapZone(KWM_BRDR_SNAP_ZONE_DEFAULT);
     OverlapSnap->setChecked(false);
 
-    setMinimizeAnim( true );
+    setAnimations( true );
+    minimizeAnimCombo->setCurrentItem( 0 );
+    maximizeAnimOn->setChecked( true );
+    openCloseAnimOn->setChecked( true );
     setMinimizeAnimSpeed( 5 );
     emit KCModule::changed(true);
 }
