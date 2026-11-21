@@ -690,8 +690,8 @@ void NetworkApplet::connected(const QString &name, bool wifi)
     QPixmap icon;
     if (wifi)
     {
-        icon.convertFromImage(NetworkIcons::wifi(32, NetworkIcons::bars(
-                                                         m_backend->status().strength)));
+        // (the state is updated after this signal)
+        icon.convertFromImage(NetworkIcons::wifi(32, 4));
         notify(i18n("Connected"),
                i18n("Connected to the Wi-Fi network %1.").arg(name), icon);
     }

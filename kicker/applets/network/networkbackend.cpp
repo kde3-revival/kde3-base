@@ -1025,6 +1025,9 @@ NetworkBackend::NetworkList NetworkBackendPrivate::computeNetworks() const
         activatingSsid = deviceName(device);
     }
 
+    NMAccessPoint *activeAp = state == NM_DEVICE_STATE_ACTIVATED
+                                  ? nm_device_wifi_get_active_access_point(wifi) : 0;
+
     // the SSIDs with a profile
     QStringList known;
     const GPtrArray *connections = nm_client_get_connections(client);
@@ -1059,7 +1062,15 @@ NetworkBackend::NetworkList NetworkBackendPrivate::computeNetworks() const
             n.active = ssid == activeSsid;
             n.activating = ssid == activatingSsid;
         }
-        if (strength > n.strength)
+        // the access point in use, or the strongest
+        if (ap == activeAp)
+        {
+            n.strength = strength;
+            securityStrength[ssid] = 101;
+            n.security = apSecurity(ap, &n.securityText);
+            continue;
+        }
+        if (strength > n.strength && !(n.active && activeAp))
         {
             n.strength = strength;
         }
@@ -1510,6 +1521,7 @@ void NetworkBackend::update()
     d->syncDevices();
 
     NMDeviceWifi *wifi = d->client ? d->wifiDevice() : 0;
+    bool wasScanning = d->scanning;
     if (d->scanning)
     {
         if (!wifi || nm_device_wifi_get_last_scan(wifi) != d->lastScan ||
@@ -1521,7 +1533,7 @@ void NetworkBackend::update()
 
     Status status = d->computeStatus();
     NetworkList networks = d->computeNetworks();
-    if (status != d->status || networks != d->networks)
+    if (status != d->status || networks != d->networks || d->scanning != wasScanning)
     {
         d->status = status;
         d->networks = networks;
