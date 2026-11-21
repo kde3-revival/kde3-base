@@ -16,7 +16,8 @@ if test -z "$IN_PRIVATE_BUS"; then
 #!/bin/sh
 echo "\$*" >>"$t/systemctl.log"
 EOS
-  chmod +x "$t/bin/systemctl"
+  cp "$t/bin/systemctl" "$t/bin/systemd-run"
+  chmod +x "$t/bin/systemctl" "$t/bin/systemd-run"
   env -i PATH="$t/bin:$PATH" HOME="$t/home" XDG_RUNTIME_DIR="$t/run" \
     XDG_DATA_DIRS="$t/share:/usr/share" KDEHOME="$t/home/.kde" T="$t" \
     IN_PRIVATE_BUS=1 dbus-run-session -- sh "$0" "$@"
@@ -107,6 +108,6 @@ kde3_dconf_setup
 # logout: the variable leaves the systemd user manager, the portals stop
 kde3_dconf_cleanup
 grep -qxe "--user unset-environment DCONF_PROFILE" "$T/systemctl.log" || fail "no unset-environment"
-grep -qxe "--user stop xdg-desktop-portal.service xdg-desktop-portal-gtk.service" "$T/systemctl.log" || fail "portals not stopped"
+grep -qxe "--user stop xdg-desktop-portal.service xdg-desktop-portal-gtk.service xdg-desktop-portal-gnome.service" "$T/systemctl.log" || fail "portals not stopped"
 test "`sha256sum <"$db/user"`" = "$before" || fail "the user's database changed"
 echo "dconftest: all passed"

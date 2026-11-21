@@ -318,10 +318,24 @@ kde3_dconf_cleanup()
   kde3_dconf_profile=
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user unset-environment DCONF_PROFILE 2>/dev/null
-    systemctl --user stop xdg-desktop-portal.service xdg-desktop-portal-gtk.service 2>/dev/null
+    systemctl --user stop xdg-desktop-portal.service xdg-desktop-portal-gtk.service \
+      xdg-desktop-portal-gnome.service 2>/dev/null
   fi
 }
 trap 'kde3_dconf_cleanup; exit 1' TERM INT
+# The same from outside the session, should startkde not get there
+# (killed with SIGKILL, hanging): a transient unit of the user manager
+# that waits for this script.  Limits: other services activated for
+# this session that read GSettings (gnome-terminal-server, ...) keep the
+# variable until they exit, and two KDE 3 sessions of one user at once
+# share the profile, so the first logout takes it from the second's
+# activated services.
+if test -n "$kde3_dconf_profile" && command -v systemd-run >/dev/null 2>&1; then
+  systemd-run --user --collect --quiet sh -c "while kill -0 $$ 2>/dev/null; do sleep 5; done; \
+    systemctl --user unset-environment DCONF_PROFILE; \
+    systemctl --user stop xdg-desktop-portal.service xdg-desktop-portal-gtk.service \
+      xdg-desktop-portal-gnome.service" >/dev/null 2>&1
+fi
 
 # The services that D-Bus and the systemd user manager start on demand
 # (xdg-desktop-portal and its backends, gnome-keyring, ...) do not inherit
