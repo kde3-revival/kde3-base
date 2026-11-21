@@ -249,7 +249,9 @@ void KSMServer::goToSleep( bool hibernate, bool lock )
             : i18n( "The screen could not be locked. Put the computer to sleep anyway?" );
         KGuiItem cont = hibernate ? KGuiItem( i18n( "&Hibernate" ), "hdd_unmount" )
                                   : KGuiItem( i18n( "&Sleep" ), "player_pause" );
-        if ( KMessageBox::warningContinueCancel( 0, msg, QString::null, cont )
+        // Dangerous: Cancel is the default, sleeping unlocked is the risk
+        if ( KMessageBox::warningContinueCancel( 0, msg, QString::null, cont, QString::null,
+                                                 KMessageBox::Notify | KMessageBox::Dangerous )
              != KMessageBox::Continue ) {
             kapp->disableStyles();
             return;
