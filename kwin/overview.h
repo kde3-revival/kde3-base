@@ -69,6 +69,7 @@ class Overview : public QObject
         void frameTimeout();
         void settleTimeout();
         void cornerTimeout();
+        void presentWatchdog();
 
     private:
         enum State { Hidden, Settling, Showing, Shown, Hiding, Finishing };
@@ -95,6 +96,7 @@ class Overview : public QObject
         void startTransition( double target );
         void requestFrame();
         void renderFrame();
+        void updateMips( OverviewItem* item, int level );
         void present();
         void dumpFrame();
         void finish();
@@ -145,11 +147,11 @@ class Overview : public QObject
         OverviewRenderer* r;
 
         QTimer frame_timer;
+        QTimer watchdog_timer;
         QTimer settle_timer;
         double settle_start;
         double last_damage;
         double last_frame;
-        bool frame_pending; // a Present is in flight
         bool frame_wanted;
 
         // hot corners
@@ -164,6 +166,7 @@ class Overview : public QObject
         int frame_count;
         double stat_render, stat_max_render, stat_first_frame;
         int dump_index;
+        int stat_skipped, stat_gaps; // Present: frames not shown, refreshes without a new frame
     };
 
 } // namespace

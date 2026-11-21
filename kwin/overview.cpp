@@ -129,6 +129,15 @@ inline double clamp01( double v )
     return v < 0 ? 0 : v > 1 ? 1 : v;
     }
 
+// the mip level that is downscaled by at most a half
+int mipLevel( double scale )
+    {
+    int level = 0;
+    while( level < MipLevels - 1 && scale * ( 1 << ( level + 1 )) <= 1.0 )
+        ++level;
+    return level;
+    }
+
 inline double easeOutCubic( double t )
     {
     t = 1 - t;
@@ -319,11 +328,12 @@ class OverviewRenderer
     public:
         OverviewRenderer()
             : width( 0 ), height( 0 ), format( NULL ), gc( NULL ), current( 0 ),
-              present( false ), present_eid( None ), serial( 0 ),
+              present( false ), present_eid( None ), serial( 0 ), queued( 0 ), next_msc( 0 ),
+              last_msc( 0 ), last_ust( 0 ), period( 1000.0 / 60 ), last_complete( 0 ), stat_msc( 0 ),
               snapshot( None ), snapshot_picture( None ), filter_picture( None )
             {
             for( int i = 0;
-                 i < 2;
+                 i < Buffers;
                  ++i )
                 {
                 buffers[ i ] = None;
@@ -333,14 +343,25 @@ class OverviewRenderer
             }
         int width, height;
         XRenderPictFormat* format;
-        Pixmap buffers[ 2 ];
-        Picture pictures[ 2 ];
-        bool busy[ 2 ];
+        enum { Buffers = 3 };
+        Pixmap buffers[ Buffers ];
+        Picture pictures[ Buffers ];
+        bool busy[ Buffers ];
         GC gc;
         int current;
         bool present;
         XID present_eid;
         unsigned int serial;
+        // presentations queued in the server, at consecutive MSCs
+        int queued;
+        unsigned long long next_msc;
+        unsigned long long last_msc;
+        unsigned long long last_ust;
+        double period; // of the refresh, ms
+        double last_complete; // when the last completion event came
+        unsigned long long stat_msc;
+        // the MSC of the next refresh is known only while frames are flowing
+        bool mscKnown( double t ) const { return last_complete > 0 && t - last_complete < 2.5 * period; }
         Pixmap snapshot; // the screen, without Composite
         Picture snapshot_picture;
         QPixmap filter_pixmap;
@@ -375,19 +396,21 @@ Overview::Overview( Workspace* w )
       settle_start( 0 ),
       last_damage( 0 ),
       last_frame( 0 ),
-      frame_pending( false ),
       frame_wanted( false ),
       corner_armed( true ),
       frame_count( 0 ),
       stat_render( 0 ),
       stat_max_render( 0 ),
       stat_first_frame( 0 ),
-      dump_index( 0 )
+      dump_index( 0 ),
+      stat_skipped( 0 ),
+      stat_gaps( 0 )
     {
     items.setAutoDelete( true );
     debug = getenv( "KWIN_OVERVIEW_DEBUG" ) != NULL;
     dump_dir = QFile::decodeName( getenv( "KWIN_OVERVIEW_DUMP" ));
     connect( &frame_timer, SIGNAL( timeout()), SLOT( frameTimeout()));
+    connect( &watchdog_timer, SIGNAL( timeout()), SLOT( presentWatchdog()));
     connect( &settle_timer, SIGNAL( timeout()), SLOT( settleTimeout()));
     connect( &corner_timer, SIGNAL( timeout()), SLOT( cornerTimeout()));
     checkExtensions();
@@ -644,6 +667,7 @@ void Overview::show()
     composite = have_composite;
     frame_count = 0;
     stat_render = stat_max_render = 0;
+    stat_skipped = stat_gaps = 0;
     stat_first_frame = now();
     filter = QString::null;
     selected = pressed = NULL;
@@ -693,7 +717,7 @@ void Overview::show()
         }
 
     r->present = composite && have_present;
-    const int buffers = r->present ? 2 : 1;
+    const int buffers = r->present ? (int) OverviewRenderer::Buffers : 1;
     for( int i = 0;
          i < buffers;
          ++i )
@@ -740,11 +764,19 @@ void Overview::settleTimeout()
         if( quiet || t - settle_start >= 150 )
             {
             settle_timer.stop();
-            if( debug )
+            if( debug && temp_redirected )
                 kdWarning( 1212 ) << "overview: settled after " << t - settle_start << " ms" << endl;
+            // the downscaled copies now, not in the first frames of the zoom
+            for( OverviewItem* item = items.first();
+                 item != NULL;
+                 item = items.next())
+                if( item->in_layout && item->mip_picture[ 0 ] != None )
+                    updateMips( item, mipLevel( double( item->slot.width()) / item->geom.width()));
             state = Showing;
-            stat_first_frame = t;
+            stat_first_frame = t = now();
             frame_count = 0;
+            stat_render = stat_max_render = 0;
+            stat_skipped = stat_gaps = 0;
             startTransition( 1.0 );
             }
         }
@@ -789,6 +821,7 @@ void Overview::hide( Client* c )
     stat_first_frame = now();
     frame_count = 0;
     stat_render = stat_max_render = 0;
+    stat_skipped = stat_gaps = 0;
     startTransition( 0.0 );
     }
 
@@ -820,6 +853,7 @@ void Overview::finish()
 void Overview::cleanup()
     {
     frame_timer.stop();
+    watchdog_timer.stop();
     settle_timer.stop();
     if( r == NULL )
         {
@@ -842,7 +876,7 @@ void Overview::cleanup()
         XPresentFreeInput( dpy, overlay, r->present_eid );
 #endif
     for( int i = 0;
-         i < 2;
+         i < OverviewRenderer::Buffers;
          ++i )
         {
         if( r->pictures[ i ] != None )
@@ -872,7 +906,7 @@ void Overview::cleanup()
     state = Hidden;
     selected = pressed = NULL;
     filter = QString::null;
-    frame_pending = frame_wanted = false;
+    frame_wanted = false;
     // don't open again right away if the pointer is still in the corner
     Window root_return, child;
     int rx, ry, wx, wy;
@@ -1450,6 +1484,8 @@ void Overview::startTransition( double target )
     double dist = fabs( target - progress );
     trans_duration = dist > 0.001 ? full * QMAX( 0.4, dist ) : full;
     trans_start = now();
+    if( r != NULL )
+        r->stat_msc = 0;
     for( OverviewItem* item = items.first();
          item != NULL;
          item = items.next())
@@ -1463,46 +1499,113 @@ void Overview::startTransition( double target )
     requestFrame();
     }
 
+/*
+ Frame pacing: without Present a frame every 16 ms at most.  With Present
+ up to two frames are queued in the server for consecutive refreshes, so
+ a frame that takes more than half a refresh to draw doesn't halve the
+ frame rate; each frame shows the animation at the time it will be
+ displayed.
+*/
 void Overview::requestFrame()
     {
     if( r == NULL )
         return;
     frame_wanted = true;
-    if( frame_pending || frame_timer.isActive())
+    if( frame_timer.isActive() || state == Finishing )
         return;
     double delay = 0;
-    if( !r->present )
+    if( r->present )
+        {
+        if( r->queued >= ( r->mscKnown( now()) ? 2 : 1 ))
+            return; // the next completion asks again
+        }
+    else
         delay = QMAX( 0.0, last_frame + 16.0 - now());
     frame_timer.start( (int) delay, true );
     }
 
 void Overview::frameTimeout()
     {
-    if( r == NULL )
-        return;
-    if( frame_pending )
-        { // the Present watchdog: no completion event, don't hang
-        frame_pending = false;
-        r->busy[ 0 ] = r->busy[ 1 ] = false;
-        if( state == Finishing )
-            {
-            finish();
-            return;
-            }
-        }
-    if( !frame_wanted )
+    if( r == NULL || !frame_wanted )
         return;
     frame_wanted = false;
     renderFrame();
-    if( frame_wanted && !frame_pending )
+    if( frame_wanted )
         requestFrame();
+    }
+
+// no completion events from Present: don't hang
+void Overview::presentWatchdog()
+    {
+    if( r == NULL )
+        return;
+    r->queued = 0;
+    r->next_msc = 0;
+    for( int i = 0;
+         i < OverviewRenderer::Buffers;
+         ++i )
+        r->busy[ i ] = false;
+    if( state == Finishing )
+        finish();
+    else if( frame_wanted )
+        requestFrame();
+    }
+
+// level 1, 2... of the window, each half of the previous one
+void Overview::updateMips( OverviewItem* item, int level )
+    {
+    for( int l = 1;
+         l <= level;
+         ++l )
+        {
+        if( item->mip_picture[ l ] != None && !item->mip_dirty[ l ] )
+            continue;
+        int w = QMAX( 1, ( item->mip_w[ l - 1 ] + 1 ) / 2 );
+        int h = QMAX( 1, ( item->mip_h[ l - 1 ] + 1 ) / 2 );
+        if( item->mip_picture[ l ] == None )
+            {
+            item->mip_pixmap[ l ] = XCreatePixmap( dpy, root, w, h, item->depth );
+            item->mip_picture[ l ] = XRenderCreatePicture( dpy, item->mip_pixmap[ l ], item->format, 0, NULL );
+            item->mip_w[ l ] = w;
+            item->mip_h[ l ] = h;
+            }
+        Picture src = item->mip_picture[ l - 1 ];
+        // exactly 2x2 boxes: bilinear sampling between four pixels
+        XRenderPictureAttributes pa;
+        pa.repeat = RepeatPad;
+        XRenderChangePicture( dpy, src, CPRepeat, &pa );
+        setTransform( dpy, src, 2, 2, 0, 0 );
+        XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
+        XRenderComposite( dpy, PictOpSrc, src, None, item->mip_picture[ l ], 0, 0, 0, 0, 0, 0, w, h );
+        pa.repeat = RepeatNone;
+        XRenderChangePicture( dpy, src, CPRepeat, &pa );
+        item->mip_dirty[ l ] = false;
+        if( l + 1 < MipLevels )
+            item->mip_dirty[ l + 1 ] = true;
+        }
     }
 
 void Overview::renderFrame()
     {
     if( r == NULL )
         return;
-    const double t0 = now();
+    // the buffer
+    int buf = -1;
+    for( int i = 0;
+         i < ( r->present ? (int) OverviewRenderer::Buffers : 1 ) && buf < 0;
+         ++i )
+        if( !r->busy[ i ] )
+            buf = i;
+    if( buf < 0 )
+        { // all still used by the server, wait for an idle event
+        frame_wanted = true;
+        return;
+        }
+    r->current = buf;
+    Picture dst = r->pictures[ buf ];
+    const double t_start = now();
+    // the time when this frame will be seen
+    const double t0 = t_start + ( r->present ? r->queued * r->period : 0 );
     // the transition
     double lin = trans_duration > 0 ? clamp01(( t0 - trans_start ) / trans_duration ) : 1.0;
     double e = easeOutCubic( lin );
@@ -1530,7 +1633,7 @@ void Overview::renderFrame()
             double t = t0 - stat_first_frame;
             kdWarning( 1212 ) << "overview: zoom-out " << frame_count << " frames in " << t << " ms, "
                 << ( frame_count > 1 ? frame_count * 1000.0 / t : 0 ) << " fps, render avg "
-                << ( frame_count ? stat_render / frame_count : 0 ) << " max " << stat_max_render << " ms" << endl;
+                << ( frame_count ? stat_render / frame_count : 0 ) << " max " << stat_max_render << " ms, skipped " << stat_skipped << " missed refreshes " << stat_gaps << endl;
             }
         }
     if( state == Shown )
@@ -1547,22 +1650,6 @@ void Overview::renderFrame()
         if( item->fade_start > 0 )
             more = true;
 
-    // the buffer
-    int buf = 0;
-    if( r->present )
-        {
-        if( !r->busy[ r->current ] )
-            buf = r->current;
-        else if( !r->busy[ 1 - r->current ] )
-            buf = 1 - r->current;
-        else
-            { // both still in use by the server, wait for an idle event
-            frame_wanted = true;
-            return;
-            }
-        }
-    r->current = buf;
-    Picture dst = r->pictures[ buf ];
 
     // the background
     XRenderColor black = { 0, 0, 0, 0xffff };
@@ -1582,7 +1669,7 @@ void Overview::renderFrame()
         if( !have_desktop )
             XRenderFillRectangle( dpy, PictOpSrc, dst, &black, 0, 0, r->width, r->height );
         }
-    const double dim = progress * ( composite ? DimAlpha : 0.6 );
+    const double dim = progress * ( composite ? DimAlpha : 0.75 );
     QColor highlight = KGlobalSettings::highlightColor();
 
     // the windows, bottom first
@@ -1637,7 +1724,7 @@ void Overview::renderFrame()
             { // icons on tiles
             if( !item->in_layout )
                 continue;
-            roundedRect( dpy, dst, rect, 8, QColor( 60, 60, 60 ), 0.85 * alpha );
+            roundedRect( dpy, dst, rect, 8, QColor( 64, 64, 64 ), 0.95 * alpha );
             if( item->icon_picture != None && item->icon_w > 0 )
                 {
                 double size = QMIN( 64.0, QMIN( rect.w, rect.h ) * 0.6 );
@@ -1655,39 +1742,8 @@ void Overview::renderFrame()
         if( item->mip_picture[ 0 ] == None )
             continue;
         // the source: the mip level that is downscaled at most by half
-        double s = rect.w / item->geom.width();
-        int level = 0;
-        while( level < MipLevels - 1 && s * ( 1 << ( level + 1 )) <= 1.0 )
-            ++level;
-        for( int l = 1;
-             l <= level;
-             ++l )
-            {
-            if( item->mip_picture[ l ] != None && !item->mip_dirty[ l ] )
-                continue;
-            int w = QMAX( 1, ( item->mip_w[ l - 1 ] + 1 ) / 2 );
-            int h = QMAX( 1, ( item->mip_h[ l - 1 ] + 1 ) / 2 );
-            if( item->mip_picture[ l ] == None )
-                {
-                item->mip_pixmap[ l ] = XCreatePixmap( dpy, root, w, h, item->depth );
-                item->mip_picture[ l ] = XRenderCreatePicture( dpy, item->mip_pixmap[ l ], item->format, 0, NULL );
-                item->mip_w[ l ] = w;
-                item->mip_h[ l ] = h;
-                }
-            Picture src = item->mip_picture[ l - 1 ];
-            // exactly 2x2 boxes: bilinear sampling between four pixels
-            XRenderPictureAttributes pa;
-            pa.repeat = RepeatPad;
-            XRenderChangePicture( dpy, src, CPRepeat, &pa );
-            setTransform( dpy, src, 2, 2, 0, 0 );
-            XRenderSetPictureFilter( dpy, src, FilterBilinear, NULL, 0 );
-            XRenderComposite( dpy, PictOpSrc, src, None, item->mip_picture[ l ], 0, 0, 0, 0, 0, 0, w, h );
-            pa.repeat = RepeatNone;
-            XRenderChangePicture( dpy, src, CPRepeat, &pa );
-            item->mip_dirty[ l ] = false;
-            if( l + 1 < MipLevels )
-                item->mip_dirty[ l + 1 ] = true;
-            }
+        int level = mipLevel( rect.w / item->geom.width());
+        updateMips( item, level );
         Picture src = item->mip_picture[ level ];
         const double sw = item->mip_w[ level ];
         const double sh = item->mip_h[ level ];
@@ -1792,11 +1848,11 @@ void Overview::renderFrame()
     if( debug )
         {
         XSync( dpy, False );
-        double t = now() - t0;
+        double t = now() - t_start;
         stat_render += t;
         stat_max_render = QMAX( stat_max_render, t );
         }
-    last_frame = t0;
+    last_frame = t_start;
 
     if( state == Hiding && !more )
         {
@@ -1805,15 +1861,15 @@ void Overview::renderFrame()
             double t = t0 - stat_first_frame;
             kdWarning( 1212 ) << "overview: zoom-in " << frame_count << " frames in " << t << " ms, "
                 << ( frame_count > 1 ? frame_count * 1000.0 / t : 0 ) << " fps, render avg "
-                << ( frame_count ? stat_render / frame_count : 0 ) << " max " << stat_max_render << " ms" << endl;
+                << ( frame_count ? stat_render / frame_count : 0 ) << " max " << stat_max_render << " ms, skipped " << stat_skipped << " missed refreshes " << stat_gaps << endl;
             }
         state = Finishing;
-        if( !frame_pending )
+        if( !r->present || r->queued == 0 )
             {
             XSync( dpy, False );
             finish();
             }
-        // else finish() after the completion of the presentation
+        // else finish() after the completion of the last presentation
         return;
         }
     if( more )
@@ -1827,11 +1883,14 @@ void Overview::present()
     if( r->present )
         {
         r->busy[ buf ] = true;
+        if( !r->mscKnown( now()))
+            r->next_msc = 0; // as soon as possible
+        ++r->queued;
         XPresentPixmap( dpy, overlay, r->buffers[ buf ], ++r->serial, None, None, 0, 0,
-            None, None, None, PresentOptionNone, 0, 0, 0, NULL, 0 );
-        frame_pending = true;
-        frame_timer.start( 100, true ); // watchdog
-        r->current = 1 - buf;
+            None, None, None, PresentOptionNone, r->next_msc, 0, 0, NULL, 0 );
+        if( r->next_msc != 0 )
+            ++r->next_msc;
+        watchdog_timer.start( 200, true );
         XFlush( dpy );
         return;
         }
@@ -1919,23 +1978,52 @@ bool Overview::handlePresent( XEvent* e )
         {
         if( cookie->evtype == PresentCompleteNotify )
             {
-            frame_pending = false;
-            frame_timer.stop();
-            if( state == Finishing )
-                finish();
-            else if( frame_wanted )
-                frame_timer.start( 0, true );
+            XPresentCompleteNotifyEvent* ce = (XPresentCompleteNotifyEvent*) cookie->data;
+            if( ce->kind == PresentCompleteKindPixmap )
+                {
+                r->queued = QMAX( 0, r->queued - 1 );
+                if( ce->mode == PresentCompleteModeSkip )
+                    ++stat_skipped;
+                else
+                    {
+                    if( r->stat_msc != 0 && ce->msc > r->stat_msc + 1 && ( state == Showing || state == Hiding ))
+                        stat_gaps += ce->msc - r->stat_msc - 1;
+                    r->stat_msc = ce->msc;
+                    }
+                r->last_complete = now();
+                if( r->last_ust != 0 && ce->msc > r->last_msc && ce->ust > r->last_ust )
+                    {
+                    double p = ( ce->ust - r->last_ust ) / 1000.0 / ( ce->msc - r->last_msc );
+                    if( p > 4 && p < 50 )
+                        r->period = p;
+                    }
+                r->last_msc = ce->msc;
+                r->last_ust = ce->ust;
+                if( r->next_msc <= ce->msc )
+                    r->next_msc = ce->msc + 1;
+                if( r->queued == 0 )
+                    watchdog_timer.stop();
+                else
+                    watchdog_timer.start( 200, true );
+                if( state == Finishing )
+                    {
+                    if( r->queued == 0 )
+                        finish();
+                    }
+                else if( frame_wanted )
+                    requestFrame();
+                }
             }
         else if( cookie->evtype == PresentIdleNotify )
             {
             XPresentIdleNotifyEvent* ie = (XPresentIdleNotifyEvent*) cookie->data;
             for( int i = 0;
-                 i < 2;
+                 i < OverviewRenderer::Buffers;
                  ++i )
                 if( r->buffers[ i ] == ie->pixmap )
                     r->busy[ i ] = false;
-            if( frame_wanted && !frame_pending && !frame_timer.isActive())
-                frame_timer.start( 0, true );
+            if( frame_wanted )
+                requestFrame();
             }
         }
     XFreeEventData( dpy, cookie );
@@ -2269,6 +2357,7 @@ void Overview::abort() {}
 void Overview::frameTimeout() {}
 void Overview::settleTimeout() {}
 void Overview::cornerTimeout() {}
+void Overview::presentWatchdog() {}
 
 #endif // HAVE_XRENDER
 
