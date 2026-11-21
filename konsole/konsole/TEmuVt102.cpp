@@ -382,13 +382,22 @@ void TEmuVt102::XtermHack()
   for (i = 2; i < ppos && '0'<=pbuf[i] && pbuf[i]<'9' ; i++)
     arg = 10*arg + (pbuf[i]-'0');
   if (pbuf[i] != ';') { ReportErrorToken(); return; }
-  QChar *str = new QChar[ppos-i-2];
-  for (int j = 0; j < ppos-i-2; j++) str[j] = pbuf[i+1+j];
-  QString unistr(str,ppos-i-2);
+  QString unistr;
+  for (int j = 0; j < ppos-i-2; j++)
+  {
+    int c = pbuf[i+1+j];
+    if (c > 0xffff)
+    { // surrogate pair
+      c -= 0x10000;
+      unistr += QChar(0xd800 + (c >> 10));
+      unistr += QChar(0xdc00 + (c & 0x3ff));
+    }
+    else
+      unistr += QChar(c);
+  }
   // arg == 1 doesn't change the title. In XTerm it only changes the icon name
   // (btw: arg=0 changes title and icon, arg=1 only icon, arg=2 only title
   emit changeTitle(arg,unistr);
-  delete [] str;
 }
 
 // Interpreting Codes ---------------------------------------------------------
@@ -1026,7 +1035,7 @@ void TEmuVt102::onKeyPress( QKeyEvent* ev )
 
 // Apply current character map.
 
-unsigned short TEmuVt102::applyCharset(unsigned short c)
+int TEmuVt102::applyCharset(int c)
 {
   if (CHARSET.graphic && 0x5f <= c && c <= 0x7e) return vt100_graphics[c-0x5f];
   if (CHARSET.pound                && c == '#' ) return 0xa3; //This mode is obsolete

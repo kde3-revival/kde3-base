@@ -342,10 +342,25 @@ void TEmulation::onRcvBlock(const char *s, int len)
 
     for (int j = 0; j < reslen; j++)
     {
+      int ucs = r[j].unicode();
+      // Characters above U+FFFF arrive as surrogate pairs; pass them on
+      // as one code point. The screen cannot store them, but needs to
+      // know their width.
+      if (ucs >= 0xd800 && ucs < 0xe000)
+      {
+        if (ucs < 0xdc00 && j + 1 < reslen &&
+            r[j+1].unicode() >= 0xdc00 && r[j+1].unicode() < 0xe000)
+        {
+          ucs = 0x10000 + ((ucs - 0xd800) << 10) + (r[j+1].unicode() - 0xdc00);
+          j++;
+        }
+        else
+          ucs = QChar::replacement.unicode(); // unpaired surrogate
+      }
       if (r[j].category() == QChar::Mark_NonSpacing)
          scr->compose(r.mid(j,1));
       else
-         onRcvChar(r[j].unicode());
+         onRcvChar(ucs);
     }
     i = l;
   }

@@ -127,7 +127,7 @@ private:
 
 protected:
 
-  unsigned short applyCharset(unsigned short c);
+  int applyCharset(int c);
   void setCharset(int n, int cs);
   void useCharset(int n);
   void setAndUseCharset(int n, int cs);

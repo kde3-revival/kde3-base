@@ -728,7 +728,7 @@ void TEScreen::checkSelection(int from, int to)
   }
 }
 
-void TEScreen::ShowCharacter(unsigned short c)
+void TEScreen::ShowCharacter(int c)
 {
   // Note that VT100 does wrapping BEFORE putting the character.
   // This has impact on the assumption of valid cursor positions.
@@ -739,6 +739,12 @@ void TEScreen::ShowCharacter(unsigned short c)
 
   if (w <= 0)
      return;
+
+  // A cell holds one UTF-16 unit only: show characters above U+FFFF
+  // (emoji, supplementary CJK, ...) as a replacement character that
+  // takes up their width, so the rest of the line stays aligned.
+  if (c > 0xffff)
+     c = QChar::replacement.unicode();
 
   if (cuX+w > columns) {
     if (getMode(MODE_Wrap)) {
