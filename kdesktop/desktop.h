@@ -129,6 +129,8 @@ private slots:
   void slotLogoutNoCnf();
   void slotHaltNoCnf();
   void slotRebootNoCnf();
+  void slotSuspend();
+  void slotHibernate();
 
   /** Connected to KSycoca */
   void slotDatabaseChanged();
@@ -170,6 +172,8 @@ private slots:
 private:
 
   KGlobalAccel *keys;
+  int m_sleepKeysHandled; // last told to ksmserver: 1 suspend, 2 hibernate key, -1 not yet
+  void readShortcuts();
 
   KWinModule* m_pKwinmodule;
 

@@ -63,6 +63,12 @@ k_dcop:
     // and hibernate (suspend to disk), e.g. from the power applet
     bool canHibernate();
     void hibernate();
+    // kdesktop has global shortcuts with logind's suspend key (XF86Sleep)
+    // or its hibernate key (XF86Suspend): logind must leave them alone
+    void setSleepKeysHandled( bool suspendKey, bool hibernateKey );
+    // kdesktop's screen saver or locker runs (it has the keyboard grabbed)
+    void screensaverStarted();
+    void screensaverStopped();
 public:
     KSMServer( const QString& windowManager, bool only_local );
     ~KSMServer();
@@ -198,6 +204,13 @@ private:
     QString bootOption;
     // shutdownType is carried out by systemd-logind, not by the DM
     bool logindShutdown;
+    // logind's lock while KDE handles its sleep keys, or -1, and for which;
+    // the keys kdesktop has bound; whether its saver or locker runs
+    int sleepKeysInhibitor;
+    bool inhibitedSuspendKey, inhibitedHibernateKey;
+    bool boundSuspendKey, boundHibernateKey;
+    bool screensaverRunning;
+    void inhibitSleepKeys( bool suspendKey, bool hibernateKey );
 
     bool clean;
     KSMClient* clientInteracting;

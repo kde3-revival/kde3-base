@@ -12,6 +12,7 @@ Licensed like the rest of ksmserver, see the file LICENSE.
 // as a macro, which breaks GLib's declarations that use the word.
 #ifdef HAVE_LOGIND_SLEEP
 #include <gio/gio.h>
+#include <gio/gunixfdlist.h>
 #endif
 
 #include <stdlib.h>
@@ -224,6 +225,46 @@ bool Logind::reboot( QString* error )
     return action( "Reboot", error );
 }
 
+int Logind::inhibit( const char* what, const QString& why, QString* error )
+{
+    GError* err = 0;
+    GDBusConnection* bus = g_bus_get_sync( G_BUS_TYPE_SYSTEM, 0, &err );
+    if ( !bus ) {
+        if ( error )
+            *error = errorString( err );
+        else
+            g_error_free( err );
+        return -1;
+    }
+    g_dbus_connection_set_exit_on_close( bus, FALSE ); // see callLogind()
+    GUnixFDList* fds = 0;
+    GVariant* reply = g_dbus_connection_call_with_unix_fd_list_sync( bus,
+        logindService, logindPath, logindManager, "Inhibit",
+        g_variant_new( "(ssss)", what, "KDE", why.utf8().data(), "block" ),
+        G_VARIANT_TYPE( "(h)" ), G_DBUS_CALL_FLAGS_NONE, canTimeout,
+        0, &fds, 0, &err );
+    g_object_unref( bus );
+    int fd = -1;
+    if ( reply ) {
+        gint32 index = -1;
+        g_variant_get( reply, "(h)", &index );
+        g_variant_unref( reply );
+        if ( fds )
+            fd = g_unix_fd_list_get( fds, index, &err ); // (a dup of it)
+        else
+            err = g_error_new_literal( G_IO_ERROR, G_IO_ERROR_FAILED, "no file descriptor" );
+    }
+    if ( fds )
+        g_object_unref( fds );
+    if ( fd < 0 && err ) {
+        if ( error )
+            *error = errorString( err );
+        else
+            g_error_free( err );
+    }
+    return fd;
+}
+
 #else // HAVE_LOGIND_SLEEP
 
 static bool unsupported( QString* error )
@@ -276,6 +317,12 @@ bool Logind::powerOff( QString* error )
 bool Logind::reboot( QString* error )
 {
     return unsupported( error );
+}
+
+int Logind::inhibit( const char*, const QString&, QString* error )
+{
+    unsupported( error );
+    return -1;
 }
 
 #endif // HAVE_LOGIND_SLEEP

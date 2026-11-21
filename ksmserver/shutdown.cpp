@@ -390,6 +390,75 @@ void KSMServer::sleepInternal( bool hibernate )
     dialogActive = false;
 }
 
+/*
+ A key bound in KDE is also seen by systemd-logind, which reads the
+ keyboards itself: with its default HandleSuspendKey=suspend the sleep
+ key would suspend twice (and without locking the screen first).  Like
+ GNOME, KDE takes logind's "block" inhibitor for its suspend key
+ (KEY_SLEEP, XF86Sleep) and/or its hibernate key (KEY_SUSPEND,
+ XF86Suspend) while kdesktop has them bound, and gives them back to
+ logind when they are not bound any more.  The lock goes away with
+ ksmserver.
+
+ While the screen saver or the locker runs, it has the keyboard grabbed
+ and no global shortcut works: logind gets the keys back meanwhile (the
+ screen is locked already, or the saver would have ended on that key
+ press anyway), else the sleep key would do nothing then.
+*/
+void KSMServer::setSleepKeysHandled( bool suspendKey, bool hibernateKey )
+{
+    static bool connected = false;
+    if ( !connected ) {
+        connected = true;
+        connectDCOPSignal( "kdesktop", "KScreensaverIface", "KDE_start_screensaver()",
+                           "screensaverStarted()", false );
+        connectDCOPSignal( "kdesktop", "KScreensaverIface", "KDE_stop_screensaver()",
+                           "screensaverStopped()", false );
+    }
+    boundSuspendKey = suspendKey;
+    boundHibernateKey = hibernateKey;
+    if ( !screensaverRunning )
+        inhibitSleepKeys( suspendKey, hibernateKey );
+}
+
+void KSMServer::screensaverStarted()
+{
+    screensaverRunning = true;
+    inhibitSleepKeys( false, false );
+}
+
+void KSMServer::screensaverStopped()
+{
+    screensaverRunning = false;
+    inhibitSleepKeys( boundSuspendKey, boundHibernateKey );
+}
+
+void KSMServer::inhibitSleepKeys( bool suspendKey, bool hibernateKey )
+{
+    if ( suspendKey == inhibitedSuspendKey && hibernateKey == inhibitedHibernateKey )
+        return;
+    int fd = -1;
+    if ( suspendKey || hibernateKey ) {
+        QCString what;
+        if ( suspendKey )
+            what = "handle-suspend-key";
+        if ( hibernateKey )
+            what += what.isEmpty() ? "handle-hibernate-key" : ":handle-hibernate-key";
+        QString error;
+        // (the new lock first: no moment without one)
+        fd = Logind::inhibit( what, QString::fromLatin1( "KDE handles the sleep keys" ), &error );
+        if ( fd < 0 ) {
+            kdWarning( 1218 ) << "logind Inhibit(" << what << "): " << error << endl;
+            return; // the old lock stays, it is asked again next time
+        }
+    }
+    if ( sleepKeysInhibitor >= 0 )
+        ::close( sleepKeysInhibitor );
+    sleepKeysInhibitor = fd;
+    inhibitedSuspendKey = suspendKey;
+    inhibitedHibernateKey = hibernateKey;
+}
+
 void KSMServer::pendingShutdownTimeout()
 {
     shutdown( pendingShutdown_confirm, pendingShutdown_sdtype, pendingShutdown_sdmode );

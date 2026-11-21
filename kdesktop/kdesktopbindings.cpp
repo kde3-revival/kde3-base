@@ -44,6 +44,12 @@
 	}
 #endif
 
+	// through ksmserver (which locks the screen first if so configured);
+	// the keyboards' sleep keys by default, like GNOME
+	keys->insert( "Group:Power", i18n("Power") );
+	DEF( I18N_NOOP("Suspend"), "XF86Sleep;XF86Suspend", "XF86Sleep;XF86Suspend", slotSuspend() );
+	DEF( I18N_NOOP("Hibernate"), "XF86Hibernate", "XF86Hibernate", slotHibernate() );
+
 #undef DEF
 #undef DEF2
 #undef WIN

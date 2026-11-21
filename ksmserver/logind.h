@@ -72,6 +72,15 @@ namespace Logind
      */
     bool powerOff( QString* error = 0 );
     bool reboot( QString* error = 0 );
+
+    /**
+     * Take a "block" inhibitor lock for @p what (e.g.
+     * "handle-suspend-key:handle-hibernate-key"): logind leaves those to
+     * us while the returned file descriptor is open; close() it to give
+     * them back.  -1 on failure (@p error, if given, says why).  Not
+     * affected by KSMSERVER_LOGIND_DRYRUN.
+     */
+    int inhibit( const char* what, const QString& why, QString* error = 0 );
 }
 
 #endif

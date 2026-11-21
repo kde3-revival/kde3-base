@@ -588,6 +588,10 @@ KSMServer::KSMServer( const QString& windowManager, bool _only_local )
 
     shutdownType = KApplication::ShutdownTypeNone;
     logindShutdown = false;
+    sleepKeysInhibitor = -1;
+    inhibitedSuspendKey = inhibitedHibernateKey = false;
+    boundSuspendKey = boundHibernateKey = false;
+    screensaverRunning = false;
 
     state = Idle;
     dialogActive = false;
@@ -694,6 +698,7 @@ void KSMServer::cleanUp()
 {
     if (clean) return;
     clean = true;
+    inhibitSleepKeys( false, false );
     IceFreeListenObjs (numTransports, listenObjs);
 
     QCString fName = QFile::encodeName(locateLocal("socket", "KSMserver"));

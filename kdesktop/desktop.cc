@@ -58,6 +58,9 @@
 #include <kglobalsettings.h>
 #include <kpopupmenu.h>
 #include <kapplication.h>
+#include <kshortcutlist.h>
+#include <qdatastream.h>
+#include <X11/XF86keysym.h>
 // Create the equivalent of KAccelBase::connectItem
 // and then remove this include and fix reconnects in initRoot() -- ellis
 //#include <kaccelbase.h>
@@ -139,6 +142,7 @@ KDesktop::KDesktop( bool x_root_hack, bool wait_for_kded ) :
   m_bWaitForKded = wait_for_kded;
   m_miniCli = 0; // created on demand
   keys = 0; // created later
+  m_sleepKeysHandled = -1;
   KGlobal::locale()->insertCatalogue("kdesktop");
   KGlobal::locale()->insertCatalogue("libkonq"); // needed for apps using libkonq
   KGlobal::locale()->insertCatalogue("libdmctl");
@@ -391,8 +395,7 @@ KDesktop::slotStart()
 
 #include "kdesktopbindings.cpp"
 
-  keys->readSettings();
-  keys->updateConnections();
+  readShortcuts();
 
   connect(kapp, SIGNAL(appearanceChanged()), SLOT(slotConfigure()));
 
@@ -442,10 +445,7 @@ void KDesktop::initConfig()
        m_pIconView->initConfig( m_bInit );
 
     if ( keys )
-    {
-        keys->readSettings();
-        keys->updateConnections();
-    }
+        readShortcuts();
 
     KLaunchSettings::self()->readConfig();
     if( !KLaunchSettings::busyCursor() )
@@ -641,8 +641,7 @@ void KDesktop::slotSettingsChanged(int category)
     else if (category == KApplication::SETTINGS_SHORTCUTS)
     {
         kdDebug(1204) << "KDesktop::slotSettingsChanged SETTINGS_SHORTCUTS" << endl;
-        keys->readSettings();
-        keys->updateConnections();
+        readShortcuts();
     }
 }
 
@@ -896,6 +895,52 @@ void KDesktop::slotRebootNoCnf()
 {
     logout( KApplication::ShutdownConfirmNo,
             KApplication::ShutdownTypeReboot );
+}
+
+void KDesktop::slotSuspend()
+{
+    // ksmserver locks the screen first if the user wants that
+    kapp->dcopClient()->send( "ksmserver", "ksmserver", "suspend()", QByteArray() );
+}
+
+void KDesktop::slotHibernate()
+{
+    kapp->dcopClient()->send( "ksmserver", "ksmserver", "hibernate()", QByteArray() );
+}
+
+/*
+ The global shortcuts, and whether one of them is a sleep key that
+ systemd-logind would also act on: then ksmserver keeps it from doing so
+ (see KSMServer::setSleepKeysHandled()).
+*/
+void KDesktop::readShortcuts()
+{
+    keys->readSettings();
+    keys->updateConnections();
+
+    // logind's suspend key (KEY_SLEEP) and hibernate key (KEY_SUSPEND)
+    bool suspendKey = false, hibernateKey = false;
+    KAccelShortcutList list( keys );
+    for ( uint i = 0; i < list.count(); ++i )
+    {
+        const KShortcut cut = list.shortcut( i );
+        for ( uint j = 0; j < cut.count(); ++j )
+        {
+            const KKeySequence seq = cut.seq( j );
+            const uint sym = seq.count() == 1 ? seq.key( 0 ).sym() : 0;
+            suspendKey = suspendKey || sym == XF86XK_Sleep;
+            hibernateKey = hibernateKey || sym == XF86XK_Suspend;
+        }
+    }
+    const int handled = ( suspendKey ? 1 : 0 ) | ( hibernateKey ? 2 : 0 );
+    if ( m_sleepKeysHandled != handled )
+    {
+        m_sleepKeysHandled = handled;
+        QByteArray data;
+        QDataStream arg( data, IO_WriteOnly );
+        arg << suspendKey << hibernateKey;
+        kapp->dcopClient()->send( "ksmserver", "ksmserver", "setSleepKeysHandled(bool,bool)", data );
+    }
 }
 
 void KDesktop::setVRoot( bool enable )
