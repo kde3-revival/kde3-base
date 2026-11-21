@@ -117,7 +117,7 @@
                 <label>Show detailed menu entries</label>
             </choice>
         </choices>
-        <default>DescriptionAndName</default>
+        <default>NameOnly</default>
         <label>Formation of the menu entry text</label>
     </entry>
 
