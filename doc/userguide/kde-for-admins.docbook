@@ -677,18 +677,24 @@ Position=10,10
 
 <para>So-called <quote>Shell Expansion</quote> can be used to provide more
 dynamic default values. With shell expansion the value of a configuration
-key can be constructed from the value of an environment variable or from the
-output of a shell command.  To enable shell expansion for a configuration
+key can be constructed from the value of an environment variable.  Older
+versions also ran shell commands written as
+<literal>$(<replaceable>command</replaceable>)</literal> and used their
+output; this is no longer done, because any configuration file, including a
+<filename>.desktop</filename> or <filename>.directory</filename> file that
+came with a downloaded archive, could run commands that way
+(CVE-2019-14744).  <literal>$(...)</literal> is now left as it is.  To
+enable shell expansion for a configuration
 entry, the key must be followed by <token>[$e]</token>.  Normally the
 expanded form is written into the user's configuration file after first use.
 To prevent that, it is recommend to lock the configuration entry down by
 using <token>[$ie]</token>.  The user can't change it then of course.</para>
 
 <informalexample>
-<para>In the following example the value for the <varname>Host</varname>
-entry is determined by the output of the <command>hostname</command>
-program. This setting is also locked down to ensure that the value is always
-determined dynamically.</para>
+<para>In the following example the value for the <varname>Path</varname>
+entry is determined by the $<envar>HOME</envar> environment variable. This
+setting is also locked down to ensure that the value is always determined
+dynamically.</para>
 
 <para>The value for the <varname>Email</varname> entry is determined by
 filling in the values of the $<envar>USER</envar> and $<envar>HOST</envar>
@@ -699,7 +705,7 @@ not locked down.</para>
 
 <programlisting>
 [Mail Settings] 
-Host[$ie]=$(hostname)
+Path[$ie]=${HOME}/mail
 Email[$e]=${USER}@${HOST}
 </programlisting>
 </informalexample>
