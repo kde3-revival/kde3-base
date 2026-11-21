@@ -73,11 +73,11 @@ defFont.setBold(true);
   <group name="Digital">
     <entry name="DigitalShowSeconds" type="Bool" key="Show_Seconds">
       <label>Show seconds.</label>
-      <default>false</default>
+      <default>true</default>
     </entry>
     <entry name="DigitalShowDate" type="Bool" key="Show_Date">
       <label>Show date.</label>
-      <default>false</default>
+      <default>true</default>
     </entry>
     <entry name="DigitalShowDayOfWeek" type="Bool" key="Show_DayOfWeek">
       <label>Show day of week.</label>
@@ -85,7 +85,7 @@ defFont.setBold(true);
     </entry>
     <entry name="DigitalShowFrame" type="Bool" key="Show_Frame">
       <label>Show frame.</label>
-      <default>false</default>
+      <default>true</default>
     </entry>
     <entry name="DigitalForegroundColor" type="Color" key="Foreground_Color">
       <label>Foreground color.</label>
@@ -105,7 +105,7 @@ defFont.setBold(true);
     </entry>
     <entry name="DigitalLCDStyle" type="Bool" key="LCD_Style">
       <label>LCD Style</label>
-      <default>false</default>
+      <default>true</default>
     </entry>
   </group>
   <group name="Analog">
