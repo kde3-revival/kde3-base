@@ -833,6 +833,26 @@ if(KDEBASE_VOLUME_APPLET)
   endif()
 endif()
 
+# kicker/applets/kpowermanager: the power applet follows the battery and
+# the mains with UPower's libupower-glib and sets the screen's brightness
+# through systemd-logind with GIO's GDBus
+option(KDEBASE_POWER_APPLET "Build the power (battery, CPU, brightness) panel applet (needs libupower-glib and GIO)" ON)
+if(KDEBASE_POWER_APPLET)
+  pkg_check_modules(UPOWER QUIET IMPORTED_TARGET upower-glib)
+  pkg_check_modules(GIO QUIET IMPORTED_TARGET gio-2.0)
+  if(NOT UPOWER_FOUND OR NOT GIO_FOUND)
+    message(FATAL_ERROR "libupower-glib (upower-glib) or GIO (gio-2.0) was not "
+      "found; they are needed for the power panel applet.  Install them, or "
+      "configure with -DKDEBASE_POWER_APPLET=OFF to build without the applet.")
+  endif()
+  # up_client_get_devices_async() is new in UPower 1.90
+  cmake_push_check_state(RESET)
+  set(CMAKE_REQUIRED_INCLUDES ${UPOWER_INCLUDE_DIRS})
+  set(CMAKE_REQUIRED_LIBRARIES ${UPOWER_LINK_LIBRARIES})
+  check_symbol_exists(up_client_get_devices_async upower.h HAVE_UP_CLIENT_GET_DEVICES_ASYNC)
+  cmake_pop_check_state()
+endif()
+
 # configure.in.bot of kioslave/smb, kcontrol/* etc.: the summary of what
 # is left out.  <result variable>:<option switching it off, or ->:<what>
 foreach(_what
@@ -859,7 +879,8 @@ foreach(_what
     "KDE3_BUILD_KFONTINST:-:FreeType 2 and fontconfig (kfontinst)"
     "KDE3_BUILD_KDM:-:libXau and libXdmcp (kdm)"
     "KDEBASE_KONSOLE_FONTS:KDEBASE_KONSOLE_FONTS:Konsole's console fonts"
-    "KDEBASE_VOLUME_APPLET:KDEBASE_VOLUME_APPLET:Volume control panel applet (libpulse)")
+    "KDEBASE_VOLUME_APPLET:KDEBASE_VOLUME_APPLET:Volume control panel applet (libpulse)"
+    "KDEBASE_POWER_APPLET:KDEBASE_POWER_APPLET:Power panel applet (libupower-glib, GIO)")
   string(REPLACE ":" ";" _what "${_what}")
   list(GET _what 0 _var)
   list(GET _what 1 _opt)

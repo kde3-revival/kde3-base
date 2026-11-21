@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Plugin
+Name=KPowerManager
+Comment=Battery, mains, CPU usage and screen brightness (UPower)
+Icon=kpowermanager
+X-KDE-Library=kpowermanager_panelapplet
+X-KDE-UniqueApplet=true

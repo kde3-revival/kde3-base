@@ -222,6 +222,11 @@
 #cmakedefine COMPILE_UDISKS2BACKEND 1
 #cmakedefine HAVE_STATVFS 1
 
+/* ---- kicker ------------------------------------------------------- */
+
+/* Define if libupower-glib has up_client_get_devices_async() (power applet) */
+#cmakedefine HAVE_UP_CLIENT_GET_DEVICES_ASYNC 1
+
 /* ---- kdm ---------------------------------------------------------- */
 
 /* Define if the system uses a BSD-style init */
