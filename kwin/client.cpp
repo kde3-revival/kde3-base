@@ -28,6 +28,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "atoms.h"
 #include "notifications.h"
 #include "rules.h"
+#include "overview.h"
 
 #include <X11/extensions/shape.h>
 
@@ -944,6 +945,10 @@ void Client::updateVisibility()
             setMappingState( NormalState );
         rawShow();
         }
+    // a full screen window shown or hidden (e.g. unminimized by the
+    // application, which doesn't restack): the hot corners above it
+    if( isFullScreen() && workspace()->windowOverview() != NULL )
+        workspace()->windowOverview()->stackingChanged();
     }
 
 /*!

@@ -642,10 +642,13 @@ void Overview::updateCorners()
             if( (*c)->isFullScreen() && (*c)->isOnCurrentDesktop() && (*c)->isShown( true )
                 && (*c)->geometry().contains( *p ))
                 covered = true;
+        // mapped again where it was: not above override-redirect windows
+        // (menus) that appeared since (above the electric borders and the
+        // clients it is, from its creation and raiseCorners())
         if( covered && *mapped )
             XUnmapWindow( dpy, *it );
         else if( !covered && !*mapped )
-            XMapRaised( dpy, *it );
+            XMapWindow( dpy, *it );
         *mapped = !covered;
         }
     }
