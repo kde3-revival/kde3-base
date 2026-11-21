@@ -607,12 +607,12 @@ KAdvancedConfig::KAdvancedConfig (bool _standAlone, KConfig *_config, QWidget *p
     cornerLay->addStretch();
     overviewLay->addLayout(cornerLay, 1, 0);
     overviewCornerDelay = new KIntNumInput(50, overviewBox);
-    overviewCornerDelay->setRange(0, 1000, 10, true);
+    overviewCornerDelay->setRange(0, 2000, 10, true);
     overviewCornerDelay->setSuffix(i18n(" msec"));
     overviewCornerDelay->setLabel(i18n("Corner &delay:"));
     overviewLay->addWidget(overviewCornerDelay, 2, 0);
     overviewAnimationTime = new KIntNumInput(250, overviewBox);
-    overviewAnimationTime->setRange(0, 1000, 10, true);
+    overviewAnimationTime->setRange(0, 2000, 10, true);
     overviewAnimationTime->setSuffix(i18n(" msec"));
     overviewAnimationTime->setLabel(i18n("A&nimation duration:"));
     overviewLay->addWidget(overviewAnimationTime, 3, 0);
