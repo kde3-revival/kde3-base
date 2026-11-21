@@ -23,6 +23,19 @@
  * choose them, and GTK 2, 3 and 4 then each keep their own (gtkrc,
  * settings.ini), which a published value would override for all three.
  *
+ * In a session with its own dconf database (startkde sets DCONF_PROFILE
+ * to a profile whose writable database is user-db:kde3), it also keeps
+ * the KDE-derived org.gnome.desktop.interface keys of that database in
+ * step with KDE (font-name, document-font-name, monospace-font-name,
+ * text-scaling-factor, cursor-theme, cursor-size, color-scheme: the
+ * values the Settings portal backend gives), for the GNOME applications
+ * that read them from GSettings rather than XSETTINGS or the portal
+ * (libadwaita's document and monospace fonts, GNOME Terminal, ...).
+ * It writes them through dconf-service to that database only, at login
+ * and when KDE's fonts, colours or mouse settings change; the user's
+ * own database (user-db:user, the GNOME sessions') is never written.
+ * This part works whether or not this module is the XSETTINGS manager.
+ *
  * It does nothing if another XSETTINGS manager owns the display (a
  * GNOME settings daemon, xsettingsd, ...), and stops if one takes the
  * selection over.  The settings are published again when the X
@@ -42,6 +55,10 @@
  */
 
 #include "xsettingsd.h"
+#ifdef KDEBASE_DCONF_SYNC
+#include "dconfsettings.h"
+#include "portalsettings.h"
+#endif
 
 #include <qfile.h>
 #include <qfont.h>
@@ -75,17 +92,44 @@ extern "C" {
 
 XSettingsDaemon::XSettingsDaemon( const QCString &obj )
     : KDEDModule( obj ), m_dpy( 0 ), m_window( 0 ), m_selection( 0 ),
-      m_settingsAtom( 0 ), m_resourceAtom( 0 ), m_notifier( 0 )
+      m_settingsAtom( 0 ), m_resourceAtom( 0 ), m_notifier( 0 ),
+      m_dconf( false ), m_dconfLast( 0 )
 {
     connect( &m_timer, SIGNAL( timeout() ), SLOT( update() ) );
     connect( kapp, SIGNAL( kdisplayFontChanged() ), SLOT( fontChanged() ) );
     connect( kapp, SIGNAL( settingsChanged( int ) ), SLOT( settingsChanged( int ) ) );
+#ifdef KDEBASE_DCONF_SYNC
+    m_dconf = KDconfSettings::profileUsesSessionDb( getenv( "DCONF_PROFILE" ) );
+    if ( m_dconf ) {
+	connect( &m_dconfTimer, SIGNAL( timeout() ), SLOT( syncDconf() ) );
+	connect( kapp, SIGNAL( kdisplayPaletteChanged() ), SLOT( fontChanged() ) );
+	syncDconf();
+    }
+#endif
     acquire();
 }
 
 XSettingsDaemon::~XSettingsDaemon()
 {
     release();
+#ifdef KDEBASE_DCONF_SYNC
+    KDconfSettings::release( m_dconfLast );
+#endif
+}
+
+void XSettingsDaemon::syncDconf()
+{
+#ifdef KDEBASE_DCONF_SYNC
+    if ( !m_dconf )
+	return;
+    KConfig globals( "kdeglobals", true, false );
+    KConfig input( "kcminputrc", true, false );
+    KConfig fonts( "kcmfonts", true, false );
+    GVariant *all = KPortalSettings::collect( globals, input, fonts,
+					      getenv( "XCURSOR_THEME" ), getenv( "XCURSOR_SIZE" ) );
+    KDconfSettings::sync( all, &m_dconfLast );
+    KDconfSettings::release( all );
+#endif
 }
 
 bool XSettingsDaemon::acquire()
@@ -192,8 +236,11 @@ void XSettingsDaemon::readEvents()
 	     && ev.xproperty.window != m_window )
 	    resourcesChanged = true;
     }
-    if ( resourcesChanged )
+    if ( resourcesChanged ) {
 	m_timer.start( settleMs, true );
+	if ( m_dconf )
+	    m_dconfTimer.start( settleMs, true );
+    }
 }
 
 void XSettingsDaemon::fontChanged()
@@ -209,6 +256,8 @@ void XSettingsDaemon::settingsChanged( int category )
 
 void XSettingsDaemon::reconfigure()
 {
+    if ( m_dconf )
+	m_dconfTimer.start( settleMs, true );
     // a manager that was there at login may be gone; acquire() never
     // takes the selection from one that runs
     if ( !m_dpy && !acquire() )

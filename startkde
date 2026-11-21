@@ -87,6 +87,7 @@ kcminputrc Mouse cursorTheme ''
 kcminputrc Mouse cursorSize ''
 ksplashrc KSplash Theme Default
 kcmfonts General forceFontDPI 0
+ksmserverrc General SeparateDconf true
 EOF
 kstartupconfig
 if test $? -ne 0; then
@@ -239,6 +240,89 @@ kstartupx --set-full-session
 KDE_SESSION_UID=$UID
 export KDE_SESSION_UID
 
+# The session's own dconf (GSettings) database.  The GNOME and GTK
+# applications read some of their settings from GSettings rather than
+# from XSETTINGS or the Settings portal (libadwaita's document and
+# monospace fonts, GNOME Terminal's font, ...).  So that they follow KDE
+# without changing the user's GNOME settings, the KDE 3 session has its
+# own database, ~/.config/dconf/kde3 (user-db:kde3), through a dconf
+# profile in $XDG_RUNTIME_DIR named by DCONF_PROFILE; kded_xsettings
+# keeps the KDE-derived keys of org.gnome.desktop.interface there.
+# The profile has the system databases of the default profile ("user",
+# in /etc or $XDG_DATA_DIRS) after it; a default profile whose writable
+# database is not user-db:user is left alone (no separate database).
+# The first KDE 3 login copies the user's database (read only) into the
+# new one, so that everything else stays as in GNOME.
+# Not done with a mandatory profile (/run/dconf/user/<uid>), which dconf
+# prefers to DCONF_PROFILE, or with [General] SeparateDconf=false in
+# ksmserverrc.  DCONF_PROFILE goes to the D-Bus and systemd activated
+# services too (below) and is taken from them again at logout
+# (kde3_dconf_cleanup), as gnome-session does not reset it.
+kde3_dconf_profile=
+kde3_dconf_setup()
+{
+  # one inherited from a KDE 3 session (startx from its terminal)
+  case "$DCONF_PROFILE" in
+    */kde3/dconf-profile) unset DCONF_PROFILE ;;
+  esac
+  test "$ksmserverrc_general_separatedconf" = "false" && return
+  test -n "$XDG_RUNTIME_DIR" && test -d "$XDG_RUNTIME_DIR" || return
+  test -e /run/dconf/user/`id -u` && return
+  # the default profile, where dconf looks for it
+  userprofile=
+  for d in /etc `echo "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" | tr : ' '`; do
+    if test -e "$d/dconf/profile/user"; then
+      userprofile=$d/dconf/profile/user
+      break
+    fi
+  done
+  mkdir -m 700 -p "$XDG_RUNTIME_DIR/kde3" || return
+  profile=$XDG_RUNTIME_DIR/kde3/dconf-profile
+  if test -n "$userprofile"; then
+    # its lines without comments and blanks; the first one must be the
+    # user's database, which becomes the session's
+    lines=`sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' "$userprofile"` || return
+    test "`echo "$lines" | head -n 1`" = "user-db:user" || return
+    { echo "user-db:kde3"; echo "$lines" | sed 1d; } >"$profile.tmp" || return
+  else
+    echo "user-db:kde3" >"$profile.tmp" || return
+  fi
+  mv -f "$profile.tmp" "$profile" || return
+  # the first login: a copy of the user's database (dconf-service
+  # replaces the file at once when it writes, so the copy is whole)
+  dconfdir=${XDG_CONFIG_HOME:-$HOME/.config}/dconf
+  if test ! -e "$dconfdir/kde3" && test -f "$dconfdir/user"; then
+    if cp "$dconfdir/user" "$dconfdir/kde3.tmp$$"; then
+      mv -f "$dconfdir/kde3.tmp$$" "$dconfdir/kde3"
+    else
+      rm -f "$dconfdir/kde3.tmp$$"
+    fi
+  fi
+  DCONF_PROFILE=$profile; export DCONF_PROFILE
+  kde3_dconf_profile=$profile
+  unset userprofile profile lines dconfdir
+}
+kde3_dconf_setup
+
+# At logout (or when killed): the systemd user manager outlives the
+# session (lingering, a GNOME login after this one), so DCONF_PROFILE is
+# removed from the environment of the services it starts (dbus-broker
+# passes the D-Bus activation environment on to it as well), and the
+# portal services started for this session, which read GSettings
+# (xdg-desktop-portal-gtk) or the desktop's name (xdg-desktop-portal),
+# are stopped: they are started again on demand, with the next
+# session's environment.
+kde3_dconf_cleanup()
+{
+  test -n "$kde3_dconf_profile" || return
+  kde3_dconf_profile=
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user unset-environment DCONF_PROFILE 2>/dev/null
+    systemctl --user stop xdg-desktop-portal.service xdg-desktop-portal-gtk.service 2>/dev/null
+  fi
+}
+trap 'kde3_dconf_cleanup; exit 1' TERM INT
+
 # The services that D-Bus and the systemd user manager start on demand
 # (xdg-desktop-portal and its backends, gnome-keyring, ...) do not inherit
 # the session's environment: give them the display and the desktop's
@@ -249,7 +333,7 @@ export KDE_SESSION_UID
 if test -n "$DBUS_SESSION_BUS_ADDRESS" || test -S "$XDG_RUNTIME_DIR/bus"; then
   session_env="DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP DESKTOP_SESSION XDG_DATA_DIRS XDG_CONFIG_DIRS"
   # xdg-desktop-portal-kde3 reads KDE's configuration and the cursor
-  for v in KDEHOME KDEDIRS XCURSOR_THEME XCURSOR_SIZE; do
+  for v in KDEHOME KDEDIRS XCURSOR_THEME XCURSOR_SIZE DCONF_PROFILE; do
     eval "test -n \"\${$v}\"" && session_env="$session_env $v"
   done
   if command -v dbus-update-activation-environment >/dev/null 2>&1; then
@@ -308,6 +392,8 @@ kdeinit_shutdown
 dcopserver_shutdown --wait
 # KDE4 support
 kde4 kdeinit4_shutdown 2>/dev/null
+
+kde3_dconf_cleanup
 
 echo 'startkde: Running shutdown scripts...'  1>&2
 

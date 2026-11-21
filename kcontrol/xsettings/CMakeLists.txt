@@ -19,6 +19,38 @@ kde3_add_module(kded_xsettings
     ${X11_X11_LIB}
 )
 
+# with GIO: the KDE-derived keys of the session's dconf database (see
+# startkde), with the settings of the portal backend below
+if(KDEBASE_SETTINGS_PORTAL)
+  kde3_add_library(dconfsettings STATIC
+    SOURCES
+      dconfsettings.cpp
+    LINK
+      PkgConfig::GIO
+  )
+  target_link_libraries(kded_xsettings PRIVATE dconfsettings portalsettings)
+  target_compile_definitions(kded_xsettings PRIVATE KDEBASE_DCONF_SYNC)
+
+  # tests of the profile check and the changes; with --write, the writer
+  # for tests/dconftest.sh (startkde's database, private session bus)
+  kde3_add_executable(dconfsettingstest NO_INSTALL
+    SOURCES
+      tests/dconfsettingstest.cpp
+    LINK
+      dconfsettings
+      portalsettings
+      KDE3::kdecore
+      PkgConfig::GIO
+  )
+  add_test(NAME dconfsettingstest COMMAND dconfsettingstest)
+  find_program(DBUS_RUN_SESSION dbus-run-session)
+  find_program(GSETTINGS gsettings)
+  if(DBUS_RUN_SESSION AND GSETTINGS)
+    add_test(NAME dconftest COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/dconftest.sh
+      ${CMAKE_SOURCE_DIR}/startkde $<TARGET_FILE:dconfsettingstest>)
+  endif()
+endif()
+
 install(FILES
   xsettings.desktop
   DESTINATION ${KDE3_SERVICES_INSTALL_DIR}/kded)

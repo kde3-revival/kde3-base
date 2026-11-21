@@ -24,6 +24,7 @@
 
 class QSocketNotifier;
 typedef struct _XDisplay Display;
+typedef struct _GVariant GVariant;
 
 class XSettingsDaemon : public KDEDModule
 {
@@ -45,6 +46,7 @@ private slots:
     void update();
     void fontChanged();
     void settingsChanged( int category );
+    void syncDconf();
 
 private:
     bool acquire();
@@ -60,6 +62,11 @@ private:
     QSocketNotifier *m_notifier;
     QTimer m_timer;
     KXSettings::Table m_table;
+    // the session's dconf database (see startkde): in use, and the
+    // settings last written there
+    bool m_dconf;
+    GVariant *m_dconfLast;
+    QTimer m_dconfTimer;
 };
 
 #endif
