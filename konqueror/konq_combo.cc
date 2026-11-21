@@ -136,6 +136,67 @@ KonqCombo::~KonqCombo()
 {
 }
 
+QString KonqCombo::inlineCompletion( const QString& item, const QString& typed )
+{
+    if ( typed.isEmpty() )
+        return QString::null;
+
+    static const char * const schemes[] = { "http://", "https://", "ftp://", 0 };
+    uint schemeLength = 0;
+    for ( const char * const *scheme = schemes; *scheme; ++scheme ) {
+        if ( item.startsWith( QString::fromLatin1( *scheme ) ) ) {
+            schemeLength = qstrlen( *scheme );
+            break;
+        }
+    }
+
+    // Prefer the form without scheme and "www.", then without scheme only,
+    // then the item as it is: whatever the user typed stays a prefix.
+    const QString www = QString::fromLatin1( "www." );
+    const QString bare = item.mid( schemeLength );
+    QString text;
+    if ( bare.startsWith( www ) && bare.mid( www.length() ).startsWith( typed ) )
+        text = bare.mid( www.length() );
+    else if ( bare.startsWith( typed ) )
+        text = bare;
+    else if ( item.startsWith( typed ) )
+        text = item;
+    else
+        return QString::null;
+
+    // While the host is being typed, complete the host only.
+    int host = text.find( QString::fromLatin1( "://" ) );
+    host = host < 0 ? 0 : host + 3;
+    const int slash = text.find( '/', host );
+    if ( slash >= 0 && (int)typed.length() <= slash )
+        text.truncate( slash + 1 );
+    return text;
+}
+
+QString KonqCombo::inlineCompletion( const QStringList& items, const QString& typed,
+                                     bool shortest )
+{
+    QString completion;
+    for ( QStringList::ConstIterator it = items.begin(); it != items.end(); ++it ) {
+        const QString text = inlineCompletion( *it, typed );
+        if ( text.isNull() )
+            continue;
+        if ( !shortest )
+            return text;
+        if ( completion.isNull() )
+            completion = text;
+        else {
+            // keep what all of them have in common
+            uint common = typed.length();
+            while ( common < completion.length() && common < text.length()
+                    && completion[ common ] == text[ common ] )
+                ++common;
+            completion.truncate( common );
+        }
+    }
+    return completion;
+}
+
 void KonqCombo::init( KCompletion *completion )
 {
     setCompletionObject( completion, false ); //KonqMainWindow handles signals
@@ -811,10 +872,13 @@ void KonqComboLineEdit::setCompletedItems( const QStringList& items )
         }
 
         if ( autoSuggest() ) {
-            int index = items.first().find( txt );
-            QString newText = items.first().mid( index );
-            setUserSelection( false );
-            setCompletedText( newText, true );
+            // Complete inline only what was typed, never e.g. a "www."
+            // or a scheme in front of it.
+            const QString newText = KonqCombo::inlineCompletion( items, txt );
+            if ( !newText.isNull() ) {
+                setUserSelection( false );
+                setCompletedText( newText, true );
+            }
         }
     }
     else

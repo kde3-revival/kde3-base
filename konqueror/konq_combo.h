@@ -58,6 +58,25 @@ public:
 
     static void setConfig( KConfig * );
 
+    /**
+     * Returns what the location bar shows when @p typed is completed
+     * inline to the history item @p item, or QString::null if @p item
+     * can't complete it. The item matches when it starts with @p typed,
+     * or does so without its http/https/ftp scheme and then without a
+     * leading "www.", so "hot" completes to "hotnews.ro/" from
+     * "https://www.hotnews.ro/": what was typed is never rewritten.
+     * While @p typed is still inside the host only the host is completed.
+     */
+    static QString inlineCompletion( const QString& item, const QString& typed );
+
+    /**
+     * The inline completion of @p typed from the first of @p items that
+     * can complete it, see inlineCompletion(), or with @p shortest what
+     * the inline completions from all of @p items have in common.
+     */
+    static QString inlineCompletion( const QStringList& items, const QString& typed,
+                                     bool shortest = false );
+
     virtual void popup();
 
     void setPageSecurity( int );

@@ -570,10 +570,10 @@ private:
   static void bookmarksIntoCompletion( const KBookmarkGroup& group );
 
   /**
-   * Returns all matches of the url-history for @p s. If there are no direct
-   * matches, it will try completing with http:// prepended, and if there's
-   * still no match, then http://www. Due to that, this is only usable for
-   * popupcompletion and not for manual or auto-completion.
+   * Returns all matches of the url-history for @p s, also those that match
+   * with a scheme (http://, https://, ftp://, file:) or "www." in front of
+   * @p s, best first: by visits, weighed by how recent the last one was.
+   * Use KonqCombo::inlineCompletion() to complete @p s from them.
    */
   static QStringList historyPopupCompletionItems( const QString& s = QString::null);
 

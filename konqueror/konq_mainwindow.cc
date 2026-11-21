@@ -66,6 +66,8 @@
 #include <qlayout.h>
 #include <qfileinfo.h>
 #include <qwhatsthis.h>
+#include <qdatetime.h>
+#include <qmap.h>
 
 #include <dcopclient.h>
 #include <kaboutdata.h>
@@ -80,6 +82,7 @@
 #include <knewmenu.h>
 #include <konq_defaults.h>
 #include <konq_dirpart.h>
+#include <konq_historymgr.h>
 #include <konq_popupmenu.h>
 #include <konq_settings.h>
 #include "konq_main.h"
@@ -3255,6 +3258,22 @@ void KonqMainWindow::slotMakeCompletion( const QString& text )
            m_combo->completionMode() == KGlobalSettings::CompletionPopupAuto )
         m_combo->setCompletedItems( historyPopupCompletionItems( text ) );
 
+      else if ( m_combo->completionMode() == KGlobalSettings::CompletionAuto ||
+                m_combo->completionMode() == KGlobalSettings::CompletionMan ) {
+        // complete what was typed from the best history match, also one
+        // that has a scheme or "www." in front of it
+        // ("short automatic" completes only what all matches share)
+        const QString completed = KonqCombo::inlineCompletion(
+            historyPopupCompletionItems( text ), text,
+            m_combo->completionMode() == KGlobalSettings::CompletionMan );
+        if ( !completed.isNull() )
+          m_combo->setCompletedText( completed );
+        // the popup items leave out what only matches a common prefix
+        // like "www." or "http://": complete those literally, as before
+        else if ( !completion.isNull() )
+          m_combo->setCompletedText( completion );
+      }
+
       else if ( !completion.isNull() )
         m_combo->setCompletedText( completion );
     }
@@ -5421,25 +5440,6 @@ void KonqMainWindow::disconnectActionCollection( KActionCollection *coll )
 // the smart popup completion code , <l.lunak@kde.org>
 //
 
-// prepend http://www. or http:// if there's no protocol in 's'
-// used only when there are no completion matches
-static QString hp_tryPrepend( const QString& s )
-{
-    if( s.isEmpty() || s[ 0 ] == '/' )
-        return QString::null;
-    for( unsigned int pos = 0;
-         pos < s.length() - 2; // 4 = ://x
-         ++pos )
-        {
-        if( s[ pos ] == ':' && s[ pos + 1 ] == '/' && s[ pos + 2 ] == '/' )
-            return QString::null;
-        if( !s[ pos ].isLetter() )
-            break;
-        }
-    return ( s.startsWith( "www." ) ? "http://" : "http://www." ) + s;
-}
-
-
 static void hp_removeDupe( KCompletionMatches& l, const QString& dupe,
     KCompletionMatches::Iterator it_orig )
 {
@@ -5530,6 +5530,59 @@ static void hp_checkCommonPrefixes( KCompletionMatches& matches, const QString& 
     }
 }
 
+// How much a visit counts by its age, like the "frecency" of other browsers.
+static int hp_recencyPercent( const QDateTime& lastVisited, const QDateTime& now )
+{
+    if( !lastVisited.isValid())
+        return 50; // a bookmark that was never visited
+    const int days = lastVisited.daysTo( now );
+    if( days <= 4 )
+        return 100;
+    if( days <= 14 )
+        return 70;
+    if( days <= 31 )
+        return 50;
+    if( days <= 90 )
+        return 30;
+    return 10;
+}
+
+// The completion weights count visits (typed URLs get 10 more), weigh them
+// by how recently the URL, or the typed text, was last visited.
+static void hp_weighByRecency( KCompletionMatches& l )
+{
+    if( l.isEmpty())
+        return;
+    QMap<QString, QDateTime> lastVisited;
+    for( KCompletionMatches::ConstIterator it = l.begin(); it != l.end(); ++it )
+        lastVisited.insert( (*it).value(), QDateTime());
+
+    const QString slash = QString::fromLatin1( "/" );
+    QPtrListIterator<KonqHistoryEntry> entries( KonqHistoryManager::kself()->entries());
+    for( ; entries.current(); ++entries ) {
+        const KonqHistoryEntry *entry = entries.current();
+        const QString url = entry->url.prettyURL();
+        QStringList keys;
+        keys << url << entry->typedURL;
+        if( url.endsWith( slash ))
+            keys << url.left( url.length() - 1 );
+        else
+            keys << url + slash;
+        for( QStringList::ConstIterator key = keys.begin(); key != keys.end(); ++key ) {
+            if( (*key).isEmpty())
+                continue;
+            QMap<QString, QDateTime>::Iterator found = lastVisited.find( *key );
+            if( found != lastVisited.end()
+                && ( !found.data().isValid() || found.data() < entry->lastVisited ))
+                found.data() = entry->lastVisited;
+        }
+    }
+
+    const QDateTime now = QDateTime::currentDateTime();
+    for( KCompletionMatches::Iterator it = l.begin(); it != l.end(); ++it )
+        (*it).first = kMax( 1, (*it).index() * hp_recencyPercent( lastVisited[ (*it).value() ], now ));
+}
+
 QStringList KonqMainWindow::historyPopupCompletionItems( const QString& s)
 {
     const QString http = "http://";
@@ -5585,15 +5638,10 @@ QStringList KonqMainWindow::historyPopupCompletionItems( const QString& s)
     }
     if( checkDuplicates )
         hp_removeDuplicates( matches );
-    QStringList items = matches.list();
-    if( items.count() == 0
-	&& !s.contains( ':' ) && s[ 0 ] != '/' )
-        {
-        QString pre = hp_tryPrepend( s );
-        if( !pre.isNull())
-            items += pre;
-        }
-    return items;
+    hp_weighByRecency( matches );
+    // Nothing is made up when nothing matches (this used to offer
+    // "http://www." + s): Enter runs the text through the URI filters.
+    return matches.list();
 }
 
 #ifndef NDEBUG
