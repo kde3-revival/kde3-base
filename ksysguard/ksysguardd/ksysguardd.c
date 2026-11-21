@@ -24,6 +24,7 @@
 #include <config.h>
 #include <ctype.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <pwd.h>
@@ -208,10 +209,19 @@ static void dropPrivileges( void )
   struct passwd *pwd;
 
   if ( ( pwd = getpwnam( "nobody" ) ) != NULL ) {
-    if ( !setgid(pwd->pw_gid) )
-      setuid(pwd->pw_uid);
-    if (!geteuid() && getuid() != pwd->pw_uid)
+    /* Only root has privileges to drop: other users keep running the
+       daemon as themselves. */
+    if ( geteuid() != 0 )
+      return;
+
+    /* Clear root's supplementary groups before changing the gid and
+       the uid, and give up if any step fails. */
+    if ( setgroups( 1, &pwd->pw_gid ) < 0 ||
+         setgid( pwd->pw_gid ) < 0 || setuid( pwd->pw_uid ) < 0 ||
+         getuid() != pwd->pw_uid || geteuid() != pwd->pw_uid ) {
+      log_error( "Cannot drop privileges to user 'nobody'" );
       _exit(1);
+    }
   }
   else {
     log_error( "User 'nobody' does not exist." );
