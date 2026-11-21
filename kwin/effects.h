@@ -76,6 +76,9 @@ class Effects : public QObject
         // before and after the geometry change of maximize/restore
         void maximizeBegin( Client* c );
         void maximizeEnd( Client* c );
+        // before and after c is moved to another monitor (to: that monitor)
+        void screenMoveBegin( Client* c, const QRect& to );
+        void screenMoveEnd( Client* c );
         // a new window is about to be shown for the first time
         void windowOpening( Client* c );
         // c is being closed or withdrawn, its frame still exists
@@ -101,6 +104,8 @@ class Effects : public QObject
         EffectAnim* findAnim( Client* c ) const;
         EffectAnim* newAnim( int kind, Client* c );
         void startIconify( Client* c, bool minimizing, const QRect& icon );
+        void morphBegin( Client* c, const QRect& bounds );
+        void morphEnd( Client* c, bool moving );
         bool namePixmap( Window frame, Pixmap* pixmap, QRect* geom, int* depth, Visual** visual );
         void retain( Client* c, Pixmap pixmap, const QSize& size, int depth, Visual* visual );
         void dropRetained( Client* c );

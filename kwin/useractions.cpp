@@ -33,6 +33,8 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <kglobalaccel.h>
 #include <kapplication.h>
 #include <qregexp.h>
+#include <qdesktopwidget.h>
+#include <qvaluevector.h>
 
 #include "killwindow.h"
 #include "tabbox.h"
@@ -159,6 +161,13 @@ void Workspace::clientPopupAboutToShow()
         {
         initDesktopPopup();
         }
+    if( !QApplication::desktop()->isVirtualDesktop() || QApplication::desktop()->numScreens() < 2 )
+        {
+        delete screen_popup;
+        screen_popup = NULL;
+        }
+    else
+        initScreenPopup();
 
     popup->setItemEnabled( Options::ResizeOp, active_popup_client->isResizable() );
     popup->setItemEnabled( Options::MoveOp, active_popup_client->isMovable() );
@@ -233,6 +242,57 @@ void Workspace::desktopPopupAboutToShow()
         }
     }
 
+// after To Desktop
+void Workspace::initScreenPopup()
+    {
+    if( screen_popup )
+        return;
+    screen_popup = new QPopupMenu( popup );
+    screen_popup->setCheckable( TRUE );
+    screen_popup->setFont( KGlobalSettings::menuFont());
+    connect( screen_popup, SIGNAL( activated(int) ),
+             this, SLOT( slotSendToScreen(int) ) );
+    connect( screen_popup, SIGNAL( aboutToShow() ),
+             this, SLOT( screenPopupAboutToShow() ) );
+    popup->insertItem( i18n("To Sc&reen"), screen_popup, -1, desk_popup_index + ( desk_popup ? 1 : 0 ));
+    }
+
+/*!
+  The monitors (QDesktopWidget numbering, the primary one first, like the
+  Window to Screen N shortcuts), the one showing most of the popup client
+  checked.
+ */
+void Workspace::screenPopupAboutToShow()
+    {
+    if( !screen_popup )
+        return;
+    screen_popup->clear();
+    const int screens = QApplication::desktop()->numScreens();
+    const int current = active_popup_client ? clientScreen( active_popup_client ) : -1;
+    const bool movable = active_popup_client && active_popup_client->canSendToScreen();
+    for( int i = 0;
+         i < screens;
+         ++i )
+        {
+        QString number = QString::number( i + 1 );
+        if( i < 9 )
+            number.prepend( '&' );
+        QString text = i18n( "Screen %1" ).arg( number );
+        QString cut = keys->shortcut( QString( "Window to Screen %1" ).arg( i + 1 )).seq( 0 ).toString();
+        if( !cut.isEmpty())
+            text += '\t' + cut;
+        screen_popup->insertItem( text, i );
+        screen_popup->setItemChecked( i, i == current );
+        screen_popup->setItemEnabled( i, movable && i != current );
+        }
+    }
+
+void Workspace::slotSendToScreen( int screen )
+    {
+    if( active_popup_client )
+        windowToScreen( active_popup_client, screen );
+    }
+
 void Workspace::closeActivePopup()
     {
     if( active_popup )
@@ -278,6 +338,7 @@ void Workspace::readShortcuts()
     delete popup;
     popup = NULL; // so that it's recreated next time
     desk_popup = NULL;
+    screen_popup = NULL;
     }
 
 
@@ -710,6 +771,102 @@ void Workspace::slotWindowToDesktop( int i )
         && !c->isDock()
         && !c->isTopMenu())
             sendClientToDesktop( c, i, true );
+    }
+
+/*!
+  The monitor showing most of \a c, else the one with its center, else the
+  primary one.
+ */
+int Workspace::clientScreen( const Client* c ) const
+    {
+    QDesktopWidget* dw = QApplication::desktop();
+    const QRect g = c->geometry();
+    int best = -1;
+    long best_area = 0;
+    for( int i = 0;
+         i < dw->numScreens();
+         ++i )
+        {
+        QRect is = dw->screenGeometry( i ).intersect( g );
+        long area = is.isValid() ? long( is.width()) * is.height() : 0;
+        if( area > best_area )
+            {
+            best_area = area;
+            best = i;
+            }
+        }
+    if( best < 0 )
+        best = dw->screenNumber( g.center());
+    return best >= 0 ? best : dw->primaryScreen();
+    }
+
+/*!
+  Moves \a c to the monitor \a screen (Client::sendToScreen(): its place
+  relative to the work area, maximized and full screen windows stay so,
+  its dialogs go along), animated, one configure for the application.
+  Focus and the pointer stay.
+ */
+void Workspace::windowToScreen( Client* c, int screen )
+    {
+    QDesktopWidget* dw = QApplication::desktop();
+    if( c == NULL || !dw->isVirtualDesktop() || screen < 0 || screen >= dw->numScreens()
+        || c == moveResizeClient())
+        return;
+    const int from = clientScreen( c );
+    if( from != screen )
+        c->sendToScreen( from, screen, true );
+    }
+
+/*!
+  The next (step 1) or previous (-1) monitor by position: left to right,
+  top to bottom where they are above each other, round (the primary
+  monitor, screen 0, may be anywhere).
+ */
+void Workspace::windowToNextScreen( Client* c, int step )
+    {
+    QDesktopWidget* dw = QApplication::desktop();
+    const int screens = dw->numScreens();
+    if( c == NULL || screens < 2 )
+        return;
+    QValueVector< int > order;
+    for( int i = 0;
+         i < screens;
+         ++i )
+        {
+        const QPoint p = dw->screenGeometry( i ).topLeft();
+        QValueVector< int >::Iterator it = order.begin();
+        while( it != order.end())
+            {
+            const QPoint q = dw->screenGeometry( *it ).topLeft();
+            if( p.x() < q.x() || ( p.x() == q.x() && p.y() < q.y()))
+                break;
+            ++it;
+            }
+        order.insert( it, i );
+        }
+    const int from = clientScreen( c );
+    int pos = 0;
+    while( pos < screens && order[ pos ] != from )
+        ++pos;
+    if( pos == screens )
+        return;
+    windowToScreen( c, order[ ( pos + step + screens ) % screens ] );
+    }
+
+void Workspace::slotWindowToNextScreen()
+    {
+    windowToNextScreen( active_popup_client ? active_popup_client : active_client, 1 );
+    }
+
+void Workspace::slotWindowToPreviousScreen()
+    {
+    windowToNextScreen( active_popup_client ? active_popup_client : active_client, -1 );
+    }
+
+// Window to Screen N: N from 1, the QDesktopWidget numbering (1 the primary)
+void Workspace::slotWindowToScreen( int i )
+    {
+    windowToScreen( active_popup_client ? active_popup_client : active_client, i - 1 );
     }
 
 /*!

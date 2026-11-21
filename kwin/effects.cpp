@@ -363,7 +363,7 @@ class EffectAnim
             : kind( Iconify ), client( NULL ), frame( None ), shaped( false ), keep_snap( false ),
               style( 1 ), p( 0 ), p_from( 0 ), p_to( 0 ), seg_start( 0 ), seg_duration( 0 ), linear( false ),
               defer( false ), wait( false ), damage( None ), wait_start( 0 ), damage_first( 0 ),
-              damage_last( 0 ), ready( true ), fade( 0 ), fade_start( 0 ), grow( false ), max_wait( MaxWait ), on_top( false ), use_below( false ), below( None ),
+              damage_last( 0 ), ready( true ), fade( 0 ), fade_start( 0 ), grow( false ), moved( false ), max_wait( MaxWait ), on_top( false ), use_below( false ), below( None ),
               done( false ), fresh( true ), started( 0 )
             {}
         Kind kind;
@@ -392,6 +392,7 @@ class EffectAnim
         bool ready;
         double fade, fade_start; // Morph: the new contents fading in
         bool grow; // Morph: to a larger size
+        bool moved; // Morph: only moved (to another monitor), the same size
         double max_wait; // the longest wait for the repaint
         bool on_top;
         // drawn right above this scene window (None: the bottom one), where
@@ -905,6 +906,37 @@ void Effects::startIconify( Client* c, bool minimizing, const QRect& icon )
 */
 void Effects::maximizeBegin( Client* c )
     {
+    QRect bounds = c->geometry().unite( ws->clientArea( MaximizeArea, c ));
+    if( c->geometryRestore().isValid())
+        bounds = bounds.unite( c->geometryRestore());
+    morphBegin( c, bounds );
+    }
+
+void Effects::maximizeEnd( Client* c )
+    {
+    morphEnd( c, false );
+    }
+
+/*
+ Window to Another Screen: the morph of maximize, from the old geometry to
+ the new one on the other monitor (maximized and too large windows change
+ their size there).  Only moved, the captured contents are the window's
+ own pixmap (named again only when it is resized): the live contents are
+ shown throughout, nothing to wait for, no crossfade.
+*/
+void Effects::screenMoveBegin( Client* c, const QRect& to )
+    {
+    morphBegin( c, c->geometry().unite( to ));
+    }
+
+void Effects::screenMoveEnd( Client* c )
+    {
+    morphEnd( c, true );
+    }
+
+// bounds: the old and the possible new geometries
+void Effects::morphBegin( Client* c, const QRect& bounds )
+    {
     EffectAnim* anim = findAnim( c );
     if( !maximize_anim || !canAnimate( c ) || c->isShade())
         {
@@ -912,10 +944,6 @@ void Effects::maximizeBegin( Client* c )
             freeAnim( anim );
         return;
         }
-    QRect old = c->geometry();
-    QRect bounds = old.unite( ws->clientArea( MaximizeArea, c ));
-    if( c->geometryRestore().isValid())
-        bounds = bounds.unite( c->geometryRestore());
     if( anim != NULL && anim->kind == EffectAnim::Morph && !anim->snap.isNull()
         && extendArea( bounds ))
         { // again while morphing: from where it is seen now, the first contents
@@ -960,7 +988,9 @@ void Effects::maximizeBegin( Client* c )
     showFirstFrame();
     }
 
-void Effects::maximizeEnd( Client* c )
+// moving: only moved to another monitor (no wait, no crossfade when the
+// size stays)
+void Effects::morphEnd( Client* c, bool moving )
     {
     EffectAnim* anim = findAnim( c );
     if( anim == NULL || anim->kind != EffectAnim::Morph )
@@ -991,6 +1021,16 @@ void Effects::maximizeEnd( Client* c )
     anim->max_wait = anim->grow ? MaxGrowWait : MaxWait;
     anim->fade = 0;
     anim->fade_start = 0;
+    anim->moved = moving && anim->geom.size() == anim->old_geom.size();
+    if( anim->moved )
+        {
+        anim->wait = false;
+        anim->ready = true;
+        anim->defer = false;
+        anim->fade = 1;
+        }
+    else
+        anim->wait = true; // (again after a move)
     if( scene != NULL )
         scene->dirty = true; // a new pixmap
     if( !extendArea( anim->geom ))
@@ -1560,6 +1600,12 @@ bool Effects::updateAnim( EffectAnim* anim, double t )
             break;
         case EffectAnim::Morph:
             {
+            if( anim->moved )
+                { // (the live contents, see screenMoveBegin())
+                anim->fade = 1;
+                anim->done = lin >= 1;
+                break;
+                }
             if( anim->ready && anim->fade_start == 0 )
                 anim->fade_start = t;
             // the crossfade: quick when growing (it starts with the motion); late
@@ -1789,7 +1835,7 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
             {
             RectF rect = mix( RectF( anim->old_geom ), RectF( anim->geom ), anim->p );
             anim->drawn = rect;
-            if( anim->fade < 1 )
+            if( anim->fade < 1 || ( anim->moved && live == NULL ))
                 drawPicture( dst, anim->snap, rect, 1.0, anim->shaped, anim->shape );
             if( anim->fade > 0 && live != NULL )
                 drawPicture( dst, live->pic, rect, anim->fade, live->shaped, live->shape );
@@ -2332,6 +2378,8 @@ void Effects::minimize( Client*, bool ) {}
 void Effects::unminimize( Client*, bool ) {}
 void Effects::maximizeBegin( Client* ) {}
 void Effects::maximizeEnd( Client* ) {}
+void Effects::screenMoveBegin( Client*, const QRect& ) {}
+void Effects::screenMoveEnd( Client* ) {}
 void Effects::windowOpening( Client* ) {}
 void Effects::windowClosing( Client* ) {}
 void Effects::clientRemoved( Client* ) {}

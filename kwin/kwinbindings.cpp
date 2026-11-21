@@ -105,6 +105,14 @@
 	DEF( I18N_NOOP("Window One Desktop to the Left"),      0, 0, slotWindowToDesktopLeft() );
 	DEF( I18N_NOOP("Window One Desktop Up"),               0, 0, slotWindowToDesktopUp() );
 	DEF( I18N_NOOP("Window One Desktop Down"),             0, 0, slotWindowToDesktopDown() );
+	// Meta+Shift+arrows like GNOME (not Ctrl+Shift+arrows, which select words
+	// in text), also in the 3 modifier scheme (the default one)
+	DEF( I18N_NOOP("Window to Next Screen"),               WIN+int(SHIFT)+int(Qt::Key_Right), WIN+int(SHIFT)+int(Qt::Key_Right), slotWindowToNextScreen() );
+	DEF( I18N_NOOP("Window to Previous Screen"),           WIN+int(SHIFT)+int(Qt::Key_Left), WIN+int(SHIFT)+int(Qt::Key_Left), slotWindowToPreviousScreen() );
+	DEF( I18N_NOOP("Window to Screen 1"),                  0, 0, slotWindowToScreen(int) );
+	DEF( I18N_NOOP("Window to Screen 2"),                  0, 0, slotWindowToScreen(int) );
+	DEF( I18N_NOOP("Window to Screen 3"),                  0, 0, slotWindowToScreen(int) );
+	DEF( I18N_NOOP("Window to Screen 4"),                  0, 0, slotWindowToScreen(int) );
 
 	keys->insert( "Group:Desktop Switching", i18n("Desktop Switching") );
 	DEF( I18N_NOOP("Switch to Desktop 1"),  CTRL+Qt::Key_F1, WIN+Qt::Key_F1, slotSwitchToDesktop(int) );

@@ -266,7 +266,8 @@ class Client : public QObject, public KDecorationDefines
         static Window   staticWmClientLeader(WId);
 
         void checkWorkspacePosition();
-        bool sendToScreen( int from, int to );
+        bool canSendToScreen() const;
+        bool sendToScreen( int from, int to, bool animate = false );
         void updateUserTime( Time time = CurrentTime );
         Time userTime() const;
         bool hasUserTimeSupport() const;

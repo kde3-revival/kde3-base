@@ -999,15 +999,16 @@ static QRect mapToArea( const QRect& g, const QRect& from, const QRect& to )
   full screen windows fill the new monitor, their restore geometries move
   along.  Its direct transients on the old monitor go along.  The client
   sees one geometry change (only a synthetic ConfigureNotify when the size
-  stays).  False when the window may not be moved.
+  stays).  False when the window may not be moved.  \a animate: the move
+  is animated when window animations are on (the keyboard actions; the
+  overview animates its own).
  */
-bool Client::sendToScreen( int from, int to )
+bool Client::sendToScreen( int from, int to, bool animate )
     {
     QDesktopWidget* dw = QApplication::desktop();
     if( from == to || from < 0 || to < 0 || from >= dw->numScreens() || to >= dw->numScreens())
         return false;
-    if( !motif_may_move || rules()->checkPosition( invalidPoint ) != invalidPoint
-        || ( isSpecialWindow() && !isSplash() && !isToolbar()))
+    if( !canSendToScreen())
         return false;
     const QRect old_area = monitorArea( workspace(), from, desktop());
     const QRect new_area = monitorArea( workspace(), to, desktop());
@@ -1116,10 +1117,15 @@ bool Client::sendToScreen( int from, int to )
                 geom.setSize( adjustedSize( geom.size(), SizemodeMax ));
             }
         }
+    Effects* effects = animate ? workspace()->windowEffects() : NULL;
+    if( effects != NULL )
+        effects->screenMoveBegin( this, dw->screenGeometry( to ));
     if( geom.size() == g.size())
         move( geom.topLeft());
     else
         setGeometry( geom );
+    if( effects != NULL )
+        effects->screenMoveEnd( this );
     // the dialogs of the window (not those of the whole group)
     ClientList trans = transients();
     for( ClientList::ConstIterator it = trans.begin();
@@ -1127,8 +1133,19 @@ bool Client::sendToScreen( int from, int to )
          ++it )
         if( (*it)->transientFor() == this && (*it)->isOnCurrentDesktop()
             && dw->screenNumber( (*it)->geometry().center()) == from )
-            (*it)->sendToScreen( from, to );
+            (*it)->sendToScreen( from, to, animate );
     return true;
+    }
+
+/*!
+  The window may be moved to another monitor: not a window the application
+  or a window rule keeps in place, not a desktop, dock or top menu (maximized
+  and full screen windows may, they stay so there).
+ */
+bool Client::canSendToScreen() const
+    {
+    return motif_may_move && rules()->checkPosition( invalidPoint ) == invalidPoint
+        && !( isSpecialWindow() && !isSplash() && !isToolbar());
     }
 
 // Try to be smart about keeping the clients visible.

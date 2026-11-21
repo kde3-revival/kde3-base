@@ -188,6 +188,11 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void sendClientToDesktop( Client* c, int desktop, bool dont_activate );
         void windowToPreviousDesktop( Client* c );
         void windowToNextDesktop( Client* c );
+        // the monitor showing most of c (QDesktopWidget numbering)
+        int clientScreen( const Client* c ) const;
+        void windowToScreen( Client* c, int screen );
+        // step 1: the next monitor to the right (then down), -1: the previous one
+        void windowToNextScreen( Client* c, int step );
 
     // KDE4 remove me - and it's also in the DCOP interface :(
         void showWindowMenuAt( unsigned long id, int x, int y );
@@ -357,6 +362,10 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void slotWindowToDesktopUp();
         void slotWindowToDesktopDown();
 
+        void slotWindowToNextScreen();
+        void slotWindowToPreviousScreen();
+        void slotWindowToScreen( int );
+
         void slotMouseEmulation();
         void slotDisableGlobalShortcuts();
 
@@ -381,6 +390,8 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void desktopPopupAboutToShow();
         void clientPopupAboutToShow();
         void slotSendToDesktop( int );
+        void screenPopupAboutToShow();
+        void slotSendToScreen( int );
         void clientPopupActivated( int );
         void configureWM();
         void desktopResized();
@@ -410,6 +421,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void initShortcuts();
         void readShortcuts();
         void initDesktopPopup();
+        void initScreenPopup();
         void setupWindowShortcut( Client* c );
 
         bool startKDEWalkThroughWindows();
@@ -567,6 +579,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         QPopupMenu *advanced_popup;
         QPopupMenu *desk_popup;
         int desk_popup_index;
+        QPopupMenu *screen_popup;
 
         KGlobalAccel *keys;
         KGlobalAccel *client_keys;
