@@ -252,6 +252,7 @@ bool SaverEngine::startLockProcess( LockType lock_type )
     if( path.isEmpty())
     {
 	kdDebug( 1204 ) << "Can't find kdesktop_lock!" << endl;
+	emitDCOPSignal("KDE_stop_screensaver()", QByteArray()); // (started above)
 	return false;
     }
     mLockProcess << path;
@@ -272,6 +273,7 @@ bool SaverEngine::startLockProcess( LockType lock_type )
     if (mLockProcess.start() == false )
     {
 	kdDebug( 1204 ) << "Failed to start kdesktop_lock!" << endl;
+	emitDCOPSignal("KDE_stop_screensaver()", QByteArray()); // (started above)
 	return false;
     }
     XSetScreenSaver(qt_xdisplay(), 0, mXInterval,  PreferBlanking, mXExposures);

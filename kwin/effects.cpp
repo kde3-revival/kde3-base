@@ -1021,7 +1021,10 @@ void Effects::morphEnd( Client* c, bool moving )
     anim->max_wait = anim->grow ? MaxGrowWait : MaxWait;
     anim->fade = 0;
     anim->fade_start = 0;
-    anim->moved = moving && anim->geom.size() == anim->old_geom.size();
+    // (within a pixel: a move again while moving starts from where the
+    // window was seen, rounded outwards)
+    anim->moved = moving && QABS( anim->geom.width() - anim->old_geom.width()) <= 1
+        && QABS( anim->geom.height() - anim->old_geom.height()) <= 1;
     if( anim->moved )
         {
         anim->wait = false;

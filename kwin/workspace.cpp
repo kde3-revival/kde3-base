@@ -2522,7 +2522,7 @@ void Workspace::startKompmgr()
         arg << "";
         kapp->dcopClient()->emitDCOPSignal("default", "kompmgrStarted()", ba);
         }
-        if (popup){ delete popup; popup = 0L; } // to add/remove opacity slider
+        if (popup){ delete popup; popup = 0L; desk_popup = NULL; screen_popup = NULL; } // to add/remove opacity slider (its submenus go with it)
 }
 
 void Workspace::stopKompmgr()
@@ -2533,7 +2533,7 @@ void Workspace::stopKompmgr()
     kompmgr_selection = NULL;
     kompmgr->disconnect(this, SLOT(restartKompmgr()));
     options->useTranslucency = FALSE;
-    if (popup){ delete popup; popup = 0L; } // to add/remove opacity slider
+    if (popup){ delete popup; popup = 0L; desk_popup = NULL; screen_popup = NULL; } // to add/remove opacity slider (its submenus go with it)
     kompmgr->kill();
     QByteArray ba;
     QDataStream arg(ba, IO_WriteOnly);
