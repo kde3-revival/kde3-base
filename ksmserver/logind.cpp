@@ -1,7 +1,7 @@
 /*****************************************************************
 ksmserver - the KDE session management server
 
-Sleep and hibernate through systemd-logind.
+Sleep, hibernate, power off and reboot through systemd-logind.
 
 Licensed like the rest of ksmserver, see the file LICENSE.
 ******************************************************************/
@@ -16,6 +16,7 @@ Licensed like the rest of ksmserver, see the file LICENSE.
 
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <qstring.h>
 #include <kdebug.h>
@@ -27,12 +28,14 @@ Licensed like the rest of ksmserver, see the file LICENSE.
 static const char logindService[] = "org.freedesktop.login1";
 static const char logindPath[] = "/org/freedesktop/login1";
 static const char logindManager[] = "org.freedesktop.login1.Manager";
+static const char logindSession[] = "org.freedesktop.login1.Session";
+static const char propertiesInterface[] = "org.freedesktop.DBus.Properties";
 
 // How long to wait for logind.  The Can* questions are asked each time
-// the logout dialog opens; Suspend and Hibernate return once logind has
-// queued the sleep, so neither should take long.
+// the logout dialog opens; Suspend, Hibernate, PowerOff and Reboot
+// return once logind has queued the job, so none should take long.
 static const int canTimeout = 3000;
-static const int sleepTimeout = 10000;
+static const int actionTimeout = 10000;
 
 static QString errorString( GError* err )
 {
@@ -41,11 +44,12 @@ static QString errorString( GError* err )
     return msg;
 }
 
-// Calls a method of logind's Manager and returns its reply, or 0 with
+// Calls a method of logind on @p path and returns its reply, or 0 with
 // @p error set.  Takes over a floating @p params.
-static GVariant* callManager( const char* method, GVariant* params,
-                              const GVariantType* replyType, int timeout,
-                              QString* error )
+static GVariant* callLogind( const char* path, const char* interface,
+                             const char* method, GVariant* params,
+                             const GVariantType* replyType, int timeout,
+                             QString* error )
 {
     if ( params )
         g_variant_ref_sink( params );
@@ -58,8 +62,8 @@ static GVariant* callManager( const char* method, GVariant* params,
         // bus goes away (e.g. the D-Bus daemon is restarted); that must
         // never take the whole session down with it.
         g_dbus_connection_set_exit_on_close( bus, FALSE );
-        reply = g_dbus_connection_call_sync( bus, logindService, logindPath,
-                                             logindManager, method, params,
+        reply = g_dbus_connection_call_sync( bus, logindService, path,
+                                             interface, method, params,
                                              replyType, G_DBUS_CALL_FLAGS_NONE,
                                              timeout, 0, &err );
         g_object_unref( bus );
@@ -74,7 +78,17 @@ static GVariant* callManager( const char* method, GVariant* params,
     return reply;
 }
 
-static bool can( const char* method )
+static GVariant* callManager( const char* method, GVariant* params,
+                              const GVariantType* replyType, int timeout,
+                              QString* error )
+{
+    return callLogind( logindPath, logindManager, method, params,
+                       replyType, timeout, error );
+}
+
+// Asks one of logind's Can* questions.  "challenge" counts as allowed
+// only if @p challengeOk.
+static bool can( const char* method, bool challengeOk )
 {
     QString error;
     GVariant* reply = callManager( method, 0, G_VARIANT_TYPE( "(s)" ),
@@ -87,12 +101,40 @@ static bool can( const char* method )
     g_variant_get( reply, "(&s)", &answer );
     kdDebug( 1218 ) << "logind " << method << ": " << answer << endl;
     // "challenge": allowed after authentication through polkit
-    bool ok = strcmp( answer, "yes" ) == 0 || strcmp( answer, "challenge" ) == 0;
+    bool ok = strcmp( answer, "yes" ) == 0
+              || ( challengeOk && strcmp( answer, "challenge" ) == 0 );
     g_variant_unref( reply );
     return ok;
 }
 
-static bool goToSleep( const char* method, QString* error )
+// Object path of our logind session (to be freed), or 0
+static gchar* ourSession()
+{
+    QString error;
+    // The session ksmserver itself runs in
+    GVariant* reply = callManager( "GetSessionByPID",
+                                   g_variant_new( "(u)", (guint32)getpid() ),
+                                   G_VARIANT_TYPE( "(o)" ), canTimeout, &error );
+    if ( !reply ) {
+        kdDebug( 1218 ) << "logind GetSessionByPID: " << error << endl;
+        // e.g. started outside of the session's processes
+        const char* id = getenv( "XDG_SESSION_ID" );
+        if ( !id || !*id )
+            return 0;
+        reply = callManager( "GetSession", g_variant_new( "(s)", id ),
+                             G_VARIANT_TYPE( "(o)" ), canTimeout, &error );
+        if ( !reply ) {
+            kdWarning( 1218 ) << "logind GetSession(" << id << "): " << error << endl;
+            return 0;
+        }
+    }
+    gchar* path = 0;
+    g_variant_get( reply, "(o)", &path );
+    g_variant_unref( reply );
+    return path;
+}
+
+static bool action( const char* method, QString* error )
 {
     const char* dryRun = getenv( "KSMSERVER_LOGIND_DRYRUN" );
     if ( dryRun && *dryRun && strcmp( dryRun, "0" ) != 0 ) {
@@ -103,7 +145,7 @@ static bool goToSleep( const char* method, QString* error )
 
     // interactive = true: let polkit ask for a password if it must
     GVariant* reply = callManager( method, g_variant_new( "(b)", TRUE ), 0,
-                                   sleepTimeout, error );
+                                   actionTimeout, error );
     if ( !reply )
         return false;
     g_variant_unref( reply );
@@ -112,22 +154,74 @@ static bool goToSleep( const char* method, QString* error )
 
 bool Logind::canSuspend()
 {
-    return can( "CanSuspend" );
+    return can( "CanSuspend", true );
 }
 
 bool Logind::canHibernate()
 {
-    return can( "CanHibernate" );
+    return can( "CanHibernate", true );
 }
 
 bool Logind::suspend( QString* error )
 {
-    return goToSleep( "Suspend", error );
+    return action( "Suspend", error );
 }
 
 bool Logind::hibernate( QString* error )
 {
-    return goToSleep( "Hibernate", error );
+    return action( "Hibernate", error );
+}
+
+bool Logind::canPowerOff()
+{
+    return can( "CanPowerOff", false );
+}
+
+bool Logind::canReboot()
+{
+    return can( "CanReboot", false );
+}
+
+bool Logind::sessionIsLocal()
+{
+    gchar* path = ourSession();
+    if ( !path )
+        return false;
+
+    QString error;
+    GVariant* reply = callLogind( path, propertiesInterface, "GetAll",
+                                  g_variant_new( "(s)", logindSession ),
+                                  G_VARIANT_TYPE( "(a{sv})" ), canTimeout, &error );
+    if ( !reply ) {
+        kdWarning( 1218 ) << "logind session " << path << ": " << error << endl;
+        g_free( path );
+        return false;
+    }
+    GVariant* props = g_variant_get_child_value( reply, 0 );
+    gboolean remote = TRUE, active = FALSE;
+    const gchar* seat = 0;
+    // Missing or mistyped properties leave the session non-local
+    g_variant_lookup( props, "Remote", "b", &remote );
+    g_variant_lookup( props, "Active", "b", &active );
+    g_variant_lookup( props, "Seat", "(&s&o)", &seat, (const gchar**)0 );
+    bool local = !remote && active && seat && *seat;
+    kdDebug( 1218 ) << "logind session " << path << ": remote=" << bool( remote )
+                    << " active=" << bool( active ) << " seat=" << ( seat ? seat : "" )
+                    << endl;
+    g_variant_unref( props );
+    g_variant_unref( reply );
+    g_free( path );
+    return local;
+}
+
+bool Logind::powerOff( QString* error )
+{
+    return action( "PowerOff", error );
+}
+
+bool Logind::reboot( QString* error )
+{
+    return action( "Reboot", error );
 }
 
 #else // HAVE_LOGIND_SLEEP
@@ -155,6 +249,31 @@ bool Logind::suspend( QString* error )
 }
 
 bool Logind::hibernate( QString* error )
+{
+    return unsupported( error );
+}
+
+bool Logind::canPowerOff()
+{
+    return false;
+}
+
+bool Logind::canReboot()
+{
+    return false;
+}
+
+bool Logind::sessionIsLocal()
+{
+    return false;
+}
+
+bool Logind::powerOff( QString* error )
+{
+    return unsupported( error );
+}
+
+bool Logind::reboot( QString* error )
 {
     return unsupported( error );
 }
