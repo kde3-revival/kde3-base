@@ -76,9 +76,12 @@ void VolumeButton::generateIcons()
         image = image.smoothScale(size, size, QImage::ScaleMin);
     }
 
+    // KIconEffect changes the pixels of the image it gets, and a QImage
+    // copy shares them (explicit sharing): give each effect its own deep
+    // copy, or the effects pile up on m_image with every update.
     KIconEffect effect;
-    m_normalIcon = effect.apply(image, KIcon::Panel, KIcon::DefaultState);
-    m_activeIcon = effect.apply(image, KIcon::Panel, KIcon::ActiveState);
+    m_normalIcon = effect.apply(image.copy(), KIcon::Panel, KIcon::DefaultState);
+    m_activeIcon = effect.apply(image.copy(), KIcon::Panel, KIcon::ActiveState);
     update();
 }
 
