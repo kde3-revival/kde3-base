@@ -87,8 +87,13 @@ const long CopyLimit = 4096L * 2160;
 // this long; or at most this long
 const double QuietTime = 40.0;
 const double MaxWait = 300.0;
-// the new contents of a maximized window fade in
+// a window growing to its maximized size waits at most this long before it
+// moves (its new contents are shown from the start)
+const double MaxGrowWait = 150.0;
+// the new contents of a maximized window fade in; of a growing one quickly
+// (its old contents would be shown enlarged)
 const double CrossfadeTime = 150.0;
+const double GrowCrossfadeTime = 60.0;
 // the pixmaps kept for restoring minimized windows (bytes)
 const unsigned long RetainLimit = 256UL << 20;
 // the genie: a strip's edges move at most this much (pixels) along it (each
@@ -358,7 +363,7 @@ class EffectAnim
             : kind( Iconify ), client( NULL ), frame( None ), shaped( false ), keep_snap( false ),
               style( 1 ), p( 0 ), p_from( 0 ), p_to( 0 ), seg_start( 0 ), seg_duration( 0 ), linear( false ),
               defer( false ), wait( false ), damage( None ), wait_start( 0 ), damage_first( 0 ),
-              damage_last( 0 ), ready( true ), fade( 0 ), fade_start( 0 ), on_top( false ), use_below( false ), below( None ),
+              damage_last( 0 ), ready( true ), fade( 0 ), fade_start( 0 ), grow( false ), max_wait( MaxWait ), on_top( false ), use_below( false ), below( None ),
               done( false ), fresh( true ), started( 0 )
             {}
         Kind kind;
@@ -386,6 +391,8 @@ class EffectAnim
         double wait_start, damage_first, damage_last;
         bool ready;
         double fade, fade_start; // Morph: the new contents fading in
+        bool grow; // Morph: to a larger size
+        double max_wait; // the longest wait for the repaint
         bool on_top;
         // drawn right above this scene window (None: the bottom one), where
         // its frame was when it started (closed, minimized below others)
@@ -958,6 +965,20 @@ void Effects::maximizeEnd( Client* c )
     anim->wait_start = now();
     anim->damage_first = anim->damage_last = 0;
     anim->ready = false;
+    /*
+     Growing, the old contents would be shown enlarged (up to 2.5 times when
+     a window is maximized: everything looks huge for a moment): it waits
+     for its new contents (at most MaxGrowWait), then moves showing them,
+     scaled down to where it is, after a quick crossfade.  Shrinking, the
+     old contents are scaled down, the new ones would be enlarged: they fade
+     in towards the end.
+    */
+    anim->grow = (long) anim->geom.width() * anim->geom.height()
+        > (long) anim->old_geom.width() * anim->old_geom.height();
+    anim->defer = anim->grow;
+    anim->max_wait = anim->grow ? MaxGrowWait : MaxWait;
+    anim->fade = 0;
+    anim->fade_start = 0;
     if( scene != NULL )
         scene->dirty = true; // a new pixmap
     if( !extendArea( anim->geom ))
@@ -1503,7 +1524,7 @@ bool Effects::updateAnim( EffectAnim* anim, double t )
             anim->geom = anim->client->geometry();
         }
     if( anim->wait && !anim->ready
-        && (( anim->damage_first > 0 && t - anim->damage_last >= QuietTime ) || t - anim->wait_start >= MaxWait ))
+        && (( anim->damage_first > 0 && t - anim->damage_last >= QuietTime ) || t - anim->wait_start >= anim->max_wait ))
         {
         anim->ready = true;
         if( anim->defer )
@@ -1526,13 +1547,26 @@ bool Effects::updateAnim( EffectAnim* anim, double t )
             anim->done = lin >= 1 && ( anim->p_to == 1 || anim->ready );
             break;
         case EffectAnim::Morph:
+            {
             if( anim->ready && anim->fade_start == 0 )
                 anim->fade_start = t;
-            anim->fade = anim->fade_start > 0 ? clamp01(( t - anim->fade_start ) / CrossfadeTime ) : 0;
+            // the crossfade: quick when growing (it starts with the motion); late
+            // when shrinking (by the progress, at least CrossfadeTime after the repaint)
+            double fade = 0;
+            if( anim->fade_start > 0 )
+                {
+                if( anim->grow )
+                    fade = clamp01(( t - anim->fade_start ) / GrowCrossfadeTime );
+                else
+                    fade = QMIN( clamp01(( t - anim->fade_start ) / CrossfadeTime ),
+                        clamp01(( anim->p - 0.6 ) / 0.4 ));
+                }
+            anim->fade = fade;
             if( anim->fade_start > 0 && anim->fade < 1 )
                 moving = true;
             anim->done = lin >= 1 && anim->fade >= 1;
             break;
+            }
         case EffectAnim::Open:
         case EffectAnim::Close:
             anim->done = lin >= 1;
@@ -1742,6 +1776,7 @@ void Effects::drawAnim( EffectAnim* anim, Picture dst )
         case EffectAnim::Morph:
             {
             RectF rect = mix( RectF( anim->old_geom ), RectF( anim->geom ), anim->p );
+            anim->drawn = rect;
             if( anim->fade < 1 )
                 drawPicture( dst, anim->snap, rect, 1.0, anim->shaped, anim->shape );
             if( anim->fade > 0 && live != NULL )
