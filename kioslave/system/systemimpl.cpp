@@ -18,6 +18,7 @@
 */
 
 #include "systemimpl.h"
+#include "systementry.h"
 
 #include <kdebug.h>
 #include <kglobalsettings.h>
@@ -172,7 +173,7 @@ KURL SystemImpl::findBaseURL(const QString &filename) const
 				if ( desktop.readURL().isEmpty() )
 				{
 					KURL url;
-					url.setPath( desktop.readPath() );
+					url.setPath( systemEntryPath(desktop) );
 					return url;
 				}
 				
@@ -219,7 +220,7 @@ void SystemImpl::createEntry(KIO::UDSEntry &entry,
 	entry.clear();
 
 	// Ensure that we really want this entry to be displayed
-	if ( desktop.readURL().isEmpty() && desktop.readPath().isEmpty() )
+	if ( desktop.readURL().isEmpty() && systemEntryPath(desktop).isEmpty() )
 	{
 		return;
 	}

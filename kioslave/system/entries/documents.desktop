@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Link
-Path[$e]=$( kio_system_documenthelper )
+X-KDE-UserPath=document
 Icon=folder_important
 Name=Documents Folder
 Name[af]=Dokument Gids

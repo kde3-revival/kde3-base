@@ -17,6 +17,7 @@
 */
 
 #include "systemdirnotify.h"
+#include "../systementry.h"
 
 #include <kdebug.h>
 #include <klocale.h>
@@ -73,10 +74,10 @@ void SystemDirNotify::init()
 					m_urlMap[desktop.readURL()] = system_url;
 					names_found.append( *name );
 				}
-				else if ( !desktop.readPath().isEmpty() )
+				else if ( !systemEntryPath(desktop).isEmpty() )
 				{
 					KURL url;
-					url.setPath( desktop.readPath() );
+					url.setPath( systemEntryPath(desktop) );
 					m_urlMap[url] = system_url;
 					names_found.append( *name );
 				}
