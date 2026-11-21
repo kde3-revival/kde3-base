@@ -76,7 +76,8 @@ NetworkApplet::NetworkApplet(const QString &configFile, Type type, int actions,
     : KPanelApplet(configFile, type, actions, parent, name),
       m_frame(0),
       m_notifications(true),
-      m_airplane(false)
+      m_airplane(false),
+      m_wifiUsable(false)
 {
     setBackgroundOrigin(AncestorOrigin);
     readConfig();
@@ -366,6 +367,18 @@ void NetworkApplet::updateState()
 
     m_popup->setState(s, m_backend->networks(), m_backend->isScanning(), airplane,
                       haveEditor());
+
+    // Wi-Fi switched on while the list is open: look for the networks now,
+    // not at the next round of the timer
+    bool wifiUsable = s.kind != NetworkBackend::Unavailable &&
+                      s.kind != NetworkBackend::NotRunning &&
+                      s.kind != NetworkBackend::NetworkingOff &&
+                      s.haveWifi && s.wifiEnabled && s.wifiHardwareEnabled;
+    if (wifiUsable && !m_wifiUsable && m_popup->isVisible())
+    {
+        QTimer::singleShot(0, this, SLOT(scan()));
+    }
+    m_wifiUsable = wifiUsable;
 }
 
 void NetworkApplet::animate()

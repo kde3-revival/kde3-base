@@ -1312,6 +1312,15 @@ void NetworkBackendPrivate::scanDone(GObject *source, GAsyncResult *result,
         // stay.
         NetworkBackendPrivate *d = static_cast<NetworkBackendPrivate *>(data);
         kdDebug() << "network applet: scan: " << dbusError(error) << endl;
+        // Wi-Fi just switched on: the device is not ready yet, and
+        // NetworkManager scans by itself once it is.  Still looking, until
+        // that scan ends or the timeout.
+        if (d->client && nm_client_wireless_get_enabled(d->client) &&
+            nm_device_get_state(NM_DEVICE(source)) < NM_DEVICE_STATE_DISCONNECTED)
+        {
+            g_error_free(error);
+            return;
+        }
         d->scanning = false;
         d->schedule();
     }

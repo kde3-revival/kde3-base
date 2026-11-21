@@ -119,6 +119,7 @@ private:
 
     bool m_notifications;
     bool m_airplane;
+    bool m_wifiUsable;      // the last state: Wi-Fi on, networking on
 
     // the password dialogs of the agent's requests
     QMap<int, PasswordDialog *> m_requests;
