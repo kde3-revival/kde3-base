@@ -31,6 +31,9 @@ class KWinInterface : virtual public DCOPObject
     virtual void setUnshadowed(unsigned long winId) = 0;
     // shows the window overview, or hides it when it is shown
     virtual ASYNC showOverview() = 0;
+    // hides the window overview at once and releases its grabs (synchronous:
+    // e.g. the screen locker calls it before grabbing the keyboard)
+    virtual void hideOverview() = 0;
 
     k_dcop_signals:
     

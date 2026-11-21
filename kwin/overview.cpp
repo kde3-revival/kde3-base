@@ -283,7 +283,8 @@ class OverviewItem
               alpha_format( false ), shaped( false ), pixmap( None ), damage( None ),
               in_layout( false ), screen( 0 ), matches( true ),
               fade_from( 1 ), fade_to( 1 ), fade_start( 0 ), fade( 1 ),
-              title_picture( None ), icon_pixmap( None ), icon_picture( None ), seen( true )
+              title_picture( None ), icon_pixmap( None ), icon_picture( None ), seen( true ),
+              snapshot( false )
             {
             for( int i = 0;
                  i < MipLevels;
@@ -323,6 +324,7 @@ class OverviewItem
         Picture icon_picture;
         int icon_w, icon_h;
         bool seen;
+        bool snapshot; // a copy of the screen, not redirected
     };
 
 class OverviewRenderer
@@ -498,31 +500,85 @@ void Overview::reconfigure()
         createCorners();
     if( state == Hidden )
         setKeepRedirected( options->overviewKeepRedirected );
+    // else when the overview closes
     }
 
 /*
  Redirecting a window gives it a new (empty) pixmap and unredirecting
  drops it: both expose the whole window, i.e. every application would
  repaint everything when the overview opens and again when it closes.
- With KeepRedirected (the default) the windows are redirected once, when
- KWin starts, and the overview itself never makes the applications see
- anything but the focus change of the window that gets activated. The
- cost is that of any composited desktop: one pixmap per mapped
- top-level window, and the server copies every drawing to the screen.
+ With KeepRedirected (the default) the frame of every managed window is
+ redirected (Automatic) when it is created, before it is mapped, and stays
+ so; the overview itself then never makes the applications see anything
+ but the focus change of the window that gets activated.  The cost is one
+ pixmap per mapped frame, and the server copies the drawing to the screen.
+ Full screen windows are not redirected (page flipping, no extra copy);
+ the overview uses a copy of the screen for them and for override-redirect
+ windows (menus, tooltips), which are not redirected either.
 */
 void Overview::setKeepRedirected( bool keep )
     {
 #ifdef OVERVIEW_COMPOSITE
     if( !have_composite || keep == keep_redirected )
         return;
-    if( keep )
-        XCompositeRedirectSubwindows( dpy, root, CompositeRedirectAutomatic );
-    else
-        XCompositeUnredirectSubwindows( dpy, root, CompositeRedirectAutomatic );
     keep_redirected = keep;
+    updateRedirection();
 #else
     Q_UNUSED( keep );
 #endif
+    }
+
+void Overview::frameCreated( Window frame )
+    {
+#ifdef OVERVIEW_COMPOSITE
+    if( keep_redirected )
+        {
+        XCompositeRedirectWindow( dpy, frame, CompositeRedirectAutomatic );
+        redirected[ frame ] = true;
+        }
+#else
+    Q_UNUSED( frame );
+#endif
+    }
+
+// which frames should be redirected (not while shown: the overview may
+// need them, it is done again when it closes)
+void Overview::updateRedirection()
+    {
+#ifdef OVERVIEW_COMPOSITE
+    if( !have_composite || state != Hidden )
+        return;
+    // (frames of windows being managed are not in the stacking order yet;
+    // they stay as frameCreated() left them)
+    const ClientList& clients = ws->stackingOrder();
+    for( ClientList::ConstIterator it = clients.begin();
+         it != clients.end();
+         ++it )
+        {
+        Window frame = (*it)->frameId();
+        bool want = keep_redirected && !(*it)->isFullScreen();
+        bool have = redirected.contains( frame );
+        if( want && !have )
+            {
+            XCompositeRedirectWindow( dpy, frame, CompositeRedirectAutomatic );
+            redirected[ frame ] = true;
+            }
+        else if( !want && have )
+            {
+            XCompositeUnredirectWindow( dpy, frame, CompositeRedirectAutomatic );
+            redirected.remove( frame );
+            }
+        if( debug && want != have )
+            kdWarning( 1212 ) << "overview: " << ( want ? "redirected " : "unredirected " )
+                << (*it)->caption() << endl;
+        }
+#endif
+    }
+
+void Overview::stackingChanged()
+    {
+    updateRedirection();
+    updateCorners();
     }
 
 //****************************************
@@ -558,13 +614,50 @@ void Overview::createCorners()
             continue;
         XSetWindowAttributes attr;
         attr.override_redirect = True;
-        attr.event_mask = EnterWindowMask | LeaveWindowMask;
+        // a click in the corner opens the overview too (it would be lost anyway)
+        attr.event_mask = EnterWindowMask | LeaveWindowMask | ButtonPressMask;
         Window w = XCreateWindow( dpy, root, p.x(), p.y(), 1, 1, 0, CopyFromParent, InputOnly,
             CopyFromParent, CWOverrideRedirect | CWEventMask, &attr );
-        XMapRaised( dpy, w );
         corners.append( w );
         corner_points.append( p );
+        corner_mapped.append( false );
         }
+    updateCorners();
+    }
+
+// no corner above a full screen window: it would eat its clicks there
+void Overview::updateCorners()
+    {
+    const ClientList& clients = ws->stackingOrder();
+    QValueList< bool >::Iterator mapped = corner_mapped.begin();
+    QValueList< QPoint >::ConstIterator p = corner_points.begin();
+    for( QValueList< Window >::ConstIterator it = corners.begin();
+         it != corners.end();
+         ++it, ++mapped, ++p )
+        {
+        bool covered = false;
+        for( ClientList::ConstIterator c = clients.begin();
+             c != clients.end() && !covered;
+             ++c )
+            if( (*c)->isFullScreen() && (*c)->isOnCurrentDesktop() && (*c)->isShown( true )
+                && (*c)->geometry().contains( *p ))
+                covered = true;
+        if( covered && *mapped )
+            XUnmapWindow( dpy, *it );
+        else if( !covered && !*mapped )
+            XMapRaised( dpy, *it );
+        *mapped = !covered;
+        }
+    }
+
+void Overview::raiseCorners()
+    {
+    QValueList< bool >::ConstIterator mapped = corner_mapped.begin();
+    for( QValueList< Window >::ConstIterator it = corners.begin();
+         it != corners.end();
+         ++it, ++mapped )
+        if( *mapped )
+            XRaiseWindow( dpy, *it );
     }
 
 void Overview::destroyCorners()
@@ -576,6 +669,7 @@ void Overview::destroyCorners()
         XDestroyWindow( dpy, *it );
     corners.clear();
     corner_points.clear();
+    corner_mapped.clear();
     }
 
 bool Overview::cornerHit( const QPoint& p ) const
@@ -583,14 +677,29 @@ bool Overview::cornerHit( const QPoint& p ) const
     return corner_points.contains( p );
     }
 
-bool Overview::cornerAllowed( unsigned int button_state ) const
+bool Overview::cornerAllowed( const QPoint& corner, unsigned int button_state ) const
     {
     if( button_state & ( Button1Mask | Button2Mask | Button3Mask | Button4Mask | Button5Mask ))
         return false; // dragging something
-    Client* active = ws->activeClient();
-    if( active != NULL && active->isFullScreen())
+    if( blocked())
         return false;
+    // a full screen window on that monitor (the corner is unmapped then anyway)
+    const ClientList& clients = ws->stackingOrder();
+    for( ClientList::ConstIterator it = clients.begin();
+         it != clients.end();
+         ++it )
+        if( (*it)->isFullScreen() && (*it)->isOnCurrentDesktop() && (*it)->isShown( true )
+            && (*it)->geometry().contains( corner ))
+            return false;
     return true;
+    }
+
+// KWin's own popup menus, the Alt+Tab box and interactive moves have
+// their grabs; taking them over would orphan them
+bool Overview::blocked() const
+    {
+    return QApplication::activePopupWidget() != NULL || ws->tabBoxActive()
+        || ws->moveResizeClient() != NULL;
     }
 
 void Overview::cornerTimeout()
@@ -600,7 +709,7 @@ void Overview::cornerTimeout()
     unsigned int mask;
     if( !XQueryPointer( dpy, root, &root_return, &child, &rx, &ry, &wx, &wy, &mask ))
         return;
-    if( cornerHit( QPoint( rx, ry )) && cornerAllowed( mask ) && state == Hidden )
+    if( cornerHit( QPoint( rx, ry )) && cornerAllowed( QPoint( rx, ry ), mask ) && state == Hidden )
         {
         corner_armed = false;
         show();
@@ -651,15 +760,15 @@ void Overview::show()
         return;
     if( state == Hiding || state == Finishing )
         { // reverse a running zoom-in (the activated window stays activated)
-        if( state == Finishing )
-            return; // too late, the windows are being unredirected
+        if( state == Finishing || r == NULL )
+            return; // too late, the windows are being given back
         state = Showing;
         computeLayout();
         updateTitles();
         startTransition( 1.0 );
         return;
         }
-    if( state != Hidden )
+    if( state != Hidden || blocked())
         return;
     if( !grabInput())
         {
@@ -801,7 +910,15 @@ void Overview::hide( Client* c )
     settle_timer.stop();
     if( c != NULL && ws->hasClient( c ))
         {
+        if( !c->isOnCurrentDesktop())
+            { // moved to another desktop meanwhile: switching can't be animated
+            abort();
+            ws->activateClient( c, true );
+            return;
+            }
         ws->activateClient( c, true );
+        if( state == Hidden || r == NULL )
+            return; // aborted from within activateClient()
         }
     // the new stacking order, windows that appeared meanwhile, new sizes
     buildItems( false );
@@ -915,6 +1032,10 @@ void Overview::cleanup()
     unsigned int mask;
     if( XQueryPointer( dpy, root, &root_return, &child, &rx, &ry, &wx, &wy, &mask ))
         corner_armed = !cornerHit( QPoint( rx, ry ));
+    // what changed while shown
+    setKeepRedirected( options->overviewKeepRedirected );
+    updateRedirection();
+    updateCorners();
     XFlush( dpy );
     if( debug )
         kdWarning( 1212 ) << "overview: hidden" << endl;
@@ -940,7 +1061,9 @@ OverviewItem* Overview::createItem( Window w, const XWindowAttributes& attr )
     item->alpha_format = item->format != NULL && item->format->type == PictTypeDirect
         && item->format->direct.alphaMask != 0;
     item->client = ws->findClient( FrameIdMatchPredicate( w ));
-    if( Shape::available())
+    // frames are shaped only for shaped clients or masked decorations (saves a round trip)
+    if( Shape::available() && ( item->client == NULL || item->client->shape()
+        || !item->client->mask().isEmpty()))
         {
         int count, ordering;
         XRectangle* rects = XShapeGetRectangles( dpy, w, ShapeBounding, &count, &ordering );
@@ -967,12 +1090,49 @@ OverviewItem* Overview::createItem( Window w, const XWindowAttributes& attr )
     return item;
     }
 
-void Overview::bindContents( OverviewItem* item )
+// the contents of the window: its redirected pixmap, or a copy of the screen
+// (only while the screen still shows the real windows); false when neither
+bool Overview::bindContents( OverviewItem* item, bool can_copy )
     {
 #ifdef OVERVIEW_COMPOSITE
     if( !composite || item->format == NULL || item->mip_picture[ 0 ] != None )
-        return;
-    item->pixmap = XCompositeNameWindowPixmap( dpy, item->id );
+        return true;
+    // redirected by us, by the temporary redirection or by a compositing manager
+    bool named = false;
+    if( temp_redirected || redirected.contains( item->id ))
+        named = true;
+    else
+        { // kompmgr? (inside the error trap of buildItems())
+        int errors = trapped_errors;
+        item->pixmap = XCompositeNameWindowPixmap( dpy, item->id );
+        XSync( dpy, False );
+        named = trapped_errors == errors;
+        if( !named )
+            item->pixmap = None; // never valid
+        }
+    if( named )
+        {
+        if( item->pixmap == None )
+            item->pixmap = XCompositeNameWindowPixmap( dpy, item->id );
+        }
+    else
+        {
+        if( !can_copy )
+            return false;
+        // full screen and override-redirect windows: a static copy
+        const int depth = DefaultDepth( dpy, DefaultScreen( dpy ));
+        item->pixmap = XCreatePixmap( dpy, root, item->geom.width(), item->geom.height(), depth );
+        XGCValues gcv;
+        gcv.subwindow_mode = IncludeInferiors;
+        GC gc = XCreateGC( dpy, item->pixmap, GCSubwindowMode, &gcv );
+        XCopyArea( dpy, root, item->pixmap, gc, item->geom.x(), item->geom.y(),
+            item->geom.width(), item->geom.height(), 0, 0 );
+        XFreeGC( dpy, gc );
+        item->format = r->format;
+        item->depth = depth;
+        item->alpha_format = false;
+        item->snapshot = true;
+        }
     item->mip_picture[ 0 ] = XRenderCreatePicture( dpy, item->pixmap, item->format, 0, NULL );
     item->mip_w[ 0 ] = item->geom.width();
     item->mip_h[ 0 ] = item->geom.height();
@@ -980,11 +1140,13 @@ void Overview::bindContents( OverviewItem* item )
          i < MipLevels;
          ++i )
         item->mip_dirty[ i ] = true;
-    if( item->damage == None )
+    if( item->damage == None && !item->snapshot )
         item->damage = XDamageCreate( dpy, item->id, XDamageReportNonEmpty );
 #else
     Q_UNUSED( item );
+    Q_UNUSED( can_copy );
 #endif
+    return true;
     }
 
 void Overview::releaseContents( OverviewItem* item )
@@ -1065,7 +1227,7 @@ void Overview::buildItems( bool initial )
             if( item != NULL )
                 {
                 QRect geom( attr.x, attr.y, attr.width + 2 * attr.border_width, attr.height + 2 * attr.border_width );
-                if( geom.size() != item->geom.size())
+                if( geom.size() != item->geom.size() && !item->snapshot )
                     { // the pixmap is stale after a resize
                     releaseContents( item );
                     OverviewItem* fresh = createItem( w, attr );
@@ -1093,7 +1255,13 @@ void Overview::buildItems( bool initial )
                 item->in_layout = item->kind == OverviewItem::Managed;
                 item->from = item->to = item->cur = RectF( item->geom );
                 }
-            bindContents( item );
+            // the screen shows the overview after the first frame: no copies then
+            if( !bindContents( item, initial ))
+                {
+                releaseContents( item );
+                delete item;
+                continue;
+                }
             list.append( item );
             }
         if( children != NULL )
@@ -1121,7 +1289,8 @@ void Overview::buildItems( bool initial )
 
 void Overview::clientRemoved( Client* c )
     {
-    if( state == Hidden )
+    redirected.remove( c->frameId()); // the frame is destroyed
+    if( state == Hidden || r == NULL )
         return;
     OverviewItem* item = NULL;
     for( OverviewItem* it = items.first();
@@ -1159,6 +1328,8 @@ void Overview::clientRemoved( Client* c )
 
 void Overview::computeLayout()
     {
+    if( r == NULL )
+        return;
     QDesktopWidget* desktop = QApplication::desktop();
     const int screens = desktop->numScreens();
     QValueVector< QPtrList< OverviewItem > > per_screen( screens );
@@ -1243,7 +1414,7 @@ static void sortItems( QValueVector< OverviewItem* >& v, T less )
 void Overview::layoutScreen( const QRect& area, QPtrList< OverviewItem >& list )
     {
     const int n = list.count();
-    if( n == 0 )
+    if( n == 0 || r == NULL )
         return;
     const int title_space = r->title_height + TitleGap;
     QValueVector< OverviewItem* > by_y;
@@ -1362,6 +1533,8 @@ void Overview::layoutScreen( const QRect& area, QPtrList< OverviewItem >& list )
 
 void Overview::updateTitles()
     {
+    if( r == NULL )
+        return;
     QFontMetrics fm( r->font );
     for( OverviewItem* item = items.first();
          item != NULL;
@@ -1426,6 +1599,8 @@ OverviewItem* Overview::firstMatch() const
 
 void Overview::updateFilter()
     {
+    if( r == NULL )
+        return;
     double t = now();
     for( OverviewItem* item = items.first();
          item != NULL;
@@ -1791,8 +1966,10 @@ void Overview::renderFrame()
         Picture mask = None;
         if( alpha < 1.0 )
             mask = solidPicture( dpy, Qt::black, alpha );
-        XRenderComposite( dpy, item->alpha_format || mask != None ? PictOpOver : PictOpSrc,
-            src, mask, dst, 0, 0, 0, 0, dx, dy, dw, dh );
+        // at scale 1 like the server's automatic compositing (Src, also for
+        // ARGB windows), else blended (the edges are anti-aliased)
+        int op = mask != None || ( item->alpha_format && !identity ) ? PictOpOver : PictOpSrc;
+        XRenderComposite( dpy, op, src, mask, dst, 0, 0, 0, 0, dx, dy, dw, dh );
         if( mask != None )
             XRenderFreePicture( dpy, mask );
         if( item->shaped )
@@ -1976,7 +2153,14 @@ bool Overview::handlePresent( XEvent* e )
     XGenericEventCookie* cookie = &e->xcookie;
     if( !XGetEventData( dpy, cookie ))
         return true;
-    if( r != NULL )
+    // only the events of this overview's overlay selection (an idle event
+    // may name a pixmap XID that was freed and reused meanwhile)
+    XID eid = None;
+    if( cookie->evtype == PresentCompleteNotify )
+        eid = ((XPresentCompleteNotifyEvent*) cookie->data )->eid;
+    else if( cookie->evtype == PresentIdleNotify )
+        eid = ((XPresentIdleNotifyEvent*) cookie->data )->eid;
+    if( r != NULL && eid != None && eid == r->present_eid )
         {
         if( cookie->evtype == PresentCompleteNotify )
             {
@@ -2288,8 +2472,9 @@ bool Overview::x11Event( XEvent* e )
             corner_armed = true;
             return true;
             }
+        QPoint p( e->xcrossing.x_root, e->xcrossing.y_root );
         if( state != Hidden || !corner_armed || e->xcrossing.mode != NotifyNormal
-            || !cornerAllowed( e->xcrossing.state ))
+            || !cornerAllowed( p, e->xcrossing.state ))
             return true;
         if( options->overviewHotCornerDelay > 0 )
             corner_timer.start( options->overviewHotCornerDelay, true );
@@ -2300,15 +2485,27 @@ bool Overview::x11Event( XEvent* e )
             }
         return true;
         }
+    if( e->type == ButtonPress && corners.contains( e->xbutton.window ))
+        {
+        corner_timer.stop();
+        QPoint p( e->xbutton.x_root, e->xbutton.y_root );
+        if( state == Hidden && cornerAllowed( p, 0 ))
+            {
+            corner_armed = false;
+            show();
+            }
+        return true;
+        }
+#ifdef OVERVIEW_PRESENT
+    // also the late ones after the overview closed: nobody else uses Present here
+    if( have_present && e->type == GenericEvent && e->xgeneric.extension == present_opcode )
+        return handlePresent( e );
+#endif
     if( state == Hidden )
         return false;
 #ifdef OVERVIEW_COMPOSITE
     if( composite && e->type == damage_event + XDamageNotify )
         return handleDamage( e );
-#endif
-#ifdef OVERVIEW_PRESENT
-    if( e->type == GenericEvent && e->xgeneric.extension == present_opcode )
-        return handlePresent( e );
 #endif
     switch( e->type )
         {
@@ -2360,6 +2557,9 @@ void Overview::frameTimeout() {}
 void Overview::settleTimeout() {}
 void Overview::cornerTimeout() {}
 void Overview::presentWatchdog() {}
+void Overview::frameCreated( Window ) {}
+void Overview::stackingChanged() {}
+void Overview::raiseCorners() {}
 
 #endif // HAVE_XRENDER
 

@@ -24,6 +24,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "notifications.h"
 #include "rules.h"
 #include "group.h"
+#include "overview.h"
 
 extern Time qt_x_time;
 
@@ -563,6 +564,9 @@ void Client::embedClient( Window w, const XWindowAttributes &attr )
     frame = XCreateWindow( qt_xdisplay(), qt_xrootwin(), 0, 0, 1, 1, 0,
 		    attr.depth, InputOutput, attr.visual,
 		    CWColormap | CWBackPixmap | CWBorderPixel, &swa );
+    // redirected for the window overview before it is mapped (no exposure)
+    if( workspace()->windowOverview() != NULL )
+        workspace()->windowOverview()->frameCreated( frame );
     wrapper = XCreateWindow( qt_xdisplay(), frame, 0, 0, 1, 1, 0,
 		    attr.depth, InputOutput, attr.visual,
 		    CWColormap | CWBackPixmap | CWBorderPixel, &swa );

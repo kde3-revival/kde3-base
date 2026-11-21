@@ -71,6 +71,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "workspace.h"
 #include "tabbox.h"
 #include "group.h"
+#include "overview.h"
 #include "rules.h"
 
 extern Time qt_x_time;
@@ -122,6 +123,8 @@ void Workspace::updateStackingOrder( bool propagate_new_clients )
         if( active_client )
             active_client->updateMouseGrab();
         }
+    if( overview != NULL )
+        overview->stackingChanged(); // full screen windows: redirection, hot corners
     }
 
 /*!

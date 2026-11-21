@@ -2132,6 +2132,8 @@ void Client::setFullScreen( bool set, bool user )
             }
         }
     updateWindowRules();
+    if( workspace()->windowOverview() != NULL )
+        workspace()->windowOverview()->stackingChanged(); // redirection, hot corners
     }
 
 int Client::checkFullScreenHack( const QRect& geom ) const

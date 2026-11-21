@@ -16,6 +16,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <qptrlist.h>
 #include <qvaluelist.h>
 #include <qrect.h>
+#include <qmap.h>
 #include <qstring.h>
 #include <kshortcut.h>
 
@@ -62,8 +63,16 @@ class Overview : public QObject
         void reconfigure();
         void setShortcut( const KShortcut& cut );
         void clientRemoved( Client* c );
-        // the desktop was switched behind our back: leave without animation
+        // the desktop was switched behind our back, the screen gets locked...:
+        // leave at once, without animation (may be called from anything the
+        // overview itself calls, e.g. activateClient())
         void abort();
+        // a new frame window, not mapped yet
+        void frameCreated( Window frame );
+        // the stacking order, a full screen state or the active window changed
+        void stackingChanged();
+        // keep the hot corners above the electric borders
+        void raiseCorners();
 
     private slots:
         void frameTimeout();
@@ -81,11 +90,14 @@ class Overview : public QObject
         void createCorners();
         void destroyCorners();
         bool cornerHit( const QPoint& p ) const;
-        bool cornerAllowed( unsigned int buttonState ) const;
+        bool cornerAllowed( const QPoint& corner, unsigned int buttonState ) const;
+        bool blocked() const;
+        void updateCorners();
+        void updateRedirection();
 
         void buildItems( bool initial );
         OverviewItem* createItem( Window w, const XWindowAttributes& attr );
-        void bindContents( OverviewItem* item );
+        bool bindContents( OverviewItem* item, bool can_copy );
         void releaseContents( OverviewItem* item );
         void clearItems();
         void computeLayout();
@@ -143,6 +155,8 @@ class Overview : public QObject
         // or only while the overview is shown
         bool keep_redirected;
         bool temp_redirected;
+        // the frames redirected by us one by one (KeepRedirected)
+        QMap< Window, bool > redirected;
 
         OverviewRenderer* r;
 
@@ -157,6 +171,7 @@ class Overview : public QObject
         // hot corners
         QValueList< Window > corners;
         QValueList< QPoint > corner_points;
+        QValueList< bool > corner_mapped;
         QTimer corner_timer;
         bool corner_armed;
 

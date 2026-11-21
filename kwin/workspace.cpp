@@ -2015,6 +2015,15 @@ void Workspace::slotShowOverview()
     showOverview();
     }
 
+void Workspace::hideOverview()
+    {
+    if( overview != NULL && overview->isActive())
+        {
+        overview->abort();
+        XSync( qt_xdisplay(), False ); // the grabs are gone when the caller gets the reply
+        }
+    }
+
 void Workspace::cancelDelayFocus()
     {
     delete delayFocusTimer;
@@ -2290,6 +2299,8 @@ void Workspace::raiseElectricBorders()
         XRaiseWindow(qt_xdisplay(), electric_bottom_border);
         XRaiseWindow(qt_xdisplay(), electric_right_border);
         }
+    if( overview != NULL )
+        overview->raiseCorners(); // the hot corners are above the borders
     }
 
 void Workspace::addTopMenu( Client* c )

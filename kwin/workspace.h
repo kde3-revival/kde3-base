@@ -290,6 +290,10 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
 
         // dcop interface
         void showOverview();
+        void hideOverview();
+        Overview* windowOverview() const { return overview; }
+        bool tabBoxActive() const { return tab_grab || control_grab; }
+        Client* moveResizeClient() const { return movingClient; }
 
     public slots:
         void refresh();
