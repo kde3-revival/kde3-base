@@ -292,7 +292,7 @@ bool FontAASettings::load( bool useDefaults )
   KXftConfig xft(KXftConfig::constStyleSettings);
 
 
-  if(xft.getExcludeRange(from, to))
+  if(!useDefaults && xft.getExcludeRange(from, to))
      excludeRange->setChecked(true);
   else
   {
@@ -306,7 +306,7 @@ bool FontAASettings::load( bool useDefaults )
 
   KXftConfig::SubPixel::Type spType;
 
-  if(!xft.getSubPixelType(spType) || KXftConfig::SubPixel::None==spType)
+  if(useDefaults || !xft.getSubPixelType(spType) || KXftConfig::SubPixel::None==spType)
     useSubPixel->setChecked(false);
   else
   {
@@ -324,27 +324,18 @@ bool FontAASettings::load( bool useDefaults )
 #ifdef HAVE_FONTCONFIG
   KXftConfig::Hint::Style hStyle;
 
-  if(!xft.getHintStyle(hStyle) || KXftConfig::Hint::NotSet==hStyle)
-  {
-    KConfig kglobals("kdeglobals", false, false);
-
-    kglobals.setReadDefaults( useDefaults );
-
-    kglobals.setGroup("General");
-    hStyle=KXftConfig::Hint::Medium;
-    xft.setHintStyle(hStyle);
-    xft.apply();  // Save this setting
-    kglobals.writeEntry("XftHintStyle", KXftConfig::toStr(hStyle));
-    kglobals.sync();
-    runRdb(KRdbExportXftSettings);
-  }
+  // Only show the default here: writing it to the fontconfig file would
+  // change the fonts of every program of the user just because this
+  // module was opened.  krdb exports the same default as Xft.hintstyle.
+  if(useDefaults || !xft.getHintStyle(hStyle) || KXftConfig::Hint::NotSet==hStyle)
+    hStyle=KXftConfig::Hint::Slight;
 
   hintingStyle->setCurrentItem(getIndex(hStyle));
 #endif
 
   enableWidgets();
 
-  return xft.getAntiAliasing();
+  return useDefaults || xft.getAntiAliasing();
 }
 
 bool FontAASettings::save( bool useAA )
@@ -449,7 +440,7 @@ KXftConfig::Hint::Style FontAASettings::getHintStyle()
     if(hintingStyle->currentText()==KXftConfig::description((KXftConfig::Hint::Style)s))
       return (KXftConfig::Hint::Style)s;
 
-  return KXftConfig::Hint::Medium;
+  return KXftConfig::Hint::Slight;
 }
 #endif
 
@@ -694,6 +685,7 @@ void KFonts::load( bool useDefaults )
   cbAA->setCurrentItem( useAA );
 
   KConfig cfgfonts("kcmfonts", true);
+  cfgfonts.setReadDefaults( useDefaults );
   cfgfonts.setGroup("General");
   int dpicfg = cfgfonts.readNumEntry( "forceFontDPI", 0 );
   DPISetting dpi = dpicfg == 120 ? DPI120 : dpicfg == 96 ? DPI96 : DPINone;

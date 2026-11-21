@@ -513,37 +513,37 @@ void runRdb( uint flags )
   {
     kglobals.setGroup("General");
 
-    if (kglobals.hasKey("XftAntialias"))
+    // libXft only uses these for properties the fontconfig configuration
+    // left unset, so they are defaults, not overrides.  Export them even
+    // when the fonts module was never used: Xft's own default hint style
+    // is "hintfull", which distorts the glyph shapes.
+    contents += "Xft.antialias: ";
+    if(kglobals.readBoolEntry("XftAntialias", true))
+      contents += "1\n";
+    else
+      contents += "0\n";
+
+    QString hintStyle = kglobals.readEntry("XftHintStyle", "hintslight");
+    contents += "Xft.hinting: ";
+    if(hintStyle.isEmpty())
+      contents += "-1\n";
+    else
     {
-      contents += "Xft.antialias: ";
-      if(kglobals.readBoolEntry("XftAntialias", true))
+      if(hintStyle!="hintnone")
         contents += "1\n";
       else
         contents += "0\n";
+      contents += "Xft.hintstyle: " + hintStyle + '\n';
     }
 
-    if (kglobals.hasKey("XftHintStyle"))
-    {
-      QString hintStyle = kglobals.readEntry("XftHintStyle", "hintmedium");
-      contents += "Xft.hinting: ";
-      if(hintStyle.isEmpty())
-        contents += "-1\n";
-      else
-      {
-        if(hintStyle!="hintnone")
-          contents += "1\n";
-        else
-          contents += "0\n";
-        contents += "Xft.hintstyle: " + hintStyle + '\n';
-      }
-    }
-
-    if (kglobals.hasKey("XftSubPixel"))
-    {
-      QString subPixel = kglobals.readEntry("XftSubPixel");
-      if(!subPixel.isEmpty())
-        contents += "Xft.rgba: " + subPixel + '\n';
-    }
+    // Without Xft.rgba libXft takes the sub-pixel order the X server
+    // reports for the screen.  The LCD filter only matters for sub-pixel
+    // rendering; "lcddefault" is what FreeType and the other desktops use.
+    QString subPixel = kglobals.readEntry("XftSubPixel");
+    if(!subPixel.isEmpty())
+      contents += "Xft.rgba: " + subPixel + '\n';
+    if(subPixel!="none")
+      contents += "Xft.lcdfilter: lcddefault\n";
 
     KConfig cfgfonts("kcmfonts", true);
     cfgfonts.setGroup("General");
