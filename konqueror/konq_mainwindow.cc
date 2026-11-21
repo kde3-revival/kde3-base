@@ -408,6 +408,41 @@ void KonqMainWindow::removeContainer( QWidget *container, QWidget *parent, QDomE
   KParts::MainWindow::removeContainer( container, parent, element, id );
 }
 
+// The part that would show an HTML page in @p view: the view's own part
+// if it keeps it (see KonqView::changeViewMode), otherwise the first one
+// KonqFactory::createView would take.
+static KService::Ptr htmlPartFor( KonqView *view )
+{
+  if ( view && view->service() &&
+       ( view->isLockedViewMode() || KMimeType::mimeType( "text/html" )->is( view->serviceType() ) ) )
+    return view->service();
+
+  KTrader::OfferList offers;
+  KonqFactory::getOffers( "text/html", &offers );
+  for ( KTrader::OfferList::ConstIterator it = offers.begin(); it != offers.end(); ++it )
+  {
+    QVariant prop = (*it)->property( "X-KDE-BrowserView-AllowAsDefault" );
+    if ( !prop.isValid() || prop.toBool() )
+      return *it;
+  }
+  return 0L;
+}
+
+// Whether the part that would show @p url fetches it itself and hands
+// every response it cannot show back to Konqueror (openURLRequest() with
+// the mime type).  Then Konqueror does not ask KIO for the mime type
+// first: that is a request of its own (and maybe KDE's cookie or
+// certificate dialogs) before the part requests the page again.  Such
+// parts name the protocols in X-KDE-BrowserView-FetchesProtocols.
+static bool partFetchesURL( KonqView *view, const KURL &url )
+{
+  KService::Ptr service = htmlPartFor( view );
+  if ( !service )
+    return false;
+  QVariant prop = service->property( "X-KDE-BrowserView-FetchesProtocols", QVariant::StringList );
+  return prop.isValid() && prop.toStringList().contains( url.protocol().lower() );
+}
+
 // Detect a name filter (e.g. *.txt) in the url.
 // Note that KShortURIFilter does the same, but we have no way of getting it from there
 //
@@ -563,6 +598,12 @@ void KonqMainWindow::openURL( KonqView *_view, const KURL &_url,
     if ( KDE_stat( _path.data(), &buff ) != -1 )
         serviceType = KMimeType::findByURL( url, buff.st_mode )->name();
   }
+
+  // A web part that fetches http(s) URLs itself: no KIO request for the
+  // mime type, the part sends back what it cannot show.  POST requests
+  // (KonqRun sends the data) and following views are left as they were.
+  if ( serviceType.isEmpty() && !req.args.doPost() && !req.followMode && partFetchesURL( view, url ) )
+    serviceType = "text/html";
 
   kdDebug(1202) << "trying openView for " << url << " (serviceType " << serviceType << ")" << endl;
   if ( ( !serviceType.isEmpty() && serviceType != "application/octet-stream") ||
