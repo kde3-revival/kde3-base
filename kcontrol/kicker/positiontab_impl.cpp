@@ -226,6 +226,7 @@ void PositionTab::defaults()
     m_expandCheckBox->setChecked( true ); // expand as required
     m_xineramaScreenComboBox->setCurrentItem(QApplication::desktop()->primaryScreen());
     m_everyScreenCheckBox->setChecked(true);
+    updateEveryScreen();
 
     if (QApplication::reverseLayout())
     {
