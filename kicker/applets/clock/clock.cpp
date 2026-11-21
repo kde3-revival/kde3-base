@@ -302,13 +302,18 @@ int DigitalClock::preferedHeightForWidth(int w) const
 
 void DigitalClock::updateClock()
 {
-    static bool colon = true;
     QString newStr;
     QTime t(_applet->clockGetTime());
 
     int h = t.hour();
     int m = t.minute();
     int s = t.second();
+
+    // The colon is lit on even seconds.  It was a static flag toggled on
+    // every update, shared by all digital clocks in the panel: with two
+    // clocks it toggled twice a second and one clock never showed it lit,
+    // the other always.
+    bool colon = (s % 2 == 0);
 
     QString format("%02d");
 
@@ -341,9 +346,6 @@ void DigitalClock::updateClock()
         setUpdatesEnabled( TRUE );
         update();
     }
-    
-    if (_prefs->digitalBlink())
-        colon = !colon;
 }
 
 void DigitalClock::loadSettings()
