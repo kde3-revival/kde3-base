@@ -37,6 +37,7 @@ struct UPowerBackend::Private
     UPowerBackend *q;
     GCancellable *cancellable;
     UpClient *client;
+    UpDevice *display;  // UPower's summary of all batteries, ref'd
     GPtrArray *devices; // the UpDevices we follow, ref'd
     PowerSources ps;
 
@@ -113,6 +114,12 @@ struct UPowerBackend::Private
             addDevice(UP_DEVICE(g_ptr_array_index(list, i)));
         g_ptr_array_unref(list);
 
+        // the composite battery (for laptops with two batteries); a quick
+        // synchronous call, UPower has just answered
+        display = up_client_get_display_device(client);
+        if(display)
+            g_signal_connect(display, "notify", G_CALLBACK(propertyChanged), this);
+
         ps.daemon.connected = true;
         kdDebug() << "kpowermanager: upower backend has been initialized" << endl;
         update();
@@ -120,6 +127,10 @@ struct UPowerBackend::Private
 
     void addDevice(UpDevice *device)
     {
+        // "device-added" may come for a device of the list as well
+        for(guint i = 0; i < devices->len; i++)
+            if(g_strcmp0(up_device_get_object_path(UP_DEVICE(g_ptr_array_index(devices, i))), up_device_get_object_path(device)) == 0)
+                return;
         g_ptr_array_add(devices, g_object_ref(device));
         g_signal_connect(device, "notify", G_CALLBACK(propertyChanged), this);
     }
@@ -153,8 +164,8 @@ struct UPowerBackend::Private
     }
 
     // Recomputes the power sources from the devices: the line power
-    // devices and the first battery that powers the machine (not of a
-    // mouse or a UPS)
+    // devices and the batteries that power the machine (not of a mouse or
+    // a UPS); UPower's display device sums those up
     void update()
     {
         if(!ps.daemon.connected)
@@ -163,6 +174,8 @@ struct UPowerBackend::Private
         PowerSources fresh;
         fresh.daemon.connected = true;
         fresh.powerLine.online = false;
+        bool haveBattery = false;
+        double capacity = 0;
         for(guint i = 0; i < devices->len; i++)
         {
             UpDevice *device = UP_DEVICE(g_ptr_array_index(devices, i));
@@ -175,19 +188,46 @@ struct UPowerBackend::Private
                 fresh.powerLine.present = true;
                 fresh.powerLine.online = fresh.powerLine.online || online;
             }
-            else if(kind == UP_DEVICE_KIND_BATTERY && powerSupply && isPresent && !fresh.battery.present)
+            else if(kind == UP_DEVICE_KIND_BATTERY && powerSupply && isPresent)
             {
-                guint state = UP_DEVICE_STATE_UNKNOWN;
-                gint64 timeToEmpty = 0, timeToFull = 0;
-                g_object_get(device, "percentage", &fresh.battery.percentage, "capacity", &fresh.battery.capacity, "state", &state,
-                             "time-to-empty", &timeToEmpty, "time-to-full", &timeToFull, "energy-rate", &fresh.battery.energyRate, NULL);
-                fresh.battery.present = true;
-                fresh.battery.state = state <= PowerSources::Battery::PendingDischarge ? PowerSources::Battery::State(state)
-                                                                                       : PowerSources::Battery::Unknown;
-                fresh.battery.timeToEmpty = timeToEmpty;
-                fresh.battery.timeToFull = timeToFull;
+                // the capacity (wear) is not summed up: the first battery's
+                if(!haveBattery)
+                    g_object_get(device, "capacity", &capacity, NULL);
+                haveBattery = true;
             }
         }
+
+        if(haveBattery)
+        {
+            // the sum of the batteries, or the battery if there is only one
+            UpDevice *battery = display;
+            gboolean displayPresent = FALSE;
+            if(battery)
+                g_object_get(battery, "is-present", &displayPresent, NULL);
+            if(!displayPresent)
+                battery = 0;
+            for(guint i = 0; !battery && i < devices->len; i++)
+            {
+                UpDevice *device = UP_DEVICE(g_ptr_array_index(devices, i));
+                guint kind = UP_DEVICE_KIND_UNKNOWN;
+                gboolean powerSupply = FALSE, isPresent = FALSE;
+                g_object_get(device, "kind", &kind, "power-supply", &powerSupply, "is-present", &isPresent, NULL);
+                if(kind == UP_DEVICE_KIND_BATTERY && powerSupply && isPresent)
+                    battery = device;
+            }
+
+            guint state = UP_DEVICE_STATE_UNKNOWN;
+            gint64 timeToEmpty = 0, timeToFull = 0;
+            g_object_get(battery, "percentage", &fresh.battery.percentage, "state", &state, "time-to-empty", &timeToEmpty, "time-to-full",
+                         &timeToFull, "energy-rate", &fresh.battery.energyRate, NULL);
+            fresh.battery.present = true;
+            fresh.battery.capacity = capacity;
+            fresh.battery.state = state <= PowerSources::Battery::PendingDischarge ? PowerSources::Battery::State(state)
+                                                                                   : PowerSources::Battery::Unknown;
+            fresh.battery.timeToEmpty = timeToEmpty;
+            fresh.battery.timeToFull = timeToFull;
+        }
+
         // no line power device (e.g. a desktop): on mains unless UPower
         // says the machine runs on battery
         if(!fresh.powerLine.present)
@@ -202,6 +242,12 @@ struct UPowerBackend::Private
         for(guint i = 0; i < devices->len; i++)
             g_signal_handlers_disconnect_by_data(g_ptr_array_index(devices, i), this);
         g_ptr_array_set_size(devices, 0);
+        if(display)
+        {
+            g_signal_handlers_disconnect_by_data(display, this);
+            g_object_unref(display);
+            display = 0;
+        }
         if(client)
         {
             g_signal_handlers_disconnect_by_data(client, this);
@@ -219,6 +265,7 @@ UPowerBackend::UPowerBackend()
     d->q = this;
     d->cancellable = g_cancellable_new();
     d->client = 0;
+    d->display = 0;
     d->devices = g_ptr_array_new_with_free_func(g_object_unref);
 
     // The shared system bus connection libupower-glib uses _exit()s the

@@ -128,9 +128,11 @@ Backlight::~Backlight()
 }
 
 
+// Not 0: at 0 some panels (intel_backlight, amdgpu) turn the backlight
+// off entirely, leaving a black screen; about 1% instead
 int Backlight::minBrightness() const
 {
-    return 0;
+    return d->maxLevel > 0 ? (d->maxLevel + 99) / 100 : 0;
 }
 
 
@@ -156,8 +158,8 @@ void Backlight::setBrightness(int level)
 {
     if(d->maxLevel <= 0)
         return;
-    if(level < 0)
-        level = 0;
+    if(level < minBrightness())
+        level = minBrightness();
     if(level > d->maxLevel)
         level = d->maxLevel;
 
