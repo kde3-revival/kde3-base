@@ -65,13 +65,19 @@ public:
     WId activeWindow() { return m_activeWindow; }
 
     enum ConfigOptions { WindowThumbnails = 97,
-                         WindowIcons, ConfigureDesktops, RenameDesktop };
+                         WindowIcons, ConfigureDesktops, RenameDesktop,
+                         CurrentScreenOnly };
     int labelType() const { return m_settings->labelType(); }
 
     int bgType() const { return m_settings->backgroundType(); }
 
     bool desktopPreview() const { return m_settings->preview(); }
     bool windowIcons() const { return m_settings->icons(); }
+    bool currentScreenOnly() const { return m_settings->currentScreenOnly(); }
+
+    // The part of the desktop the pager shows: the screen the panel is on
+    // with CurrentScreenOnly on several screens, otherwise all of it.
+    QRect pagerArea() const;
 
     Orientation orientation() const { return KPanelApplet::orientation(); }
     Direction popupDirection() { return KPanelApplet::popupDirection(); }

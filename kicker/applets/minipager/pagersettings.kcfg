@@ -54,5 +54,10 @@
             <label>Show window icons in previews?</label>
             <default>true</default>
         </entry>
+
+        <entry name="CurrentScreenOnly" type="Bool">
+            <label>Show only the screen the panel is on?</label>
+            <default>false</default>
+        </entry>
     </group>
 </kcfg>

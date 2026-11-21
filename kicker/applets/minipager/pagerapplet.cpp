@@ -27,6 +27,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <qpopupmenu.h>
 #include <qlayout.h>
 #include <qbuttongroup.h>
+#include <qdesktopwidget.h>
 
 #include <dcopref.h>
 #include <kglobalsettings.h>
@@ -276,13 +277,13 @@ int KMiniPager::widthForHeight(int h) const
     {
         if (desktopPreview() || m_settings->backgroundType() == PagerSettings::EnumBackgroundType::BgLive)
         {
-            bw = (int) ( bw * (double) QApplication::desktop()->width() / QApplication::desktop()->height() );
+            bw = (int) ( bw * (double) pagerArea().width() / pagerArea().height() );
         }
     }
     else
     {
         // scale to desktop width as a minimum
-        bw = (int) (bw * (double) QApplication::desktop()->width() / QApplication::desktop()->height());
+        bw = (int) (bw * (double) pagerArea().width() / pagerArea().height());
         QFontMetrics fm = fontMetrics();
         for (int i = 1; i <= deskNum; i++)
         {
@@ -331,7 +332,7 @@ int KMiniPager::heightForWidth(int w) const
     int bh = (w/rowNum) + 1;
     if ( desktopPreview() )
     {
-        bh = (int) ( bh *  (double) QApplication::desktop()->height() / QApplication::desktop()->width() );
+        bh = (int) ( bh *  (double) pagerArea().height() / pagerArea().width() );
     }
     else if ( m_settings->labelType() == PagerSettings::EnumLabelType::LabelName )
     {
@@ -698,6 +699,7 @@ void KMiniPager::aboutToShowContextMenu()
 
     showMenu->insertItem(i18n("&Window Thumbnails"), WindowThumbnails);
     showMenu->insertItem(i18n("&Window Icons"), WindowIcons);
+    showMenu->insertItem(i18n("Only This &Screen"), CurrentScreenOnly);
 
     showMenu->insertTitle(i18n("Text Label"));
     showMenu->insertItem(i18n("Desktop N&umber"),
@@ -728,6 +730,9 @@ void KMiniPager::aboutToShowContextMenu()
     m_contextMenu->setItemChecked(WindowThumbnails, m_settings->preview());
     m_contextMenu->setItemChecked(WindowIcons, m_settings->icons());
     m_contextMenu->setItemEnabled(WindowIcons, m_settings->preview());
+    m_contextMenu->setItemChecked(CurrentScreenOnly, m_settings->currentScreenOnly());
+    m_contextMenu->setItemEnabled(CurrentScreenOnly,
+                                  QApplication::desktop()->numScreens() > 1);
     m_contextMenu->setItemEnabled(RenameDesktop,
                                   m_settings->labelType() ==
                                   PagerSettings::EnumLabelType::LabelName);
@@ -780,6 +785,19 @@ void KMiniPager::contextMenuActivated(int result)
             m_settings->setIcons(!m_settings->icons());
             break;
 
+        case CurrentScreenOnly:
+        {
+            m_settings->setCurrentScreenOnly(!m_settings->currentScreenOnly());
+            // the wallpaper is cut to the new area
+            QValueList<KMiniPagerButton*>::ConstIterator it;
+            QValueList<KMiniPagerButton*>::ConstIterator itEnd = m_desktops.end();
+            for( it = m_desktops.begin(); it != itEnd; ++it )
+            {
+                (*it)->backgroundChanged();
+            }
+            break;
+        }
+
         case PagerSettings::EnumBackgroundType::BgPlain + bgOffset:
             m_settings->setBackgroundType(PagerSettings::EnumBackgroundType::BgPlain);
             break;
@@ -812,6 +830,21 @@ void KMiniPager::contextMenuActivated(int result)
     m_settings->writeConfig();
     updateGeometry();
     refresh();
+}
+
+QRect KMiniPager::pagerArea() const
+{
+    QDesktopWidget *desktop = QApplication::desktop();
+    if (m_settings->currentScreenOnly() && desktop->numScreens() > 1)
+    {
+        int screen = desktop->screenNumber(const_cast<KMiniPager*>(this));
+        if (screen >= 0)
+        {
+            return desktop->screenGeometry(screen);
+        }
+    }
+
+    return desktop->geometry();
 }
 
 void KMiniPager::slotDesktopNamesChanged()

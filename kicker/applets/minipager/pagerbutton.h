@@ -24,6 +24,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #ifndef __MINIPAGERBUTTON_H
 #define __MINIPAGERBUTTON_H
 
+#include <qimage.h>
 #include <qbutton.h>
 
 #include "taskmanager.h"
@@ -83,6 +84,7 @@ private slots:
 
 private:
     void loadBgPixmap();
+    void setBgFromImage(const QImage &desktopImage);
     QRect mapGeometryToViewport(const KWin::WindowInfo&) const;
     QPoint mapPointToViewport(const QPoint&) const;
 
@@ -101,7 +103,7 @@ private:
     KSharedPixmap *m_sharedPixmap;
     KPixmap *m_bgPixmap;
     static KSharedPixmap *s_commonSharedPixmap;
-    static KPixmap *s_commonBgPixmap;
+    static QImage *s_commonBgImage;
     bool m_isCommon;
 
     Task::Ptr m_currentWindow;

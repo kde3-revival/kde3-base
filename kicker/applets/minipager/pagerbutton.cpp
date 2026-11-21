@@ -56,7 +56,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #endif
 
 KSharedPixmap* KMiniPagerButton::s_commonSharedPixmap;
-KPixmap* KMiniPagerButton::s_commonBgPixmap;
+QImage* KMiniPagerButton::s_commonBgImage;
 
 KMiniPagerButton::KMiniPagerButton(int desk, bool useViewPorts, const QPoint& viewport,
         KMiniPager *parent, const char *name)
@@ -151,6 +151,15 @@ bool KMiniPagerButton::shouldPaintWindow( KWin::WindowInfo *info ) const
     if (!m_useViewports && !info->isOnDesktop(m_desktop))
       return false;
 
+    if (m_pager->currentScreenOnly())
+    {
+        // as TaskManager::isOnScreen() decides it for the taskbar
+        QRect area = m_pager->pagerArea();
+        area.addCoords(5, 5, -5, -5);
+        if (!mapGeometryToViewport(*info).intersects(area))
+            return false;
+    }
+
     if (m_useViewports) {
         QRect r = mapGeometryToViewport(*info);
 
@@ -181,6 +190,8 @@ void KMiniPagerButton::resizeEvent(QResizeEvent *ev)
 
     delete m_bgPixmap;
     m_bgPixmap = 0;
+    // the wallpaper is scaled to the size of the button
+    loadBgPixmap();
 
     QButton::resizeEvent(ev);
 }
@@ -199,8 +210,8 @@ void KMiniPagerButton::backgroundChanged()
 {
     delete s_commonSharedPixmap;
     s_commonSharedPixmap = 0;
-    delete s_commonBgPixmap;
-    s_commonBgPixmap = 0;
+    delete s_commonBgImage;
+    s_commonBgImage = 0;
     loadBgPixmap();
 }
 
@@ -236,7 +247,7 @@ void KMiniPagerButton::loadBgPixmap()
 
     if (m_isCommon)
     {
-        if (s_commonBgPixmap)
+        if (s_commonBgImage)
         { // pixmap is already ready, just use it
             backgroundLoaded( true );
             return;
@@ -275,44 +286,72 @@ void KMiniPagerButton::loadBgPixmap()
     }
 }
 
-static QPixmap scalePixmap(const QPixmap &pixmap, int width, int height)
+// The desktop background as an image, reduced to a size from which the
+// buttons of every pager still get a sharp part of it.
+static QImage desktopImage(const QPixmap &pixmap)
 {
-    if (pixmap.width()>100)
+    QImage img;
+    if (pixmap.width() > 100)
     {
         KPixmapIO io;
-        QImage img( io.convertToImage( pixmap ) );
-        return io.convertToPixmap( img.smoothScale( width, height ) );
+        img = io.convertToImage(pixmap);
+    }
+    else
+    {
+        img = pixmap.convertToImage();
     }
 
-    QImage img( pixmap.convertToImage().smoothScale( width, height ) );
-    QPixmap pix;
-    pix.convertFromImage( img );
+    if (img.width() > 1280)
+    {
+        img = img.smoothScale(1280, img.height() * 1280 / img.width());
+    }
 
-    return pix;
+    return img;
+}
+
+// Cut the part the pager shows (one screen with CurrentScreenOnly) out of
+// the background of the whole desktop and scale it to the button.
+void KMiniPagerButton::setBgFromImage(const QImage &image)
+{
+    if (image.isNull() || width() <= 0 || height() <= 0)
+    {
+        return;
+    }
+
+    QRect desk = QApplication::desktop()->geometry();
+    QRect area = m_pager->pagerArea();
+    double sx = (double) image.width() / desk.width();
+    double sy = (double) image.height() / desk.height();
+    QRect src((int) ((area.x() - desk.x()) * sx), (int) ((area.y() - desk.y()) * sy),
+              (int) (area.width() * sx), (int) (area.height() * sy));
+    src &= image.rect();
+
+    QImage part = (src.isValid() && src != image.rect()) ? image.copy(src) : image;
+
+    if (!m_bgPixmap)
+    {
+        m_bgPixmap = new KPixmap;
+    }
+    m_bgPixmap->convertFromImage(part.smoothScale(width(), height()));
 }
 
 void KMiniPagerButton::backgroundLoaded( bool loaded )
 {
     if (loaded)
     {
-        if (!m_bgPixmap)
-        {
-            m_bgPixmap = new KPixmap;
-        }
         if (m_isCommon)
         {
-            if (!s_commonBgPixmap)
+            if (!s_commonBgImage)
             {
-                s_commonBgPixmap = new KPixmap;
-                *s_commonBgPixmap = scalePixmap(*s_commonSharedPixmap, width(), height());
+                s_commonBgImage = new QImage(desktopImage(*s_commonSharedPixmap));
                 s_commonSharedPixmap->deleteLater(); // let others get the signal too
                 s_commonSharedPixmap = 0;
             }
-            *m_bgPixmap = *s_commonBgPixmap;
+            setBgFromImage(*s_commonBgImage);
         }
         else
         {
-            *m_bgPixmap = scalePixmap(*m_sharedPixmap, width(), height());
+            setBgFromImage(desktopImage(*m_sharedPixmap));
             delete m_sharedPixmap;
             m_sharedPixmap = 0L;
         }
@@ -433,8 +472,9 @@ void KMiniPagerButton::drawButton(QPainter *bp)
     {
         KWinModule* kwin = m_pager->kwin();
         KWin::WindowInfo *info = 0;
-        int dw = QApplication::desktop()->width();
-        int dh = QApplication::desktop()->height();
+        QRect area = m_pager->pagerArea();
+        int dw = area.width();
+        int dh = area.height();
 
         QValueList<WId> windows = kwin->stackingOrder();
         QValueList<WId>::const_iterator itEnd = windows.constEnd();
@@ -445,6 +485,7 @@ void KMiniPagerButton::drawButton(QPainter *bp)
             if (shouldPaintWindow(info))
             {
                 QRect r = mapGeometryToViewport(*info);
+                r.moveBy(-area.x(), -area.y());
                 r = QRect(r.x() * width() / dw, 2 + r.y() * height() / dh,
                           r.width() * width() / dw, r.height() * height() / dh);
 
@@ -547,13 +588,15 @@ void KMiniPagerButton::mouseMoveEvent(QMouseEvent* e)
         return;
     }
 
-    int dw = QApplication::desktop()->width();
-    int dh = QApplication::desktop()->height();
+    QRect area = m_pager->pagerArea();
+    int dw = area.width();
+    int dh = area.height();
     int w = width();
     int h = height();
 
     QPoint pos(m_pager->clickPos.isNull() ? mapFromGlobal(QCursor::pos()) : m_pager->clickPos);
-    QPoint p = mapPointToViewport(QPoint(pos.x() * dw / w, pos.y() * dh / h));
+    QPoint p = mapPointToViewport(QPoint(area.x() + pos.x() * dw / w,
+                                         area.y() + pos.y() * dh / h));
 
     Task::Ptr wasWindow = m_currentWindow;
     m_currentWindow = TaskManager::the()->findTask(m_useViewports ? 1 : m_desktop, p);
@@ -581,8 +624,8 @@ void KMiniPagerButton::mouseMoveEvent(QMouseEvent* e)
         Task::List tasklist;
         tasklist.append(m_currentWindow);
         TaskDrag* drag = new TaskDrag(tasklist, this);
-        QPoint offset(m_pager->clickPos.x() - (r.x() * w / dw),
-                m_pager->clickPos.y() - (r.y() * h / dh));
+        QPoint offset(m_pager->clickPos.x() - ((r.x() - area.x()) * w / dw),
+                m_pager->clickPos.y() - ((r.y() - area.y()) * h / dh));
         drag->setPixmap(windowImage, offset);
         drag->dragMove();
 
@@ -627,8 +670,8 @@ void KMiniPagerButton::dropEvent(QDropEvent* e)
         if ((m_useViewports || e->source() == this) && tasks.count() == 1)
         {
             Task::Ptr task = tasks[0];
-            int dw = QApplication::desktop()->width();
-            int dh = QApplication::desktop()->height();
+            int dw = m_pager->pagerArea().width();
+            int dh = m_pager->pagerArea().height();
             int w = width();
             int h = height();
             QRect location = mapGeometryToViewport(task->info());
