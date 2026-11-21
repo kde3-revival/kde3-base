@@ -26,7 +26,6 @@ install(FILES
   kwin_focus1.upd
   kwinupdatewindowsettings.upd
   kwin_focus2.upd
-  kwin_fsp_workarounds_1.upd
   DESTINATION ${KDE3_DATA_INSTALL_DIR}/kconf_update)
 
 install(PROGRAMS
@@ -35,7 +34,3 @@ install(PROGRAMS
   kwin_focus1.sh
   kwin_focus2.sh
   DESTINATION ${KDE3_DATA_INSTALL_DIR}/kconf_update)
-
-install(FILES
-  fsp_workarounds_1.kwinrules
-  DESTINATION ${KDE3_DATA_INSTALL_DIR}/kwin/default_rules)
