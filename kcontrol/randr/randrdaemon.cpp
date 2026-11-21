@@ -1,10 +1,10 @@
 /*
- * kded_randr: applies the saved display configuration (displayrc) when
- * monitors are connected or disconnected.
+ * kded_randr: keeps the arrangement of the monitors (displayrc) when
+ * monitors are connected or disconnected, and remembers the arrangement
+ * the user makes (see randrpolicy.h for the rules).
  *
- * It reacts only to a change of the set of connected monitors: a
- * configuration made by hand (xrandr, the control module) stays until
- * the next hotplug or login. At login the configuration is applied by
+ * It never changes the configuration when it is loaded, at login or in
+ * the middle of a session; at login the configuration is applied by
  * krandrstartup from startkde, before the splash screen.
  *
  * It uses its own X connection, so that its RandR event selection and
@@ -29,6 +29,8 @@
 #include <kdebug.h>
 #include <kglobal.h>
 
+#include <time.h>
+
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrandr.h>
 #include <X11/extensions/dpms.h>
@@ -38,10 +40,13 @@ using namespace KRandR;
 // connection changes come in bursts (a monitor waking up, a dock):
 // wait until the outputs settled
 static const int settleMs = 2000;
-// monitors gone in power save: look again this often
-static const int asleepPollMs = 5000;
-// after the monitors woke up: the time they get to connect again
-static const int wakeUpMs = 10000;
+
+static long monotonicMs()
+{
+    struct timespec ts;
+    clock_gettime( CLOCK_MONOTONIC, &ts );
+    return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
 
 extern "C" {
     KDE_EXPORT KDEDModule *create_randr( const QCString &obj )
@@ -52,9 +57,9 @@ extern "C" {
 
 RandRDaemon::RandRDaemon( const QCString &obj )
     : KDEDModule( obj ), m_dpy( 0 ), m_eventBase( 0 ), m_edidAtom( 0 ),
-      m_notifier( 0 ), m_wasAsleep( false )
+      m_notifier( 0 ), m_connectionChanged( false ), m_lastEvent( 0 )
 {
-    connect( &m_settle, SIGNAL( timeout() ), SLOT( outputsChanged() ) );
+    connect( &m_timer, SIGNAL( timeout() ), SLOT( decide() ) );
 
     m_dpy = XOpenDisplay( DisplayString( qt_xdisplay() ) );
     if ( !m_dpy || !hasRandR12( m_dpy, &m_eventBase ) ) {
@@ -74,12 +79,15 @@ RandRDaemon::RandRDaemon( const QCString &obj )
     m_notifier = new QSocketNotifier( ConnectionNumber( m_dpy ), QSocketNotifier::Read, this );
     connect( m_notifier, SIGNAL( activated( int ) ), SLOT( readEvents() ) );
 
-    // what krandrstartup (or the X server) set up at login is the
-    // starting point: nothing to do until it changes
     ScreenState state;
     if ( query( state ) )
-	m_lastSet = state.connectedSetKey();
-    kdDebug() << "kded_randr: connected monitors: " << m_lastSet << endl;
+	for ( QValueList<Output>::ConstIterator it = state.outputs.begin();
+	      it != state.outputs.end(); ++it )
+	    m_connected[(*it).id] = (*it).connected;
+    m_lastEvent = monotonicMs();
+    // only looks at the arrangement (and remembers it if the monitors
+    // have none yet), when they are awake
+    decide();
 }
 
 RandRDaemon::~RandRDaemon()
@@ -112,15 +120,23 @@ void RandRDaemon::readEvents()
 	    changed = true;
 	} else if ( ev.type == m_eventBase + RRNotify ) {
 	    XRRNotifyEvent *n = (XRRNotifyEvent *) &ev;
-	    if ( n->subtype == RRNotify_OutputChange )
+	    if ( n->subtype == RRNotify_OutputChange ) {
+		XRROutputChangeNotifyEvent *o = (XRROutputChangeNotifyEvent *) &ev;
+		bool connected = o->connection == RR_Connected;
+		if ( !m_connected.contains( o->output ) || m_connected[o->output] != connected )
+		    m_connectionChanged = true;
+		m_connected[o->output] = connected;
 		changed = true;
-	    else if ( n->subtype == RRNotify_OutputProperty &&
-		      ( (XRROutputPropertyNotifyEvent *) &ev )->property == m_edidAtom )
+	    } else if ( n->subtype == RRNotify_OutputProperty &&
+			( (XRROutputPropertyNotifyEvent *) &ev )->property == m_edidAtom ) {
 		changed = true;
+	    }
 	}
     }
-    if ( changed )
-	m_settle.start( settleMs, true );
+    if ( changed ) {
+	m_lastEvent = monotonicMs();
+	m_timer.start( settleMs, true );
+    }
 }
 
 // are the monitors in power save? (DisplayPort monitors disconnect
@@ -133,78 +149,51 @@ bool RandRDaemon::monitorsAsleep()
     if ( !DPMSQueryExtension( m_dpy, &ev, &err ) || !DPMSCapable( m_dpy ) ||
 	 !DPMSInfo( m_dpy, &level, &enabled ) )
 	return false;
-    return enabled && level != DPMSModeOn;
+    // the level, also when DPMS is disabled (forced off)
+    return level != DPMSModeOn;
 }
 
-static bool isSubset( const QString &set, const QString &of )
+bool RandRDaemon::enabled()
 {
-    QStringList a = QStringList::split( '+', set ), b = QStringList::split( '+', of );
-    for ( QStringList::ConstIterator it = a.begin(); it != a.end(); ++it )
-	if ( !b.contains( *it ) )
-	    return false;
-    return true;
+    KConfig config( "displayrc", true );
+    return autoRestoreEnabled( &config );
 }
 
-void RandRDaemon::outputsChanged()
+void RandRDaemon::decide()
 {
+    m_timer.stop();
     ScreenState state;
     if ( !query( state ) )
 	return;
-    QString set = state.connectedSetKey();
-    // the same monitors: a mode set by hand, our own change, a probe,
-    // a monitor that woke up again
-    if ( set == m_lastSet ) {
-	m_wasAsleep = false;
-	return;
-    }
+    bool asleep = monitorsAsleep();
+    bool connectionChanged = m_connectionChanged;
+    m_connectionChanged = false;
 
-    // monitors gone while they sleep: wait until they are awake and
-    // had time to connect again; only then are they really gone
-    if ( isSubset( set, m_lastSet ) ) {
-	if ( monitorsAsleep() ) {
-	    kdDebug() << "kded_randr: monitors gone in power save, waiting: " << set << endl;
-	    m_wasAsleep = true;
-	    m_settle.start( asleepPollMs, true );
-	    return;
-	}
-	if ( m_wasAsleep ) {
-	    m_wasAsleep = false;
-	    m_settle.start( wakeUpMs, true );
-	    return;
-	}
-    }
-    m_wasAsleep = false;
-
-    kdDebug() << "kded_randr: monitors changed: " << m_lastSet << " -> " << set << endl;
-    // also when it fails: no retrying in a loop (the next hotplug or
-    // login tries again)
-    m_lastSet = set;
-    if ( set.isEmpty() )
-	return;     // everything unplugged: leave the server alone
-
-    KConfig config( "displayrc", true );
-    config.setGroup( "General" );
-    if ( !config.readBoolEntry( "ApplyOnHotplug", true ) )
-	return;
-    apply( state );
+    m_policy.setEnabled( enabled() );
+    KConfig config( "displayrc" );
+    ProfileStore store( &config );
+    HotplugPolicy::Action a = m_policy.decide( state, asleep, monotonicMs(), m_lastEvent,
+					       connectionChanged, store );
+    if ( !a.message.isEmpty() )
+	kdDebug() << "kded_randr: " << a.message << endl;
+    if ( a.type == HotplugPolicy::Action::Wait )
+	m_timer.start( a.waitMs, true );
+    else if ( a.type == HotplugPolicy::Action::Apply )
+	apply( a.layout, state.connectedSetKey() );
 }
 
-bool RandRDaemon::apply( const ScreenState &state )
+bool RandRDaemon::apply( const Layout &layout, const QString &set )
 {
-    KConfig config( "displayrc", true );
-    ProfileStore store( &config );
-    bool fromProfile = false;
-    Layout layout = layoutFor( state, store, true, &fromProfile );
     QString error;
-    bool ok = applyLayout( m_dpy, layout, &error );
-    if ( ok )
-	kdDebug() << "kded_randr: applied the " << ( fromProfile ? "saved" : "default" )
-		  << " configuration of " << state.connectedSetKey() << endl;
-    else
-	kdWarning() << "kded_randr: could not apply the "
-		    << ( fromProfile ? "saved" : "default" ) << " configuration of "
-		    << state.connectedSetKey() << ": " << error << endl;
-    // our own changes are in the queue now; they do not change the set
+    bool ok = applyLayout( m_dpy, layout, &error, set );
+    if ( !ok )
+	kdWarning() << "kded_randr: could not arrange " << set << ": " << error << endl;
+    // also after a failure: no retrying in a loop (the next change of
+    // the monitors or login tries again)
+    ScreenState after;
+    if ( query( after ) )
+	m_policy.applied( after );
+    // our own changes are in the queue now
     readEvents();
     return ok;
 }
@@ -214,8 +203,9 @@ bool RandRDaemon::reconfigure()
     ScreenState state;
     if ( !query( state ) )
 	return false;
-    m_lastSet = state.connectedSetKey();
-    return apply( state );
+    KConfig config( "displayrc", true );
+    ProfileStore store( &config );
+    return apply( m_policy.reconfigure( state, store ), state.connectedSetKey() );
 }
 
 QString RandRDaemon::connectedSet()

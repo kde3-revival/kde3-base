@@ -121,10 +121,13 @@ int main( int argc, char **argv )
 	return 0;
     }
 
+    bool autoRestore = autoRestoreEnabled( &config );
     config.setGroup( "General" );
     int ret = 0;
-    if ( layout.isEmpty() || !config.readBoolEntry( "ApplyOnLogin", true ) ) {
-	// nothing saved for these monitors: keep what the X server set up
+    if ( layout.isEmpty() || !config.readBoolEntry( "ApplyOnLogin", true ) ||
+	 ( !autoRestore && !useDefault ) ) {
+	// nothing saved for these monitors (or restoring switched off):
+	// keep what the X server set up
     } else {
 	QString error;
 	if ( !applyLayout( dpy, layout, &error ) ) {

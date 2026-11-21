@@ -1,6 +1,6 @@
 /*
- * kded_randr: applies the saved display configuration (displayrc) when
- * monitors are connected or disconnected.
+ * kded_randr: keeps the arrangement of the monitors (displayrc) when
+ * monitors are connected or disconnected, and remembers it.
  *
  * Copyright (C) 2026 Serghei Amelian
  *
@@ -13,12 +13,14 @@
 #ifndef RANDRDAEMON_H
 #define RANDRDAEMON_H
 
+#include <qmap.h>
 #include <qtimer.h>
 
 #include <kdedmodule.h>
 
+#include "randrpolicy.h"
+
 class QSocketNotifier;
-namespace KRandR { struct ScreenState; }
 typedef struct _XDisplay Display;
 
 class RandRDaemon : public KDEDModule
@@ -31,28 +33,32 @@ public:
     ~RandRDaemon();
 
 k_dcop:
-    // applies the saved profile of the connected monitors (or the
-    // default layout) now; false if that failed
+    // applies the saved profile of the connected monitors (or one
+    // derived from what is known about them) now; false if that failed
     bool reconfigure();
     // the identity of the connected monitors (the profile name)
     QString connectedSet();
 
 private slots:
     void readEvents();
-    void outputsChanged();
+    void decide();
 
 private:
     bool query( KRandR::ScreenState &state );
-    bool apply( const KRandR::ScreenState &state );
+    bool apply( const KRandR::Layout &layout, const QString &set );
     bool monitorsAsleep();
+    bool enabled();
 
     Display *m_dpy;
     int m_eventBase;
     unsigned long m_edidAtom;
     QSocketNotifier *m_notifier;
-    QTimer m_settle;
-    QString m_lastSet;
-    bool m_wasAsleep;
+    QTimer m_timer;
+    KRandR::HotplugPolicy m_policy;
+    // the connection of each output, as the events report it
+    QMap<unsigned long, bool> m_connected;
+    bool m_connectionChanged;
+    long m_lastEvent;
 };
 
 #endif

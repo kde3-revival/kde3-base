@@ -318,7 +318,8 @@ private:
 };
 }
 
-bool applyLayout( Display *dpy, const Layout &layout, QString *error )
+bool applyLayout( Display *dpy, const Layout &layout, QString *error,
+		  const QString &expectSet )
 {
     if ( !hasRandR12( dpy ) ) {
 	if ( error )
@@ -336,6 +337,8 @@ bool applyLayout( Display *dpy, const Layout &layout, QString *error )
     ScreenState before;
     if ( !res || !queryState( dpy, before, res ) ) {
 	err = i18n( "Could not read the display configuration." );
+    } else if ( !expectSet.isNull() && before.connectedSetKey() != expectSet ) {
+	err = i18n( "The connected monitors changed meanwhile." );
     } else {
 	Plan plan = makePlan( before, layout );
 	X11Executor ex( dpy, res );

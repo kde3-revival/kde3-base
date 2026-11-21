@@ -268,10 +268,35 @@ private:
     KConfig *m_config;
 };
 
+// [General] AutoRestore of displayrc ("Restore the monitor arrangement
+// automatically", default on; the older ApplyOnHotplug when not set):
+// off, the arrangement is neither applied at login or hotplug nor
+// remembered, only the control module changes it
+bool autoRestoreEnabled( KConfig *displayrc );
+
 // the saved profile for the connected outputs of state, if any; else
 // defaultLayout() when useDefault
 Layout layoutFor( const ScreenState &state, const ProfileStore &store,
 		  bool useDefault, bool *fromProfile = 0 );
+
+// a layout for a set of monitors that has no profile, from what is known
+// about them: the reference is the layout (previous, the one on screen
+// before the monitors changed, or a saved profile) that has the most of
+// the connected monitors; those keep their place, mode, rotation and the
+// primary role relative to each other (gaps left by monitors that are
+// gone are closed, the top left corner moves to 0,0). Monitors it does
+// not have go to the right: those on now in their order on screen, then
+// the others (internal panel first, then by connector), with the mode a
+// profile has for them, else the current or preferred one. The primary
+// one: the reference's, else previous's, else the server's, else the
+// first one. Without any reference: defaultLayout().
+Layout deriveLayout( const ScreenState &state, const ProfileStore &store,
+		     const Layout &previous );
+
+// the same arrangement: the same monitors on and off, and the enabled
+// ones with the same place, size, rotation, primary role and (nearly)
+// the same refresh rate; the order does not matter
+bool sameArrangement( const Layout &a, const Layout &b );
 
 } // namespace KRandR
 

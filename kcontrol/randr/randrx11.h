@@ -50,8 +50,11 @@ bool executePlan( PlanExecutor &ex, const Plan &plan, QString *error = 0,
 // applies layout to the X server with the server grabbed (like xrandr);
 // on failure the previous configuration is restored as far as possible
 // (if even that fails, error says so). Returns false and sets error
-// when the layout cannot be applied.
-bool applyLayout( Display *dpy, const Layout &layout, QString *error = 0 );
+// when the layout cannot be applied. expectSet: the connected monitors
+// the layout is for (ScreenState::connectedSetKey()); if others are
+// connected when the server is grabbed, nothing is changed.
+bool applyLayout( Display *dpy, const Layout &layout, QString *error = 0,
+		  const QString &expectSet = QString::null );
 
 // installs an X error handler that ignores errors, for a program that
 // queries outputs which may disappear meanwhile (MST hubs) and would

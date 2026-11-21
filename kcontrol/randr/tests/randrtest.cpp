@@ -9,6 +9,7 @@
  */
 
 #include "randrcore.h"
+#include "randrpolicy.h"
 #include "randrx11.h"
 
 #include <qfile.h>
@@ -744,6 +745,402 @@ static void testProfiles()
     }
 }
 
+// --- kded_randr's rules -----------------------------------------------------
+
+static const OutputSetting *byName( const Layout &l, const char *name )
+{
+    for ( Layout::ConstIterator it = l.begin(); it != l.end(); ++it )
+	if ( (*it).name == name )
+	    return &*it;
+    return 0;
+}
+
+// the user's desk: DP-5 (H4TTB00049) at the left and primary, DP-4
+// (H4TTB00070) at the right, set up by a login script running xrandr
+static void setupUserDesk( Fake &f )
+{
+    setupDesk( f );
+    f.enable( "DP-5", 2560, 1440, 0, 0 );
+    f.enable( "DP-4", 2560, 1440, 2560, 0 );
+    f.setPrimary( f.out( "DP-5" )->id );
+}
+
+static bool userLayout( const Fake &f )
+{
+    Layout l = currentLayout( f.s );
+    const OutputSetting *l5 = byName( l, "DP-5" ), *l4 = byName( l, "DP-4" );
+    return l5 && l4 && l5->enabled && l4->enabled && l5->x == 0 && l5->y == 0 &&
+	l4->x == 2560 && l4->y == 0 && l5->primary && !l4->primary && f.s.width == 5120;
+}
+
+// kded_randr against the fake: the time, the DPMS level, the events
+struct Daemon
+{
+    Daemon( Fake &f, KConfig *cfg ) : f( f ), store( cfg ), t( 1000000 ), lastEvent( 0 ),
+	asleep( false ), connChanged( false ), applies( 0 ) {}
+    Fake &f;
+    ProfileStore store;
+    HotplugPolicy policy;
+    long t, lastEvent;
+    bool asleep, connChanged;
+    int applies;
+    HotplugPolicy::Action last;
+
+    // something happened on the server (an event), dt ms later
+    void event( long dt = 0 ) { t += dt; lastEvent = t; }
+    void connect( const char *name, bool c ) { f.out( name )->connected = c; connChanged = true; event(); }
+    HotplugPolicy::Action decide( long dt ) {
+	t += dt;
+	last = policy.decide( f.s, asleep, t, lastEvent, connChanged, store );
+	connChanged = false;
+	if ( verbose && !last.message.isEmpty() )
+	    printf( "  t=%ld: %s\n", t, last.message.latin1() );
+	if ( last.type == HotplugPolicy::Action::Apply ) {
+	    ++applies;
+	    apply( f, last.layout, last.message.latin1() );
+	    policy.applied( f.s );
+	    event();
+	}
+	return last;
+    }
+    // runs the timers as kded does: settle after events, the wait asked
+    // for; until nothing is pending or ms passed
+    void run( long ms ) {
+	long end = t + ms;
+	long next = 2000;
+	while ( t + next <= end ) {
+	    HotplugPolicy::Action a = decide( next );
+	    if ( a.type == HotplugPolicy::Action::Wait )
+		next = a.waitMs;
+	    else if ( a.type == HotplugPolicy::Action::Apply )
+		next = 2000;
+	    else
+		break;
+	}
+    }
+    bool isWaiting() const { return last.type == HotplugPolicy::Action::Wait; }
+};
+
+static void testDerive()
+{
+    KTempFile tmp;
+    tmp.setAutoDelete( true );
+    tmp.close();
+    KSimpleConfig cfg( tmp.name() );
+    ProfileStore store( &cfg );
+
+    // the left monitor gone: the right one takes its place (gap at 0,0),
+    // and is the primary one
+    Fake f;
+    setupUserDesk( f );
+    Layout before = currentLayout( f.s );
+    f.out( "DP-5" )->connected = false;
+    Layout d = deriveLayout( f.s, store, before );
+    CHECK_EQ( d.count(), 1u );
+    CHECK( d[0].name == "DP-4" && d[0].x == 0 && d[0].y == 0 && d[0].primary );
+    apply( f, d, "left monitor gone" );
+    CHECK_EQ( f.s.width, 2560 );
+
+    // the right monitor gone: the left one does not move
+    Fake g;
+    setupUserDesk( g );
+    before = currentLayout( g.s );
+    g.out( "DP-4" )->connected = false;
+    d = deriveLayout( g.s, store, before );
+    CHECK( d.count() == 1 && d[0].name == "DP-5" && d[0].x == 0 && d[0].primary );
+    Plan p = makePlan( g.s, d );
+    CHECK( p.enable.isEmpty() );    // only DP-4's CRTC off and the screen smaller
+    apply( g, d, "right monitor gone" );
+
+    // the left one back, no profile for the two: the arrangement of a
+    // profile that has both (with a laptop panel at their left) decides,
+    // not the current order (DP-4 alone at 0,0 and primary)
+    Fake h;
+    setupDesk( h );
+    h.addOutput( "eDP-1", "LAPTOP", false, modes( "1920x1200@60" ) );
+    h.enable( "DP-4", 2560, 1440, 0, 0 );
+    h.setPrimary( h.out( "DP-4" )->id );
+    Layout three;
+    three << setting( h, "DP-4", 2560, 1440, 1920 + 2560, 0 )
+	  << setting( h, "DP-5", 2560, 1440, 1920, 0, true );
+    OutputSetting lap;
+    lap.key = "LAPTOP"; lap.name = "eDP-1"; lap.enabled = true;
+    lap.width = 1920; lap.height = 1200;
+    three << lap;
+    store.saveProfile( "LAPTOP+SAM-71ea-H4TTB00049+SAM-71ea-H4TTB00070", three );
+    d = deriveLayout( h.s, store, currentLayout( h.s ) );
+    CHECK( byName( d, "DP-5" ) && byName( d, "DP-5" )->x == 0 && byName( d, "DP-5" )->primary );
+    CHECK( byName( d, "DP-4" ) && byName( d, "DP-4" )->x == 2560 && !byName( d, "DP-4" )->primary );
+    CHECK( !byName( d, "eDP-1" ) );
+    apply( h, d, "derived from a profile of three" );
+    CHECK( userLayout( h ) );
+
+    // a monitor never seen: at the right, the primary one stays
+    Fake k;
+    setupUserDesk( k );
+    before = currentLayout( k.s );
+    k.out( "HDMI-4" )->connected = true;
+    k.out( "HDMI-4" )->modes.append( k.mode( 1920, 1080, 60 ) );
+    k.out( "HDMI-4" )->preferredCount = 1;
+    k.out( "HDMI-4" )->key = "NEW";
+    d = deriveLayout( k.s, store, before );
+    CHECK( byName( d, "HDMI-4" ) && byName( d, "HDMI-4" )->x == 5120 && byName( d, "HDMI-4" )->enabled );
+    CHECK( byName( d, "DP-5" )->x == 0 && byName( d, "DP-5" )->primary );
+    CHECK( byName( d, "DP-4" )->x == 2560 );
+    apply( k, d, "new monitor at the right" );
+
+    // three in a row, the middle one gone: the gap closes, the primary
+    // one (right) stays primary
+    Fake m;
+    m.addCrtc(); m.addCrtc(); m.addCrtc();
+    m.addOutput( "DP-1", "A", true, modes( "1920x1080@60" ) );
+    m.addOutput( "DP-2", "B", true, modes( "2560x1440@60" ) );
+    m.addOutput( "DP-3", "C", true, modes( "1920x1080@60" ) );
+    m.enable( "DP-1", 1920, 1080, 0, 0 );
+    m.enable( "DP-2", 2560, 1440, 1920, 0 );
+    m.enable( "DP-3", 1920, 1080, 4480, 0 );
+    m.setPrimary( m.out( "DP-3" )->id );
+    before = currentLayout( m.s );
+    m.out( "DP-2" )->connected = false;
+    d = deriveLayout( m.s, store, before );
+    CHECK( byName( d, "DP-1" )->x == 0 && byName( d, "DP-3" )->x == 1920 );
+    CHECK( byName( d, "DP-3" )->primary && !byName( d, "DP-1" )->primary );
+    apply( m, d, "middle monitor gone" );
+
+    // nothing known: the default (connector order)
+    Fake n;
+    setupDesk( n );
+    n.s.width = 1024; n.s.height = 768;
+    KTempFile tmp2;
+    tmp2.setAutoDelete( true );
+    tmp2.close();
+    KSimpleConfig cfg2( tmp2.name() );
+    ProfileStore empty( &cfg2 );
+    d = deriveLayout( n.s, empty, Layout() );
+    CHECK( d == defaultLayout( n.s ) );
+
+    // sameArrangement: order and rate rounding do not matter
+    Layout a = currentLayout( f.s ), b;
+    Fake q;
+    setupUserDesk( q );
+    a = currentLayout( q.s );
+    for ( Layout::ConstIterator it = a.begin(); it != a.end(); ++it )
+	b.prepend( *it );
+    b[0].rate += 0.004;
+    CHECK( sameArrangement( a, b ) );
+    b[0].primary = !b[0].primary;
+    CHECK( !sameArrangement( a, b ) );
+}
+
+static void testPolicy()
+{
+    const QString pair = "SAM-71ea-H4TTB00049+SAM-71ea-H4TTB00070";
+
+    // loaded in the middle of the session, no profile: only looks, and
+    // remembers the arrangement the login script made
+    {
+	KTempFile tmp;
+	tmp.setAutoDelete( true );
+	tmp.close();
+	KSimpleConfig cfg( tmp.name() );
+	Fake f;
+	setupUserDesk( f );
+	Daemon d( f, &cfg );
+	d.decide( 0 );
+	CHECK( d.last.type == HotplugPolicy::Action::Nothing && d.applies == 0 );
+	CHECK( d.store.hasProfile( pair ) );
+	CHECK( sameArrangement( d.store.profile( pair ), currentLayout( f.s ) ) );
+	CHECK( userLayout( f ) );
+
+	// the incident: DPMS off, DP-5 disconnects in power save for
+	// minutes; DPMS on, DP-5 comes back 14 s later: nothing changes
+	d.asleep = true;
+	d.event( 60000 );
+	d.connect( "DP-5", false );
+	d.run( 5 * 60000 );
+	CHECK( d.isWaiting() && d.applies == 0 );
+	d.asleep = false;
+	d.run( 10000 );     // more than the old 10 s
+	CHECK( d.isWaiting() && d.applies == 0 );
+	d.event( 4000 );
+	d.connect( "DP-5", true );
+	d.run( 60000 );
+	CHECK_EQ( d.applies, 0 );
+	CHECK( userLayout( f ) );
+
+	// the same, but the driver switched DP-5's CRTC off meanwhile: the
+	// arrangement is put back when it is back
+	d.asleep = true;
+	d.event( 60000 );
+	d.connect( "DP-5", false );
+	CrtcOp off;
+	off.crtc = f.out( "DP-5" )->crtc;
+	f.setCrtc( off );
+	d.event();
+	d.run( 60000 );
+	CHECK_EQ( d.applies, 0 );
+	d.asleep = false;
+	d.run( 20000 );
+	CHECK_EQ( d.applies, 0 );
+	d.connect( "DP-5", true );
+	d.run( 60000 );
+	CHECK_EQ( d.applies, 1 );
+	CHECK( userLayout( f ) );
+
+	// a monitor really unplugged (DPMS on): after the grace time the
+	// other one takes its place; plugged in again: the pair's profile
+	d.applies = 0;
+	d.event( 60000 );
+	d.connect( "DP-5", false );
+	d.run( 20000 );
+	CHECK( d.isWaiting() && d.applies == 0 );
+	d.run( 60000 );
+	CHECK_EQ( d.applies, 1 );
+	Layout one = currentLayout( f.s );
+	CHECK( byName( one, "DP-4" )->x == 0 && byName( one, "DP-4" )->primary );
+	CHECK_EQ( f.s.width, 2560 );
+	// (not remembered: kded_randr made it)
+	CHECK( !d.store.hasProfile( "SAM-71ea-H4TTB00070" ) );
+	d.event( 60000 );
+	d.connect( "DP-5", true );
+	d.run( 60000 );
+	CHECK_EQ( d.applies, 2 );
+	CHECK( userLayout( f ) );
+
+	// a monitor connected while the monitors sleep: not before they
+	// are awake
+	d.applies = 0;
+	d.event( 60000 );
+	d.connect( "DP-5", false );
+	d.run( 60000 );
+	CHECK_EQ( d.applies, 1 );
+	d.asleep = true;
+	d.event( 1000 );
+	d.connect( "DP-5", true );
+	d.run( 60000 );
+	CHECK( d.isWaiting() && d.applies == 1 );
+	d.asleep = false;
+	d.run( 10000 );
+	CHECK_EQ( d.applies, 2 );
+	CHECK( userLayout( f ) );
+
+	// rearranged by hand (xrandr): remembered once it stays so; a
+	// change reverted within the quiet time (the control module's
+	// confirmation) is not
+	d.applies = 0;
+	Layout swapped;
+	swapped << setting( f, "DP-4", 2560, 1440, 0, 0, true )
+		<< setting( f, "DP-5", 2560, 1440, 2560, 0 );
+	Layout mine = currentLayout( f.s );
+	d.event( 60000 );
+	apply( f, swapped, "by hand" );
+	d.event();
+	d.run( 15000 );
+	apply( f, mine, "reverted" );
+	d.event();
+	d.run( 60000 );
+	CHECK( sameArrangement( d.store.profile( pair ), mine ) );
+	apply( f, swapped, "by hand" );
+	swapped = currentLayout( f.s );
+	d.event();
+	d.run( 60000 );
+	CHECK( sameArrangement( d.store.profile( pair ), swapped ) );
+	CHECK_EQ( d.applies, 0 );
+	// and restored after an unplug
+	d.connect( "DP-5", false );
+	d.run( 60000 );
+	d.connect( "DP-5", true );
+	d.run( 60000 );
+	CHECK_EQ( d.applies, 2 );
+	CHECK( sameArrangement( currentLayout( f.s ), swapped ) );
+	// not remembered while asleep
+	d.asleep = true;
+	apply( f, mine, "while asleep" );
+	d.event();
+	d.run( 60000 );
+	CHECK( sameArrangement( d.store.profile( pair ), swapped ) );
+	d.asleep = false;
+	d.run( 60000 );
+	CHECK( sameArrangement( d.store.profile( pair ), mine ) );
+
+	// everything gone: the server is left alone
+	d.applies = 0;
+	d.connect( "DP-5", false );
+	d.connect( "DP-4", false );
+	d.run( 120000 );
+	CHECK( d.isWaiting() && d.applies == 0 );
+	d.connect( "DP-5", true );
+	d.connect( "DP-4", true );
+	d.run( 60000 );
+	CHECK_EQ( d.applies, 0 );
+	CHECK( userLayout( f ) );
+    }
+
+    // loaded while the monitors sleep: no profile taken until they are
+    // awake and settled
+    {
+	KTempFile tmp;
+	tmp.setAutoDelete( true );
+	tmp.close();
+	KSimpleConfig cfg( tmp.name() );
+	Fake f;
+	setupUserDesk( f );
+	f.out( "DP-5" )->connected = false;
+	Daemon d( f, &cfg );
+	d.asleep = true;
+	d.run( 60000 );
+	CHECK( !d.policy.started() && !d.store.hasProfile( "SAM-71ea-H4TTB00070" ) );
+	d.asleep = false;
+	d.run( 10000 );
+	CHECK( !d.policy.started() );
+	d.connect( "DP-5", true );
+	d.run( 60000 );
+	CHECK( d.policy.started() && d.applies == 0 );
+	CHECK( d.store.hasProfile( pair ) && userLayout( f ) );
+    }
+
+    // switched off: nothing applied, nothing remembered
+    {
+	KTempFile tmp;
+	tmp.setAutoDelete( true );
+	tmp.close();
+	KSimpleConfig cfg( tmp.name() );
+	Fake f;
+	setupUserDesk( f );
+	Daemon d( f, &cfg );
+	d.policy.setEnabled( false );
+	d.run( 10000 );
+	CHECK( d.store.profiles().isEmpty() );
+	d.connect( "DP-5", false );
+	d.run( 120000 );
+	d.connect( "DP-5", true );
+	d.run( 120000 );
+	CHECK_EQ( d.applies, 0 );
+	CHECK( d.store.profiles().isEmpty() );
+    }
+
+    // the only monitor that was on unplugged (a closed laptop at a dock):
+    // the panel is switched on without the grace time
+    {
+	KTempFile tmp;
+	tmp.setAutoDelete( true );
+	tmp.close();
+	KSimpleConfig cfg( tmp.name() );
+	Fake f;
+	f.addCrtc(); f.addCrtc();
+	f.addOutput( "eDP-1", "LAPTOP", true, modes( "1920x1200@60" ) );
+	f.addOutput( "DP-1", "EXT", true, modes( "2560x1440@60" ) );
+	f.enable( "DP-1", 2560, 1440, 0, 0 );
+	f.setPrimary( f.out( "DP-1" )->id );
+	Daemon d( f, &cfg );
+	d.decide( 0 );
+	d.connect( "DP-1", false );
+	d.decide( 2000 );
+	CHECK_EQ( d.applies, 1 );
+	CHECK( f.out( "eDP-1" )->crtc && f.out( "eDP-1" )->primary );
+    }
+}
+
 int main( int argc, char **argv )
 {
     verbose = argc > 1 && !strcmp( argv[1], "-v" );
@@ -759,6 +1156,8 @@ int main( int argc, char **argv )
     testEditing();
     testReviewCases();
     testProfiles();
+    testDerive();
+    testPolicy();
 
     printf( "=== %d failure(s)\n", failures );
     return failures;

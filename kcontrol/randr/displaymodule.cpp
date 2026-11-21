@@ -139,11 +139,14 @@ DisplayModule::DisplayModule( QWidget *parent, const char *name, const QStringLi
     connect( m_rate, SIGNAL( activated( int ) ), SLOT( rateChanged( int ) ) );
     connect( m_rotation, SIGNAL( activated( int ) ), SLOT( rotationChanged( int ) ) );
 
-    m_hotplug = new QCheckBox( i18n( "Arrange the monitors &automatically when they are "
-				     "connected or disconnected" ), this );
-    QWhatsThis::add( m_hotplug, i18n( "When the connected monitors change, use the "
-				      "arrangement saved for them, or put them side by "
-				      "side at their best resolution." ) );
+    m_hotplug = new QCheckBox( i18n( "Restore the monitor arrangement &automatically" ), this );
+    QWhatsThis::add( m_hotplug, i18n( "Remembers how the monitors are arranged, also when "
+				      "that is done elsewhere (xrandr, a login script), and "
+				      "puts the arrangement back at login and when the same "
+				      "monitors are connected again. Monitors connected for "
+				      "the first time are put next to the others. Nothing is "
+				      "changed while the monitors are in power save.<p>"
+				      "Switched off, the arrangement is only changed here." ) );
     top->addWidget( m_hotplug );
     connect( m_hotplug, SIGNAL( toggled( bool ) ), SLOT( hotplugToggled( bool ) ) );
 
@@ -179,9 +182,8 @@ void DisplayModule::load()
     m_available = m_available && !m_layout.isEmpty();
 
     KConfig config( "displayrc", true );
-    config.setGroup( "General" );
     m_updating = true;
-    m_hotplug->setChecked( config.readBoolEntry( "ApplyOnHotplug", true ) );
+    m_hotplug->setChecked( autoRestoreEnabled( &config ) );
     m_updating = false;
 
     bool saved = false;
@@ -517,7 +519,7 @@ void DisplayModule::save()
 
     KConfig config( "displayrc" );
     config.setGroup( "General" );
-    config.writeEntry( "ApplyOnHotplug", m_hotplug->isChecked() );
+    config.writeEntry( "AutoRestore", m_hotplug->isChecked() );
     config.sync();
 
     if ( !m_layoutChanged ) {

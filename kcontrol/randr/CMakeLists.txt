@@ -3,6 +3,7 @@
 kde3_add_library(randrcore STATIC
   SOURCES
     randrcore.cpp
+    randrpolicy.cpp
     randrx11.cpp
   LINK
     KDE3::kdecore

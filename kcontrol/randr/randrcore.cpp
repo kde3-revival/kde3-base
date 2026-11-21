@@ -972,6 +972,13 @@ void ProfileStore::removeProfile( const QString &setKey )
     m_config->sync();
 }
 
+bool autoRestoreEnabled( KConfig *config )
+{
+    KConfigGroupSaver saver( config, "General" );
+    return config->readBoolEntry( "AutoRestore",
+				  config->readBoolEntry( "ApplyOnHotplug", true ) );
+}
+
 Layout layoutFor( const ScreenState &state, const ProfileStore &store,
 		  bool useDefault, bool *fromProfile )
 {
@@ -987,6 +994,221 @@ Layout layoutFor( const ScreenState &state, const ProfileStore &store,
 	}
     }
     return useDefault ? defaultLayout( state ) : Layout();
+}
+
+// --- layouts for sets without a profile ---------------------------------------
+
+static const OutputSetting *settingFor( const Layout &l, const QString &key )
+{
+    for ( Layout::ConstIterator it = l.begin(); it != l.end(); ++it )
+	if ( (*it).key == key )
+	    return &*it;
+    return 0;
+}
+
+// the number of the connected monitors (keys) that l has on
+static int overlap( const Layout &l, const QStringList &keys )
+{
+    int n = 0;
+    for ( Layout::ConstIterator it = l.begin(); it != l.end(); ++it )
+	if ( (*it).enabled && keys.contains( (*it).key ) )
+	    ++n;
+    return n;
+}
+
+// closes the empty stripes between the enabled monitors (and before the
+// first one): what a monitor that is gone leaves in a row or a column
+static void closeGaps( Layout &l, bool vertical )
+{
+    for ( unsigned int round = 0; round <= l.count(); ++round ) {
+	// the intervals, sorted by their start
+	QValueList<int> starts, ends;
+	for ( Layout::ConstIterator it = l.begin(); it != l.end(); ++it ) {
+	    if ( !(*it).enabled )
+		continue;
+	    int w, h;
+	    settingSize( *it, w, h );
+	    int a = vertical ? (*it).y : (*it).x, b = a + ( vertical ? h : w );
+	    QValueList<int>::Iterator s = starts.begin(), e = ends.begin();
+	    while ( s != starts.end() && *s <= a ) {
+		++s;
+		++e;
+	    }
+	    starts.insert( s, a );
+	    ends.insert( e, b );
+	}
+	int covered = 0, gapAt = 0, gap = 0;
+	QValueList<int>::ConstIterator e = ends.begin();
+	for ( QValueList<int>::ConstIterator s = starts.begin(); s != starts.end(); ++s, ++e ) {
+	    if ( *s > covered ) {
+		gapAt = *s;
+		gap = *s - covered;
+		break;
+	    }
+	    covered = QMAX( covered, *e );
+	}
+	if ( !gap )
+	    return;
+	for ( Layout::Iterator it = l.begin(); it != l.end(); ++it ) {
+	    if ( !(*it).enabled )
+		continue;
+	    int &v = vertical ? (*it).y : (*it).x;
+	    if ( v >= gapAt )
+		v -= gap;
+	}
+    }
+}
+
+static bool hasEnabled( const Layout &l, const QString &key )
+{
+    const OutputSetting *s = settingFor( l, key );
+    return s && s->enabled;
+}
+
+Layout deriveLayout( const ScreenState &state, const ProfileStore &store,
+		     const Layout &previous )
+{
+    QValueList<Output> outs = state.connectedOutputs();
+    QStringList keys;
+    for ( QValueList<Output>::ConstIterator it = outs.begin(); it != outs.end(); ++it )
+	keys.append( (*it).key );
+
+    QValueList<Layout> refs;
+    refs.append( previous );
+    QStringList names = store.profiles();
+    names.sort();
+    for ( QStringList::ConstIterator it = names.begin(); it != names.end(); ++it )
+	refs.append( store.profile( *it ) );
+    int best = -1, bestOverlap = 0;
+    for ( unsigned int i = 0; i < refs.count(); ++i ) {
+	int n = overlap( refs[i], keys );
+	if ( n > bestOverlap ) {
+	    best = i;
+	    bestOverlap = n;
+	}
+    }
+    if ( best < 0 )
+	return defaultLayout( state );
+    const Layout &ref = refs[best];
+
+    // the monitors the reference has, where it has them
+    Layout l;
+    for ( Layout::ConstIterator it = ref.begin(); it != ref.end(); ++it ) {
+	if ( !(*it).enabled )
+	    continue;
+	const Output *o = state.outputByKey( (*it).key );
+	if ( !o || !keys.contains( o->key ) )
+	    continue;
+	OutputSetting s = *it;
+	s.name = o->name;
+	s.model = o->model;
+	// a mode the monitor does not have (any more): its preferred one
+	const Mode *m = findMode( state, *o, s.width, s.height, s.rate );
+	if ( !m )
+	    m = preferredMode( state, *o );
+	if ( !m )
+	    continue;
+	s.width = m->width;
+	s.height = m->height;
+	s.rate = m->rate;
+	l.append( s );
+    }
+    normalizeLayout( l );
+    closeGaps( l, false );
+    closeGaps( l, true );
+
+    // the others, at the right
+    QValueList<Output> on, off;
+    for ( QValueList<Output>::ConstIterator it = outs.begin(); it != outs.end(); ++it ) {
+	if ( settingFor( l, (*it).key ) )
+	    continue;
+	const Crtc *c = (*it).crtc ? state.crtc( (*it).crtc ) : 0;
+	QValueList<Output> &list = c && c->mode ? on : off;
+	QValueList<Output>::Iterator pos = list.begin();
+	for ( ; pos != list.end(); ++pos ) {
+	    if ( c && c->mode ) {
+		const Crtc *pc = state.crtc( (*pos).crtc );
+		if ( c->x < pc->x || ( c->x == pc->x && c->y < pc->y ) )
+		    break;
+	    } else {
+		bool ai = isInternalPanel( (*it).name ), bi = isInternalPanel( (*pos).name );
+		if ( ( ai && !bi ) || ( ai == bi && connectorLessThan( (*it).name, (*pos).name ) ) )
+		    break;
+	    }
+	}
+	list.insert( pos, *it );
+    }
+    on += off;
+    int crtcs = (int) state.crtcs.count() - (int) l.count();
+    for ( QValueList<Output>::ConstIterator it = on.begin(); it != on.end(); ++it ) {
+	const Output &o = *it;
+	OutputSetting s;
+	s.key = o.key;
+	s.name = o.name;
+	s.model = o.model;
+	const Mode *m = 0;
+	// what a profile has for it
+	for ( QValueList<Layout>::ConstIterator r = refs.begin(); r != refs.end() && !m; ++r ) {
+	    const OutputSetting *p = settingFor( *r, o.key );
+	    if ( p && p->enabled && ( m = findMode( state, o, p->width, p->height, p->rate ) ) )
+		s.rotation = p->rotation;
+	}
+	// what it has now, else its preferred mode
+	const Crtc *c = o.crtc ? state.crtc( o.crtc ) : 0;
+	if ( !m && c && c->mode && ( m = state.mode( c->mode ) ) )
+	    s.rotation = c->rotation & ( RotationMask | ReflectMask );
+	if ( !m && ( m = preferredMode( state, o ) ) )
+	    s.rotation = Rotate0;
+	if ( !m )
+	    continue;
+	s.width = m->width;
+	s.height = m->height;
+	s.rate = m->rate;
+	s.enabled = ( crtcs-- > 0 );
+	l.append( s );
+	if ( s.enabled )
+	    placeAtRight( l, l.count() - 1 );
+    }
+
+    // the primary one
+    QString primary;
+    for ( Layout::ConstIterator it = ref.begin(); it != ref.end() && primary.isEmpty(); ++it )
+	if ( (*it).primary && hasEnabled( l, (*it).key ) )
+	    primary = (*it).key;
+    for ( Layout::ConstIterator it = previous.begin(); it != previous.end() && primary.isEmpty(); ++it )
+	if ( (*it).primary && hasEnabled( l, (*it).key ) )
+	    primary = (*it).key;
+    for ( QValueList<Output>::ConstIterator it = outs.begin(); it != outs.end() && primary.isEmpty(); ++it )
+	if ( (*it).primary && hasEnabled( l, (*it).key ) )
+	    primary = (*it).key;
+    for ( Layout::ConstIterator it = l.begin(); it != l.end() && primary.isEmpty(); ++it )
+	if ( (*it).enabled )
+	    primary = (*it).key;
+    for ( Layout::Iterator it = l.begin(); it != l.end(); ++it )
+	(*it).primary = ( (*it).key == primary );
+
+    if ( !validateLayout( l ) )
+	return defaultLayout( state );
+    return l;
+}
+
+bool sameArrangement( const Layout &a, const Layout &b )
+{
+    for ( int pass = 0; pass < 2; ++pass ) {
+	const Layout &x = pass ? b : a, &y = pass ? a : b;
+	for ( Layout::ConstIterator it = x.begin(); it != x.end(); ++it ) {
+	    const OutputSetting *o = settingFor( y, (*it).key );
+	    if ( !o || o->enabled != (*it).enabled )
+		return false;
+	    if ( !(*it).enabled )
+		continue;
+	    if ( o->x != (*it).x || o->y != (*it).y || o->width != (*it).width ||
+		 o->height != (*it).height || o->rotation != (*it).rotation ||
+		 o->primary != (*it).primary || fabs( o->rate - (*it).rate ) > 0.05 )
+		return false;
+	}
+    }
+    return true;
 }
 
 } // namespace KRandR
