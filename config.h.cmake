@@ -114,6 +114,8 @@
 #cmakedefine HAVE_XFIXES 1
 /* Define to 1 if you have the `_IceTransNoListen' function. */
 #cmakedefine HAVE__ICETRANSNOLISTEN 1
+/* Define if ksmserver offers sleep and hibernate through systemd-logind (GIO) */
+#cmakedefine HAVE_LOGIND_SLEEP 1
 
 /* ---- khotkeys ----------------------------------------------------- */
 

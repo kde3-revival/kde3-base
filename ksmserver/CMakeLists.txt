@@ -11,6 +11,7 @@ kde3_add_kdeinit_executable(ksmserver
     startup.cpp
     shutdown.cpp
     client.cpp
+    logind.cpp
     KSMServerInterface.skel
     server.skel
   MOC
@@ -20,6 +21,11 @@ kde3_add_kdeinit_executable(ksmserver
     dmctl
     KDE3::kdeui
 )
+
+if(HAVE_LOGIND_SLEEP)
+  # logind.cpp talks to systemd-logind with GIO's GDBus
+  target_link_libraries(kdeinit_ksmserver PRIVATE PkgConfig::GIO)
+endif()
 
 install(FILES
   shutdownkonq.png

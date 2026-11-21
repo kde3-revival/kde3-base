@@ -247,6 +247,19 @@ set(CMAKE_REQUIRED_LIBRARIES ${X11_ICE_LIB})
 check_function_exists(_IceTransNoListen HAVE__ICETRANSNOLISTEN)
 cmake_pop_check_state()
 
+# The Sleep and Hibernate buttons of the logout dialog ask systemd-logind
+# (org.freedesktop.login1) over the system D-Bus, with GIO's GDBus
+option(KDEBASE_LOGIND_SLEEP "Offer sleep and hibernate in ksmserver's logout dialog (needs GIO, uses systemd-logind)" ON)
+if(KDEBASE_LOGIND_SLEEP)
+  pkg_check_modules(GIO QUIET IMPORTED_TARGET gio-2.0)
+  if(NOT GIO_FOUND)
+    message(FATAL_ERROR "GIO (gio-2.0, part of GLib) was not found; ksmserver needs "
+      "it to offer sleep and hibernate through systemd-logind.  Install it, or "
+      "configure with -DKDEBASE_LOGIND_SLEEP=OFF to build without them.")
+  endif()
+  set(HAVE_LOGIND_SLEEP 1)
+endif()
+
 # ---- khotkeys (khotkeys/configure.in.in) ---------------------------------
 include(CheckCXXSourceRuns)
 check_cxx_source_runs("
@@ -793,6 +806,7 @@ foreach(_what
     "HAVE_XCOMPOSITE:KDE3_WITH_COMPOSITE:Xcomposite (taskmanager)"
     "HAVE_XINERAMA:KDE3_WITH_XINERAMA:Xinerama (ksplashsimple)"
     "HAVE_DPMS:KDE3_WITH_DPMS:DPMS (power saving)"
+    "HAVE_LOGIND_SLEEP:KDEBASE_LOGIND_SLEEP:Sleep and hibernate in the logout dialog (GIO, systemd-logind)"
     "KDE3_BUILD_KXKB:-:XKB headers and libxkbfile (kxkb)"
     "HAVE_LIBSASL2:-:cyrus-sasl 2 (the pop3 and smtp ioslaves lack a lot of authentication methods)"
     "HAVE_LIBLDAP:KDE3_WITH_LDAP:OpenLDAP (ldap ioslave)"
