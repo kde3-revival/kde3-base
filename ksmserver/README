@@ -137,8 +137,11 @@ XSMP is, just like DCOP, built on top of the Inter Client Exchange
 (ICE) protocol, which comes standard as a part of X11R6 and later.
 Authorization is done using 'iceauth', with MIT-MAGIC-COOKIE as used
 by X. In order to be able to access the session management server, you
-need to be able to read ~/.ICEauthority. For security reasons, we do
-not provide any host-based authorization (neither does DCOP, btw.).
+need to be able to read the ICE authority file: $ICEAUTHORITY if set,
+else $XDG_RUNTIME_DIR/ICEauthority if XDG_RUNTIME_DIR is set, else
+~/.ICEauthority (the rule of libICE and iceauth). For security reasons,
+we do not provide any host-based authorization (neither does DCOP,
+btw.).
 
 
 Requesting a shutdown

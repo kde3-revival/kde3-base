@@ -976,9 +976,12 @@ the file that the <filename>DCOPserver</filename> file above points to.</para>
 </varlistentry>
 
 <varlistentry>
-<term><filename>$<envar>HOME</envar>/.ICEauthority</filename></term>
+<term><filename>$<envar>XDG_RUNTIME_DIR</envar>/ICEauthority</filename> or <filename>$<envar>HOME</envar>/.ICEauthority</filename></term>
 <listitem><para>Authorization information controlled by
-$<envar>ICEAUTHORITY</envar></para>
+$<envar>ICEAUTHORITY</envar>. If $<envar>ICEAUTHORITY</envar> is not set,
+<filename>ICEauthority</filename> in $<envar>XDG_RUNTIME_DIR</envar> is used
+when $<envar>XDG_RUNTIME_DIR</envar> is set, otherwise
+<filename>.ICEauthority</filename> in $<envar>HOME</envar>.</para>
 </listitem>
 </varlistentry>
 </variablelist>

@@ -338,7 +338,8 @@ static void fprintfhex (FILE *fp, unsigned int len, char *cp)
 
 /*
  * We use temporary files which contain commands to add/remove entries from
- * the .ICEauthority file.
+ * the ICE authority file ($ICEAUTHORITY, else $XDG_RUNTIME_DIR/ICEauthority,
+ * else ~/.ICEauthority; iceauth picks it the same way libICE does).
  */
 static void write_iceauth (FILE *addfp, FILE *removefp, IceAuthDataEntry *entry)
 {
