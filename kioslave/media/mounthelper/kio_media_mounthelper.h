@@ -37,6 +37,7 @@ public:
 private:
 	const Medium findMedium(const KURL &url);
 	void invokeEject(const QString &device, bool quiet=false);
+	bool mediaManagerCanEject();
 	QString m_errorStr;
 	QString m_device;
 	QString m_mediumId;

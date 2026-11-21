@@ -113,7 +113,8 @@ MountHelper::MountHelper() : KApplication()
 		* anyway. Only if both unmount and eject fail, notify the user by
 		* displaying the saved error message (see ejectFinished()).
 		*/
-		if (medium.isMounted())
+		// the media manager unmounts all of the drive itself
+		if (medium.isMounted() && !mediaManagerCanEject())
 		{
 			DCOPRef mediamanager("kded", "mediamanager");
 			DCOPReply reply = mediamanager.call( "unmount", medium.id());
@@ -140,16 +141,29 @@ MountHelper::MountHelper() : KApplication()
 	}
 }
 
+bool MountHelper::mediaManagerCanEject()
+{
+	DCOPRef mediamanager("kded", "mediamanager");
+	DCOPReply reply = mediamanager.call( "canEject", m_mediumId );
+	bool canEject = false;
+	if (reply.isValid())
+		reply.get(canEject);
+	return canEject;
+}
+
 void MountHelper::invokeEject(const QString &device, bool quiet)
 {
 	// The media manager ejects through UDisks2 (and powers USB drives
 	// off), which needs neither the eject program nor root rights
-	DCOPRef mediamanager("kded", "mediamanager");
-	DCOPReply reply = mediamanager.call( "eject", m_mediumId );
-	if (reply.isValid())
+	if (mediaManagerCanEject())
 	{
+		DCOPRef mediamanager("kded", "mediamanager");
+		DCOPReply reply = mediamanager.call( "eject", m_mediumId );
 		QString ejectError;
-		reply.get(ejectError);
+		if (reply.isValid())
+			reply.get(ejectError);
+		else
+			ejectError = i18n("The media manager (kded) could not be reached.");
 		if (ejectError.isNull())
 			::exit(0);
 		m_errorStr = ejectError;
@@ -157,7 +171,14 @@ void MountHelper::invokeEject(const QString &device, bool quiet)
 		return;
 	}
 
-	// an older media manager: run the eject command
+	// without UDisks2 (or an older media manager): the eject command
+	if (device.isEmpty())
+	{
+		if (m_errorStr.isEmpty())
+			m_errorStr = i18n("The medium has no device that could be ejected.");
+		QTimer::singleShot(0, this, SLOT(error()));
+		return;
+	}
 	KProcess *proc = new KProcess(this);
 	*proc << "kdeeject";
 	if (quiet)
