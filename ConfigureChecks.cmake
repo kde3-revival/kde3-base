@@ -292,14 +292,9 @@ if(KDE3_WITH_XINERAMA AND X11_Xinerama_FOUND)
   set(LIB_XINERAMA X11::Xinerama X11::Xext)
 endif()
 
-# ---- kwin (kwin/kompmgr/configure.in.in) ---------------------------------
-# --without-composite (configure.in.in) also disables kompmgr
-option(KDE3_WITH_COMPOSITE "Xcomposite support (kompmgr, taskmanager)" ON)
-set(KDE3_BUILD_KOMPMGR FALSE)
-if(KDE3_WITH_COMPOSITE AND X11_Xdamage_FOUND AND X11_Xcomposite_FOUND
-   AND X11_Xrender_FOUND AND X11_Xfixes_FOUND)
-  set(KDE3_BUILD_KOMPMGR TRUE)
-endif()
+# ---- kwin ------------------------------------------------------------------
+# (kompmgr is gone: KWin composites itself, kwin/compositor.cpp)
+option(KDE3_WITH_COMPOSITE "Xcomposite support (KWin compositing, taskmanager)" ON)
 # the window overview: XRender for drawing; window contents with
 # Xcomposite, Xdamage and Xfixes (HAVE_XCOMPOSITE is set below);
 # Xpresent for tear-free frames
@@ -923,9 +918,8 @@ endif()
 foreach(_what
     "HAVE_PAM:KDE3_PAM:PAM"
     "HAVE_SSL:KDE3_WITH_SSL:SSL in the crypto module (OpenSSL, kdelibs with SSL)"
-    "KDE3_BUILD_KOMPMGR:KDE3_WITH_COMPOSITE:Xcomposite, Xdamage, Xrender and Xfixes (kompmgr)"
     "HAVE_XCOMPOSITE:KDE3_WITH_COMPOSITE:Xcomposite (taskmanager)"
-    "HAVE_XDAMAGE:KDE3_WITH_COMPOSITE:Xcomposite, Xdamage and Xfixes (window contents in the KWin overview)"
+    "HAVE_XDAMAGE:KDE3_WITH_COMPOSITE:Xcomposite, Xdamage and Xfixes (KWin compositing, window contents in the overview)"
     "HAVE_XPRESENT:-:Xpresent (tear-free KWin overview)"
     "KWIN_OVERVIEW_XI2:-:Xi 1.7 and Xrandr 1.5 (KWin overview: Super key, hot corner of the primary monitor)"
     "KWIN_HAVE_GLES:-:EGL, GLESv2, GBM, libdrm, xcb-dri3, xcb-sync, xshmfence (GPU compositing in KWin; else XRender)"
