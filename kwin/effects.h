@@ -100,6 +100,8 @@ class Effects : public QObject
         void freeAnim( EffectAnim* anim );
 
         bool startSession( const QRect& area );
+        void createWindow();
+        void showFirstFrame();
         bool extendArea( const QRect& area );
         void endSession();
         bool buildScene();
@@ -144,6 +146,7 @@ class Effects : public QObject
         QTimer poll_timer;
         bool frame_wanted;
         bool finishing; // the last frame (without animations) is being shown
+        bool need_immediate; // our window is new: its first frame is copied at once
         double last_frame;
 
         // statistics (KWIN_EFFECTS_DEBUG), per session

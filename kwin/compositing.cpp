@@ -273,6 +273,9 @@ void Presenter::start( Window win, int x, int y, int w, int h, bool use_present 
 #endif
     queue = 0;
     next_msc = 0;
+    last_msc = 0;
+    last_ust = 0; // (maybe another monitor now)
+    period = 1000.0 / 60;
     last_complete = 0;
     stat_msc = 0;
     createBuffers();

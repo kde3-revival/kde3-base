@@ -82,7 +82,7 @@ const double MaxWait = 300.0;
 // the new contents of a maximized window fade in
 const double CrossfadeTime = 150.0;
 // the pixmaps kept for restoring minimized windows (bytes)
-const unsigned long RetainLimit = 384UL << 20;
+const unsigned long RetainLimit = 256UL << 20;
 // the genie: a strip's edges move at most this much (pixels) between its
 // ends; strips at least this high
 const double GenieStep = 2.0;
@@ -140,9 +140,10 @@ QValueVector< XRectangle > scaledShape( const QValueVector< XRectangle >& shape,
 // the bounding shape of a frame, relative to it; false when it is a rectangle
 bool readShape( Display* dpy, Window w, const QSize& size, QValueVector< XRectangle >& shape )
     {
-    int count, ordering;
+    int count = -1, ordering;
     XRectangle* rects = XShapeGetRectangles( dpy, w, ShapeBounding, &count, &ordering );
-    bool shaped = false;
+    bool shaped = count == 0; // (an empty shape: nothing visible)
+    shape.clear();
     if( rects != NULL )
         {
         if( !( count == 1 && rects[ 0 ].x <= 0 && rects[ 0 ].y <= 0
@@ -206,6 +207,7 @@ class EffectPicture
         Pixmap release( Display* dpy, bool keep = false )
             {
             Pixmap ret = None;
+            transformed = false;
             for( int i = 0;
                  i < MipLevels;
                  ++i )
@@ -348,6 +350,9 @@ class EffectScene
             return NULL;
             }
         QPtrList< Win > wins;
+        // the attributes of the top-level windows, read once per session and
+        // forgotten when an event tells that they changed
+        QMap< Window, XWindowAttributes > attrs;
         bool dirty;
         bool ok; // nothing below that can't be drawn
         Picture root_picture; // the root background (tiled), if any
@@ -368,6 +373,7 @@ Effects::Effects( Workspace* w )
       presenter( NULL ),
       frame_wanted( false ),
       finishing( false ),
+      need_immediate( false ),
       last_frame( 0 ),
       frame_count( 0 ),
       dump_index( 0 ),
@@ -411,8 +417,14 @@ void Effects::reconfigure()
     open_close_anim = options->effectsOpenCloseAnimation;
     // speed 0 (slow) .. 10 (fast), 5 normal: 500 .. 125 ms
     base_time = 250.0 * pow( 2.0, ( 5 - options->effectsAnimationSpeed ) / 5.0 );
-    if( !options->effectsEnabled )
+    if( !options->effectsEnabled || !options->overviewKeepRedirected || minimize_style == None_ )
+        { // (no use for the kept contents)
         abort();
+        trapErrors( dpy );
+        while( !retained.isEmpty())
+            dropRetained( retained.begin().key());
+        untrapErrors( dpy );
+        }
     }
 
 bool Effects::isActive() const
@@ -701,8 +713,7 @@ void Effects::startIconify( Client* c, bool minimizing, const QRect& icon )
         if( debug )
             kdWarning( 1212 ) << "effects: " << ( minimizing ? "minimize " : "restore " ) << anim->caption
                 << " reversed at " << anim->p_from << endl;
-        renderFrame( true );
-        requestFrame();
+        showFirstFrame();
         return;
         }
     if( anim != NULL )
@@ -774,8 +785,7 @@ void Effects::startIconify( Client* c, bool minimizing, const QRect& icon )
             << ( anim->defer ? " (no contents kept)" : "" ) << " " << anim->geom.x() << "," << anim->geom.y() << " "
             << anim->geom.width() << "x" << anim->geom.height() << " kwin " << c->geometry().x() << ","
             << c->geometry().y() << endl;
-    renderFrame( true );
-    requestFrame();
+    showFirstFrame();
     }
 
 /*
@@ -838,7 +848,7 @@ void Effects::maximizeBegin( Client* c )
         freeAnim( anim );
         return;
         }
-    renderFrame( true );
+    showFirstFrame();
     }
 
 void Effects::maximizeEnd( Client* c )
@@ -878,6 +888,12 @@ void Effects::windowOpening( Client* c )
     if( !open_close_anim || !( c->isNormalWindow() || c->isDialog()) || c->isSpecialWindow()
         || c->isMinimized() || !canAnimate( c, false ) || findAnim( c ) != NULL )
         return;
+    // the new frame is still on top of everything (KWin restacks it later):
+    // below the support window, like all frames, before anything is read
+    XWindowChanges wc;
+    wc.sibling = ws->supportWindowId();
+    wc.stack_mode = Below;
+    XConfigureWindow( dpy, c->frameId(), CWSibling | CWStackMode, &wc );
     EffectAnim* anim = newAnim( EffectAnim::Open, c );
     anim->p = anim->p_from = 0;
     anim->p_to = 1;
@@ -895,7 +911,7 @@ void Effects::windowOpening( Client* c )
         }
     if( debug )
         kdWarning( 1212 ) << "effects: open " << anim->caption << endl;
-    renderFrame( true );
+    showFirstFrame();
     poll_timer.start( 10, true );
     }
 
@@ -940,8 +956,7 @@ void Effects::windowClosing( Client* c )
     anim->client = NULL; // nothing more from the client
     if( debug )
         kdWarning( 1212 ) << "effects: close " << anim->caption << endl;
-    renderFrame( true );
-    requestFrame();
+    showFirstFrame();
     }
 
 void Effects::clientRemoved( Client* c )
@@ -1001,20 +1016,7 @@ bool Effects::startSession( const QRect& needed )
         endSession();
         return false;
         }
-    XSetWindowAttributes attr;
-    attr.override_redirect = True;
-    attr.background_pixmap = None;
-    attr.border_pixel = 0;
-    out = XCreateWindow( dpy, root, 0, 0, screen.width(), screen.height(), 0, CopyFromParent, InputOutput,
-        CopyFromParent, CWOverrideRedirect | CWBackPixmap | CWBorderPixel, &attr );
-    // no input, only the animated area; set before it is mapped
-    XShapeCombineRectangles( dpy, out, ShapeInput, 0, 0, NULL, 0, ShapeSet, Unsorted );
-    XRectangle rect = { (short) area.x(), (short) area.y(), (unsigned short) area.width(),
-        (unsigned short) area.height() };
-    XShapeCombineRectangles( dpy, out, ShapeBounding, 0, 0, &rect, 1, ShapeSet, Unsorted );
-    placeWindow();
-    XMapWindow( dpy, out );
-    presenter->start( out, area.x(), area.y(), area.width(), area.height(), have_present );
+    createWindow();
     finishing = false;
     frame_wanted = false;
     frame_count = 0;
@@ -1024,6 +1026,31 @@ bool Effects::startSession( const QRect& needed )
     stat_strips = 0;
     stat_setup = now() - t;
     return true;
+    }
+
+/*
+ Our window covers exactly the area (Present syncs to the monitor that
+ shows most of the window), takes no input and has no background: mapped,
+ it shows what the screen showed there until the first frame is copied
+ into it.  A larger area gets a new window (the frames queued for the old
+ one go with it, they would be shown at the wrong place).
+*/
+void Effects::createWindow()
+    {
+    Window old = out;
+    XSetWindowAttributes attr;
+    attr.override_redirect = True;
+    attr.background_pixmap = None;
+    attr.border_pixel = 0;
+    out = XCreateWindow( dpy, root, area.x(), area.y(), area.width(), area.height(), 0, CopyFromParent,
+        InputOutput, CopyFromParent, CWOverrideRedirect | CWBackPixmap | CWBorderPixel, &attr );
+    XShapeCombineRectangles( dpy, out, ShapeInput, 0, 0, NULL, 0, ShapeSet, Unsorted );
+    placeWindow();
+    XMapWindow( dpy, out );
+    presenter->start( out, 0, 0, area.width(), area.height(), have_present );
+    if( old != None )
+        XDestroyWindow( dpy, old ); // (below the new one, which shows what it showed)
+    need_immediate = true;
     }
 
 // right above the managed windows (kept there: a new frame is created on
@@ -1055,10 +1082,7 @@ bool Effects::extendArea( const QRect& needed )
         scene->dirty = true;
         return false;
         }
-    XRectangle rect = { (short) area.x(), (short) area.y(), (unsigned short) area.width(),
-        (unsigned short) area.height() };
-    XShapeCombineRectangles( dpy, out, ShapeBounding, 0, 0, &rect, 1, ShapeSet, Unsorted );
-    presenter->setGeometry( area.x(), area.y(), area.width(), area.height());
+    createWindow();
     return true;
     }
 
@@ -1168,8 +1192,16 @@ bool Effects::buildScene()
             continue;
             }
         XWindowAttributes attr;
-        if( !XGetWindowAttributes( dpy, w, &attr ) || attr.map_state != IsViewable
-            || attr.c_class != InputOutput || attr.width <= 0 || attr.height <= 0 )
+        QMap< Window, XWindowAttributes >::ConstIterator cached = scene->attrs.find( w );
+        if( cached != scene->attrs.end())
+            attr = *cached;
+        else
+            {
+            if( !XGetWindowAttributes( dpy, w, &attr ))
+                continue;
+            scene->attrs[ w ] = attr;
+            }
+        if( attr.map_state != IsViewable || attr.c_class != InputOutput || attr.width <= 0 || attr.height <= 0 )
             continue;
         QRect geom( attr.x, attr.y, attr.width + 2 * attr.border_width, attr.height + 2 * attr.border_width );
         if( (int) i > limit )
@@ -1295,10 +1327,21 @@ bool Effects::buildScene()
 // frames
 //****************************************
 
+// the first frame of a new animation: at once when our window is new (else
+// the frames shown or queued still show the window as it was)
+void Effects::showFirstFrame()
+    {
+    if( need_immediate )
+        renderFrame( true );
+    requestFrame();
+    }
+
 void Effects::requestFrame()
     {
     if( out == None )
         return;
+    if( finishing && anims.isEmpty())
+        return; // the plain scene is being shown: no more frames (a video below)
     frame_wanted = true;
     if( frame_timer.isActive())
         return;
@@ -1411,7 +1454,7 @@ bool Effects::updateAnim( EffectAnim* anim, double t )
 static void drawPicture( Display* dpy, Picture dst, EffectPicture& pic, const RectF& rect, double alpha,
     int ox, int oy, bool shaped, const QValueVector< XRectangle >& shape )
     {
-    if( pic.isNull() || alpha <= 1.0 / 512 || rect.w < 0.5 || rect.h < 0.5 )
+    if( pic.isNull() || alpha <= 1.0 / 512 || rect.w < 0.5 || rect.h < 0.5 || ( shaped && shape.isEmpty()))
         return;
     const int level = pic.level( dpy, QMIN( rect.w / pic.w[ 0 ], rect.h / pic.h[ 0 ] ));
     Picture src = pic.picture[ level ];
@@ -1682,6 +1725,8 @@ void Effects::renderFrame( bool immediate )
     {
     if( out == None || scene == NULL )
         return;
+    if( need_immediate )
+        immediate = true; // a new window: nothing shown in it yet
     if( scene->dirty )
         {
         buildScene();
@@ -1731,27 +1776,54 @@ void Effects::renderFrame( bool immediate )
         }
     const int ox = area.x();
     const int oy = area.y();
-    // the background
-    if( scene->root_picture != None )
-        XRenderComposite( dpy, PictOpSrc, scene->root_picture, None, dst, ox, oy, 0, 0, 0, 0,
-            area.width(), area.height());
-    else
-        {
-        XRenderColor black = { 0, 0, 0, 0xffff };
-        XRenderFillRectangle( dpy, PictOpSrc, dst, &black, 0, 0, area.width(), area.height());
-        }
-    static const QValueVector< XRectangle > noshape;
-    // closing windows above the bottom one
-    for( EffectAnim* anim = anims.first();
-         anim != NULL;
-         anim = anims.next())
-        if( anim->use_below && anim->below == None )
-            drawAnim( anim, dst );
+    // the topmost window that covers the whole area, opaque, not animated:
+    // nothing below it is drawn (maximized windows below a maximized one)
+    EffectScene::Win* cover = NULL;
     for( QPtrListIterator< EffectScene::Win > wit( scene->wins );
          wit.current() != NULL;
          ++wit )
         {
         EffectScene::Win* win = wit.current();
+        if( win->pic.isNull() || win->pic.alpha || win->shaped || !win->geom.contains( area ))
+            continue;
+        bool animated = false;
+        for( QPtrListIterator< EffectAnim > ait( anims );
+             ait.current() != NULL;
+             ++ait )
+            if( ait.current()->frame == win->id )
+                animated = true;
+        if( !animated )
+            cover = win;
+        }
+    if( cover == NULL )
+        { // the background
+        if( scene->root_picture != None )
+            XRenderComposite( dpy, PictOpSrc, scene->root_picture, None, dst, ox, oy, 0, 0, 0, 0,
+                area.width(), area.height());
+        else
+            {
+            XRenderColor black = { 0, 0, 0, 0xffff };
+            XRenderFillRectangle( dpy, PictOpSrc, dst, &black, 0, 0, area.width(), area.height());
+            }
+        // closing windows above the bottom one
+        for( EffectAnim* anim = anims.first();
+             anim != NULL;
+             anim = anims.next())
+            if( anim->use_below && anim->below == None )
+                drawAnim( anim, dst );
+        }
+    bool covered = cover != NULL;
+    for( QPtrListIterator< EffectScene::Win > wit( scene->wins );
+         wit.current() != NULL;
+         ++wit )
+        {
+        EffectScene::Win* win = wit.current();
+        if( covered )
+            {
+            if( win != cover )
+                continue; // (and what was drawn above it)
+            covered = false;
+            }
         EffectAnim* in_place = NULL;
         bool animated = false;
         for( EffectAnim* anim = anims.first();
@@ -1765,7 +1837,8 @@ void Effects::renderFrame( bool immediate )
                 }
         if( in_place != NULL )
             drawAnim( in_place, dst );
-        else if( !animated && win->geom.intersects( area ) && !win->pic.isNull())
+        else if( !animated && win->geom.intersects( area ) && !win->pic.isNull()
+            && !( win->shaped && win->shape.isEmpty()))
             {
             Picture src = win->pic.picture[ 0 ];
             if( win->pic.transformed )
@@ -1811,6 +1884,7 @@ void Effects::renderFrame( bool immediate )
     if( !dump_dir.isEmpty())
         dumpFrame();
     presenter->endFrame( immediate );
+    need_immediate = false;
     ++frame_count;
     if( debug )
         {
@@ -1920,6 +1994,13 @@ bool Effects::x11Event( XEvent* e )
         case CirculateNotify:
             if( e->xany.window == root && e->xmap.window != out )
                 {
+                scene->attrs.remove( e->xmap.window );
+                if( e->type == MapNotify || e->type == UnmapNotify )
+                    { // a new pixmap when it is mapped again
+                    EffectScene::Win* win = scene->find( e->xmap.window );
+                    if( win != NULL )
+                        win->pic.release( dpy );
+                    }
                 scene->dirty = true;
                 requestFrame();
                 }
@@ -1927,6 +2008,7 @@ bool Effects::x11Event( XEvent* e )
         case ConfigureNotify:
             if( e->xconfigure.event == root && e->xconfigure.window != out )
                 {
+                scene->attrs.remove( e->xconfigure.window );
                 scene->dirty = true;
                 requestFrame();
                 }
