@@ -63,6 +63,7 @@
 #include <qdragobject.h>
 #include <qlayout.h>
 #include <qregexp.h>
+#include <qbitmap.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -198,7 +199,8 @@ void TEWidget::setColorTable(const ColorEntry table[])
    QCodec.
 */
 
-static inline bool isLineChar(Q_UINT16 c) { return ((c & 0xFF80) == 0x2500);}
+// box drawing (U+2500..U+257F) and block elements (U+2580..U+259F)
+static inline bool isLineChar(Q_UINT16 c) { return c >= 0x2500 && c <= 0x259F; }
 
 // assert for i in [0..31] : vt100extended(vt100_graphics[i]) == i.
 
@@ -557,6 +559,157 @@ static void drawLineChar(QPainter& paint, int x, int y, int w, int h, uchar code
 
 }
 
+/* Dashed lines (U+2504..U+250B, U+254C..U+254F): `n' dashes along the
+   middle of the cell, one pixel thick or three for the heavy variants,
+   like the solid lines of drawLineChar(). */
+
+static void drawDashes(QPainter& paint, int x, int y, int w, int h,
+                       bool horizontal, int n, bool heavy)
+{
+  int cx = x + w/2;
+  int cy = y + h/2;
+  int len = horizontal ? w : h;
+  int gap = QMAX(1, len / (n * 4));
+  for (int t = heavy ? -1 : 0; t <= (heavy ? 1 : 0); t++)
+    for (int i = 0; i < n; i++)
+    {
+      int a = i * len / n + gap / 2;
+      int b = (i + 1) * len / n - (gap + 1) / 2 - 1;
+      if (horizontal)
+        paint.drawLine(x + a, cy + t, x + b, cy + t);
+      else
+        paint.drawLine(cx + t, y + a, cx + t, y + b);
+    }
+}
+
+/* Stipples for the shades U+2591..U+2593 (25%, 50% and 75%). */
+
+static const QBitmap& shadeBitmap(int level)
+{
+  static const uchar bits[3][4] = {
+    { 0x01, 0x00, 0x04, 0x00 },
+    { 0x05, 0x0a, 0x05, 0x0a },
+    { 0x0e, 0x0f, 0x0b, 0x0f }
+  };
+  static QBitmap* shades[3] = { 0, 0, 0 };
+  if (!shades[level])
+    shades[level] = new QBitmap(4, 4, bits[level], true);
+  return *shades[level];
+}
+
+/* Draw the box drawing characters that are not in the 5x5 grid of
+   LineChars (rounded corners, dashed and diagonal lines) and the block
+   elements, so that they join up with their neighbours whatever the
+   font has. Returns false for characters left to the font. */
+
+static bool drawExtraLineChar(QPainter& paint, int x, int y, int w, int h,
+                              Q_UINT16 c)
+{
+  int cx = x + w/2;
+  int cy = y + h/2;
+  int ex = x + w - 1;
+  int ey = y + h - 1;
+  QColor color = paint.pen().color();
+
+  switch (c)
+  {
+    case 0x2504: drawDashes(paint, x, y, w, h, true,  3, false); return true;
+    case 0x2505: drawDashes(paint, x, y, w, h, true,  3, true ); return true;
+    case 0x2506: drawDashes(paint, x, y, w, h, false, 3, false); return true;
+    case 0x2507: drawDashes(paint, x, y, w, h, false, 3, true ); return true;
+    case 0x2508: drawDashes(paint, x, y, w, h, true,  4, false); return true;
+    case 0x2509: drawDashes(paint, x, y, w, h, true,  4, true ); return true;
+    case 0x250A: drawDashes(paint, x, y, w, h, false, 4, false); return true;
+    case 0x250B: drawDashes(paint, x, y, w, h, false, 4, true ); return true;
+    case 0x254C: drawDashes(paint, x, y, w, h, true,  2, false); return true;
+    case 0x254D: drawDashes(paint, x, y, w, h, true,  2, true ); return true;
+    case 0x254E: drawDashes(paint, x, y, w, h, false, 2, false); return true;
+    case 0x254F: drawDashes(paint, x, y, w, h, false, 2, true ); return true;
+  }
+
+  if (c >= 0x256D && c <= 0x2570)
+  {
+    // Rounded corners: a quarter circle of radius r around the centre
+    // point, continued by straight lines to the middle of the two edges
+    // it connects (like the corners of LineChars).
+    int r = QMAX(1, QMIN(w, h) / 2 - 1);
+    switch (c)
+    {
+      case 0x256D: // ╭ right and down
+        paint.drawArc(cx, cy, 2*r, 2*r, 90*16, 90*16);
+        paint.drawLine(cx + r, cy, ex, cy);
+        paint.drawLine(cx, cy + r, cx, ey);
+        break;
+      case 0x256E: // ╮ left and down
+        paint.drawArc(cx - 2*r, cy, 2*r, 2*r, 0, 90*16);
+        paint.drawLine(x, cy, cx - r, cy);
+        paint.drawLine(cx, cy + r, cx, ey);
+        break;
+      case 0x256F: // ╯ left and up
+        paint.drawArc(cx - 2*r, cy - 2*r, 2*r, 2*r, 270*16, 90*16);
+        paint.drawLine(x, cy, cx - r, cy);
+        paint.drawLine(cx, y, cx, cy - r);
+        break;
+      case 0x2570: // ╰ up and right
+        paint.drawArc(cx, cy - 2*r, 2*r, 2*r, 180*16, 90*16);
+        paint.drawLine(cx + r, cy, ex, cy);
+        paint.drawLine(cx, y, cx, cy - r);
+        break;
+    }
+    return true;
+  }
+
+  if (c >= 0x2571 && c <= 0x2573)
+  {
+    if (c != 0x2572) paint.drawLine(ex, y, x, ey); // ╱
+    if (c != 0x2571) paint.drawLine(x, y, ex, ey); // ╲
+    return true;
+  }
+
+  if (c < 0x2580)
+    return false;
+
+  // Block elements
+  if (c == 0x2580) { paint.fillRect(x, y, w, h/2, color); return true; }      // ▀
+  if (c <= 0x2588)                                                            // ▁..█
+  {
+    int top = h * (0x2588 - c) / 8; // so that ▄ and ▀ complement each other
+    paint.fillRect(x, y + top, w, h - top, color);
+    return true;
+  }
+  if (c <= 0x258F)                                                            // ▉..▏
+  {
+    int bw = QMAX(1, w * (0x2590 - c) / 8); // ▌ and ▐ complement each other
+    paint.fillRect(x, y, bw, h, color);
+    return true;
+  }
+  if (c == 0x2590) { paint.fillRect(cx, y, x + w - cx, h, color); return true; } // ▐
+  if (c <= 0x2593)                                                            // ░▒▓
+  {
+    paint.fillRect(x, y, w, h, QBrush(color, shadeBitmap(c - 0x2591)));
+    return true;
+  }
+  if (c == 0x2594) { paint.fillRect(x, y, w, QMAX(1, (h + 4) / 8), color); return true; } // ▔
+  if (c == 0x2595)                                                            // ▕
+  {
+    int bw = QMAX(1, (w + 4) / 8);
+    paint.fillRect(x + w - bw, y, bw, h, color);
+    return true;
+  }
+
+  // Quadrants U+2596..U+259F: upper left 1, upper right 2, lower left 4,
+  // lower right 8
+  static const uchar quadrants[10] = { 4, 8, 1, 1|4|8, 1|8, 1|2|4, 1|2|8, 2, 2|4, 2|4|8 };
+  int q = quadrants[c - 0x2596];
+  int hw = cx - x;
+  int hh = cy - y;
+  if (q & 1) paint.fillRect(x,  y,  hw,     hh,     color);
+  if (q & 2) paint.fillRect(cx, y,  w - hw, hh,     color);
+  if (q & 4) paint.fillRect(x,  cy, hw,     h - hh, color);
+  if (q & 8) paint.fillRect(cx, cy, w - hw, h - hh, color);
+  return true;
+}
+
 void TEWidget::drawTextFixed(QPainter &paint, int x, int y,
                              QString& str, const ca *attr)
 {
@@ -582,9 +735,14 @@ void TEWidget::drawTextFixed(QPainter &paint, int x, int y,
     if (isLineChar(drawstr[0].unicode()))
     {
         uchar code = drawstr[0].cell();
-        if (LineChars[code])
+        if (code < 0x80 && LineChars[code])
         {
             drawLineChar(paint, x, y, w, font_h, code);
+            x += w;
+            continue;
+        }
+        if (drawExtraLineChar(paint, x, y, w, font_h, drawstr[0].unicode()))
+        {
             x += w;
             continue;
         }
