@@ -57,6 +57,9 @@ k_dcop:
     void autoStart2Done();
     void kcmPhase1Done();
     void kcmPhase2Done();
+    // sleep (suspend to RAM) without the logout dialog, e.g. from the K menu
+    bool canSuspend();
+    void suspend();
 public:
     KSMServer( const QString& windowManager, bool only_local );
     ~KSMServer();
@@ -108,6 +111,7 @@ private slots:
     void kcmPhase1Timeout();
     void kcmPhase2Timeout();
     void pendingShutdownTimeout();
+    void suspendInternal();
 
     void autoStart0();
     void autoStart1();

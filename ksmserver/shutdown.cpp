@@ -268,6 +268,35 @@ void KSMServer::goToSleep( bool hibernate, bool lock )
     kapp->disableStyles();
 }
 
+// Whether suspend() is offered: the user's choice and logind's answer
+bool KSMServer::canSuspend()
+{
+    KConfig* config = KGlobal::config();
+    config->reparseConfiguration(); // config may have changed in the KControl module
+    config->setGroup( "General" );
+    return config->readBoolEntry( "offerSleep", true ) && Logind::canSuspend();
+}
+
+void KSMServer::suspend()
+{
+    // Not from within the DCOP call: locking the screen waits for kdesktop
+    QTimer::singleShot( 0, this, SLOT( suspendInternal() ) );
+}
+
+void KSMServer::suspendInternal()
+{
+    if ( state != Idle || dialogActive )
+        return;
+    KConfig* config = KGlobal::config();
+    config->reparseConfiguration();
+    config->setGroup( "General" );
+    if ( !config->readBoolEntry( "offerSleep", true ) )
+        return;
+    dialogActive = true; // no logout meanwhile
+    goToSleep( false, config->readBoolEntry( "lockBeforeSleep", true ) );
+    dialogActive = false;
+}
+
 void KSMServer::pendingShutdownTimeout()
 {
     shutdown( pendingShutdown_confirm, pendingShutdown_sdtype, pendingShutdown_sdmode );
