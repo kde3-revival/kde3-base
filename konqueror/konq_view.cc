@@ -92,6 +92,7 @@ KonqView::KonqView( KonqViewFactory &viewFactory,
   m_bLockedLocation = false;
   m_bLinkedView = false;
   m_bAborted = false;
+  m_newHistoryEntry = false;
   m_bToggleView = false;
   m_bHierarchicalView = false;
   m_bDisableScrolling = false;
@@ -187,8 +188,13 @@ void KonqView::openURL( const KURL &url, const QString & locationBarURL,
     // Store this new URL in the history, removing any existing forward history.
     // We do this first so that everything is ready if a part calls completed().
     createHistoryEntry();
+    m_newHistoryEntry = true;
   } else
+  {
     m_bLockHistory = false;
+    m_newHistoryEntry = false;
+  }
+  m_openedURL = url;
 
   callExtensionStringMethod( "setNameFilter(const QString&)", nameFilter );
   if ( m_bDisableScrolling )
@@ -581,10 +587,32 @@ void KonqView::slotCompleted( bool hasPending )
 
   if ( ! m_bLockHistory )
   {
+      // A part that fetches URLs itself (X-KDE-BrowserView-FetchesProtocols)
+      // gave a URL it cannot show to Konqueror (openURLRequest: another
+      // part, an application, a download) and still shows the page before,
+      // whose entry precedes the one openURL() appended: that one goes.
+      // (openURL() made the last entry the current one.)
+      int position = m_lstHistory.at();
+      bool appended = m_newHistoryEntry && position > 0 && position == int( m_lstHistory.count() ) - 1;
+      HistoryEntry *previous = appended ? m_lstHistory.at( position - 1 ) : 0;
+      m_lstHistory.at( position );
+      bool handedOff = m_bAborted && appended && previous && m_pPart &&
+                       !urlcmp( m_pPart->url().url(), m_openedURL.url(), true, true ) &&
+                       urlcmp( m_pPart->url().url(), previous->url.url(), true, true );
+      m_newHistoryEntry = false;
+      if ( handedOff )
+      {
+          m_lstHistory.removeLast();
+          m_lstHistory.last();
+          KonqHistoryManager::kself()->removePending( m_openedURL );
+      }
+
       // Success... update history entry, including location bar URL
       updateHistoryEntry( true );
 
-      if ( m_bAborted ) // remove the pending entry on error
+      if ( handedOff )
+          ; // the page before was confirmed already
+      else if ( m_bAborted ) // remove the pending entry on error
           KonqHistoryManager::kself()->removePending( url() );
       else if ( m_lstHistory.current() ) // register as proper history entry
           KonqHistoryManager::kself()->confirmPending(url(), typedURL(),

@@ -429,6 +429,8 @@ private:
    * The current position in the history is m_lstHistory.current()
    */
   QPtrList<HistoryEntry> m_lstHistory;
+  KURL m_openedURL;          // the URL of openURL() (its pending history entry)
+  bool m_newHistoryEntry;    // openURL() appended an entry to m_lstHistory
 
   /**
    * The post data that _resulted_ in this page.
