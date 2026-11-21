@@ -76,6 +76,8 @@ class Compositor : public QObject
         void clientChanged( Client* c );
         // the reason it is off, or what it runs with
         QString status() const;
+        // the screen was resized or the monitors changed (RandR)
+        void screenChanged();
         // another compositing manager owns _NET_WM_CM_Sn
         static bool foreignCompositor( Display* dpy );
         // the X server renders on a GPU (DRI3 and Present): Enabled's default

@@ -344,6 +344,37 @@ void Compositor::toggle()
         }
     }
 
+void Compositor::screenChanged()
+    {
+    if( !active )
+        return;
+    // everything anew: buffers of the screen's size, an output per monitor
+    QDesktopWidget* desktop = QApplication::desktop();
+    bool same = DisplayWidth( dpy, DefaultScreen( dpy )) == screen_w
+        && DisplayHeight( dpy, DefaultScreen( dpy )) == screen_h;
+    if( same && per_monitor )
+        { // (the same monitors, in any order)
+        same = (int) outputs.count() == desktop->numScreens();
+        for( int i = 0;
+             i < desktop->numScreens() && same;
+             ++i )
+            {
+            bool found = false;
+            for( QPtrListIterator< CompositorOutput > it( outputs );
+                 it.current() != NULL && !found;
+                 ++it )
+                found = it.current()->geom == ( desktop->screenGeometry( i ) & QRect( 0, 0, screen_w, screen_h ));
+            same = found;
+            }
+        }
+    if( same )
+        return;
+    if( debug )
+        kdWarning( 1212 ) << "compositor: the screen changed, starting anew" << endl;
+    stop( false );
+    start();
+    }
+
 void Compositor::retry()
     {
     if( !active && !suspended && options->compositingEnabled )

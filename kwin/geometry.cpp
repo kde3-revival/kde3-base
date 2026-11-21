@@ -60,6 +60,8 @@ void Workspace::desktopResized()
         overview->abort();
         overview->reconfigure(); // the corners above the new electric borders
         }
+    if( compositor_ != NULL )
+        compositor_->screenChanged(); // buffers of the new size, the monitors
     }
 
 /*!
