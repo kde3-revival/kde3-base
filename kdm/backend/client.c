@@ -456,6 +456,9 @@ Verify( GConvFunc gconv, int rootok )
 # ifdef HAVE_GETUSERSHELL
 	char *s;
 # endif
+# if !defined(ultrix) && !defined(__ultrix__) && defined(HAVE_CRYPT)
+	const char *crpt_passwd;
+# endif
 # if defined(HAVE_STRUCT_PASSWD_PW_EXPIRE) || defined(USESHADOW)
 	int tim, expir, warntime, quietlog;
 # endif
@@ -671,7 +674,9 @@ Verify( GConvFunc gconv, int rootok )
 # if defined(ultrix) || defined(__ultrix__)
 	if (authenticate_user( p, curpass, NULL ) < 0)
 # elif defined(HAVE_CRYPT)
-	if (strcmp( crypt( curpass, p->pw_passwd ), p->pw_passwd ))
+	/* crypt() returns NULL for a salt it does not support (glibc >= 2.17) */
+	if (!(crpt_passwd = crypt( curpass, p->pw_passwd )) ||
+	    strcmp( crpt_passwd, p->pw_passwd ))
 # else
 	if (strcmp( curpass, p->pw_passwd ))
 # endif
