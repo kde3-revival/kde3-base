@@ -434,7 +434,7 @@ void Workspace::init()
         && activeClient() == NULL && should_get_focus.count() == 0 ) // no client activated in manage()
         {
         if( new_active_client == NULL )
-            new_active_client = topClientOnDesktop( currentDesktop());
+            new_active_client = topClientOnDesktop( currentDesktop(), false, true, activeScreen());
         if( new_active_client == NULL && !desktops.isEmpty() )
             new_active_client = findDesktop( true, currentDesktop());
         }
