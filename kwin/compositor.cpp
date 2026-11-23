@@ -195,8 +195,17 @@ class CompositorOutput
         int flips, copies, skips; // (statistics)
     };
 
+// error trapping around a synchronous request (no XSync of its own),
+// nestable (e.g. unredirecting -> the outputs made anew): each level keeps
+// the handler it replaced and counts the errors since it began
 static int trapped = 0;
-static int ( *saved_handler )( Display*, XErrorEvent* ) = NULL;
+static const int TrapDepth = 16;
+static struct
+    {
+    int ( *handler )( Display*, XErrorEvent* );
+    int base;
+    } trap_stack[ TrapDepth ];
+static int trap_depth = 0;
 
 static int countErrors( Display*, XErrorEvent* )
     {
@@ -204,24 +213,32 @@ static int countErrors( Display*, XErrorEvent* )
     return 0;
     }
 
-// error trapping around a synchronous request (no XSync of its own)
 static void trap()
     {
     XSync( qt_xdisplay(), False ); // (errors of earlier requests are not ours)
-    trapped = 0;
-    saved_handler = XSetErrorHandler( countErrors );
+    int ( *old )( Display*, XErrorEvent* ) = XSetErrorHandler( countErrors );
+    if( trap_depth < TrapDepth )
+        {
+        trap_stack[ trap_depth ].handler = old;
+        trap_stack[ trap_depth ].base = trapped;
+        }
+    ++trap_depth;
     }
 
 static int untrap()
     {
-    XSetErrorHandler( saved_handler );
-    return trapped;
+    if( trap_depth == 0 )
+        return 0;
+    --trap_depth;
+    const int level = QMIN( trap_depth, TrapDepth - 1 );
+    XSetErrorHandler( trap_stack[ level ].handler );
+    return trapped - trap_stack[ level ].base;
     }
 
 Compositor::Compositor( Workspace* w )
     : ws( w ), dpy( qt_xdisplay()), root( qt_xrootwin()), screen_w( 0 ), screen_h( 0 ), active( false ),
       suspended( false ), failed_once( false ), foreign_retries( 0 ), selection( NULL ), rend( NULL ),
-      shadows( NULL ), presenter( NULL ), per_monitor( false ), flips_failed( false ), copies_in_row( 0 ), latest_buffer( -1 ),
+      shadows( NULL ), presenter( NULL ), per_monitor( false ), flips_failed( false ), outputs_failed( false ), copies_in_row( 0 ), latest_buffer( -1 ),
       force_mode( 0 ), unredirect_blocked( false ), frame_requested( false ), last_render( 0 ), repaint_due( 0 ), overlay( None ), frame_number( 0 ), frame_wanted( false ), root_pixmap( None ),
       root_texture( NULL ), shape_event( 0 ), asap( false ), render_budget( 3.0 ), min_budget( 3.0 ), on_time( 0 ),
       target_vblank( 0 ), late_at_max( 0 ), late_failed( false ), submit_time( 0 ), shown_index( 0 ),
@@ -508,6 +525,7 @@ bool Compositor::start()
         return false;
         }
     flips_failed = false;
+    outputs_failed = false;
     copies_in_row = 0;
     latest_buffer = -1;
     const char* mode = getenv( "KWIN_COMPOSITOR_PRESENT" ); // overlay|monitors (tests)
@@ -558,6 +576,7 @@ void Compositor::stop( bool failed, const QString& why )
         ws->windowOverview()->compositorStopping();
     const bool was_active = active;
     active = false;
+    outputs_failed = false;
     repaint_timer.stop();
     unredirect_timer.stop();
     frame_wanted = false;
@@ -1534,6 +1553,8 @@ bool Compositor::leadCompleted( bool skipped, int missed )
 void Compositor::setupOutputs( bool per_monitor_mode )
     {
 #ifdef COMPOSITOR_BUILD
+    if( outputs_failed )
+        return; // (another reset queued before outputsFailed(): nothing to present)
     const bool replacing = !outputs.isEmpty();
     freeOutputs();
     if( replacing )
@@ -1541,13 +1562,16 @@ void Compositor::setupOutputs( bool per_monitor_mode )
           // new ones (the server keeps the old ones while it needs them)
         freeBuffers();
         if( !createBuffers())
-            { // no outputs (nothing is drawn) until stopped from the event
-              // loop: the callers (unredirecting, a presentation's
-              // completion) still use the windows and the presenters
             freeBuffers();
-            QTimer::singleShot( 0, this, SLOT( outputsFailed()));
-            return;
-            }
+        }
+    if( buffers[ 0 ] == NULL )
+        { // no outputs (nothing is drawn) until stopped from the event
+          // loop: the callers (unredirecting, a presentation's completion)
+          // still use the windows and the presenters; no presenter
+          // without buffers, also not for a reset queued meanwhile
+        outputs_failed = true;
+        QTimer::singleShot( 0, this, SLOT( outputsFailed()));
+        return;
         }
     QDesktopWidget* desktop = QApplication::desktop();
     per_monitor = per_monitor_mode && desktop->numScreens() > 1 && force_mode != 1;
@@ -1630,7 +1654,7 @@ void Compositor::outputStalled()
 
 void Compositor::outputsFailed()
     {
-    if( active && outputs.isEmpty())
+    if( active && outputs_failed )
         stop( true, i18n( "the frame buffers could not be made" ));
     }
 
@@ -2356,6 +2380,14 @@ void Compositor::setUnredirected( SceneWindow* w, bool unredirect )
         }
     XSync( dpy, False );
     untrap();
+    // KWIN_COMPOSITOR_TEST_XERROR (tests): an X error after it, outside the
+    // traps, which KWin's error handler must print (BadPixmap)
+    static const bool test_xerror = getenv( "KWIN_COMPOSITOR_TEST_XERROR" ) != NULL;
+    if( test_xerror )
+        {
+        XFreePixmap( dpy, root ); // (not a pixmap)
+        XSync( dpy, False );
+        }
 #else
     Q_UNUSED( w );
     Q_UNUSED( unredirect );

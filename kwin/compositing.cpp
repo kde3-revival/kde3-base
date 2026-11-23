@@ -152,8 +152,16 @@ QRect RectF::bounds() const
     return QRect( x0, y0, (int) ceil( x + w ) - x0, (int) ceil( y + h ) - y0 );
     }
 
+// nestable: each level keeps the handler it replaced and counts the
+// errors since it began
 static int trapped_errors = 0;
-static int (*old_error_handler)( Display*, XErrorEvent* ) = NULL;
+static const int TrapDepth = 16;
+static struct
+    {
+    int ( *handler )( Display*, XErrorEvent* );
+    int base;
+    } trap_stack[ TrapDepth ];
+static int trap_depth = 0;
 
 static int trapHandler( Display*, XErrorEvent* )
     {
@@ -164,20 +172,30 @@ static int trapHandler( Display*, XErrorEvent* )
 void trapErrors( Display* dpy )
     {
     XSync( dpy, False );
-    trapped_errors = 0;
-    old_error_handler = XSetErrorHandler( trapHandler );
+    int ( *old )( Display*, XErrorEvent* ) = XSetErrorHandler( trapHandler );
+    if( trap_depth < TrapDepth )
+        {
+        trap_stack[ trap_depth ].handler = old;
+        trap_stack[ trap_depth ].base = trapped_errors;
+        }
+    ++trap_depth;
     }
 
 int untrapErrors( Display* dpy )
     {
     XSync( dpy, False );
-    XSetErrorHandler( old_error_handler );
-    return trapped_errors;
+    if( trap_depth == 0 )
+        return 0;
+    --trap_depth;
+    const int level = QMIN( trap_depth, TrapDepth - 1 );
+    XSetErrorHandler( trap_stack[ level ].handler );
+    return trapped_errors - trap_stack[ level ].base;
     }
 
+// the errors since the innermost trapErrors()
 int trappedErrors()
     {
-    return trapped_errors;
+    return trap_depth > 0 ? trapped_errors - trap_stack[ QMIN( trap_depth, TrapDepth ) - 1 ].base : 0;
     }
 
 bool dispatchPresentEvent( XEvent* e )

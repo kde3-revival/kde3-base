@@ -202,6 +202,7 @@ class Compositor : public QObject
         Compositing::Presenter* presenter;
         bool per_monitor;
         bool flips_failed; // the overlay was copied, not flipped
+        bool outputs_failed; // no buffers: stopped from the event loop (outputsFailed())
         int copies_in_row;
         int latest_buffer; // drawn last
         int force_mode; // KWIN_COMPOSITOR_PRESENT: 1 overlay, 2 monitors
