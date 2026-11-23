@@ -23,6 +23,8 @@ License. See the file "COPYING" for the exact licensing terms.
 
 #include <X11/Xlib.h>
 
+class QSocketNotifier;
+
 namespace KWinInternal
 {
 
@@ -118,6 +120,10 @@ class Overview : public QObject
         // the compositor stops: its textures go, so does the overview
         void compositorStopping();
 
+    public slots:
+        // the events of the XInput 2 connection that have come (see selectXI2())
+        void readXI2();
+
     private slots:
         void frameTimeout();
         void settleTimeout();
@@ -139,7 +145,8 @@ class Overview : public QObject
         void createCorners();
         void addCorner( const QRect& area, const QPoint& point );
         void destroyCorners();
-        bool handleXI2( XEvent* e );
+        void openXI2();
+        void handleXI2( XEvent* e );
         bool cornerHit( const QPoint& p ) const;
         bool cornerAllowed( const QPoint& corner, unsigned int buttonState ) const;
         bool blocked() const;
@@ -324,6 +331,10 @@ class Overview : public QObject
         bool super_down; // pressed, not released yet
         bool super_alone; // no other key or button since (nor before)
         Time super_time;
+
+        // XInput 2 (and the pointer barriers) on a connection of KWin's own
+        Display* xi_dpy;
+        QSocketNotifier* xi_notifier;
 
         // statistics (KWIN_OVERVIEW_DEBUG)
         bool debug;

@@ -310,7 +310,8 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         // the shortcuts that work while a menu is open (grabproof.h)
         bool hasGrabProofShortcuts() const;
         bool shortcutKeyRepeated() const;
-        void grabProofRawKeysSelected( bool selected );
+        void grabProofRawConnection( Display* raw );
+        void grabProofRawConnectionEvent( const XEvent* e );
         void grabProofRawKey( int keycode, Time time, bool press, bool repeat );
 
         void sessionSaveStarted();

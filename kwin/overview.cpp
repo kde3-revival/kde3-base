@@ -40,6 +40,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <qimage.h>
 #include <qcursor.h>
 #include <qfile.h>
+#include <qsocketnotifier.h>
 #include <qvaluevector.h>
 #include <kglobalsettings.h>
 #include <kstringhandler.h>
@@ -573,6 +574,8 @@ Overview::Overview( Workspace* w )
       super_down( false ),
       super_alone( false ),
       super_time( 0 ),
+      xi_dpy( NULL ),
+      xi_notifier( NULL ),
       frame_count( 0 ),
       stat_render( 0 ),
       stat_max_render( 0 ),
@@ -610,6 +613,14 @@ Overview::~Overview()
     setKeepRedirected( false );
     delete presenter;
     delete own_renderer;
+#ifdef OVERVIEW_XI2
+    if( xi_dpy != NULL )
+        {
+        ws->grabProofRawConnection( NULL );
+        delete xi_notifier;
+        XCloseDisplay( xi_dpy ); // (the barriers go with it)
+        }
+#endif
     }
 
 double Overview::now()
@@ -628,18 +639,7 @@ bool Overview::checkExtensions()
 #ifdef OVERVIEW_XI2
     if( have_render )
         {
-        int xi_event, xi_error;
-        int xi_major = 2, xi_minor = 3;
-        if( XQueryExtension( dpy, "XInputExtension", &xi_opcode, &xi_event, &xi_error )
-            && XIQueryVersion( dpy, &xi_major, &xi_minor ) == Success && xi_major >= 2 )
-            {
-            have_xi_raw = xi_major > 2 || xi_minor >= 1;
-            int fixes_event, fixes_error;
-            int fixes_major = 0, fixes_minor = 0;
-            have_barriers = ( xi_major > 2 || xi_minor >= 3 )
-                && XFixesQueryExtension( dpy, &fixes_event, &fixes_error )
-                && XFixesQueryVersion( dpy, &fixes_major, &fixes_minor ) && fixes_major >= 5;
-            }
+        openXI2();
         int rr_error;
         int rr_major = 0, rr_minor = 0;
         have_monitors = XRRQueryExtension( dpy, &randr_event, &rr_error )
@@ -895,7 +895,7 @@ void Overview::setBarriersEnabled( bool enable )
              it != barrier_lines.end();
              ++it )
             {
-            barriers.append( XFixesCreatePointerBarrier( dpy, root, (*it).x1, (*it).y1, (*it).x2, (*it).y2,
+            barriers.append( XFixesCreatePointerBarrier( xi_dpy, root, (*it).x1, (*it).y1, (*it).x2, (*it).y2,
                 (*it).directions, 0, NULL ));
             if( debug )
                 kdWarning( 1212 ) << "overview: barrier " << (*it).x1 << "," << (*it).y1 << " - "
@@ -907,9 +907,10 @@ void Overview::setBarriersEnabled( bool enable )
         for( QValueList< XID >::ConstIterator it = barriers.begin();
              it != barriers.end();
              ++it )
-            XFixesDestroyPointerBarrier( dpy, *it );
+            XFixesDestroyPointerBarrier( xi_dpy, *it );
         barriers.clear();
         }
+    XFlush( xi_dpy );
 #endif
     }
 
@@ -4014,30 +4015,59 @@ void Overview::endDrag( bool drop, const QPoint& p )
  was held shorter than SuperTapTime.  When another client has the keyboard
  grabbed (a menu, the screen locker), show() can't grab it and nothing
  happens.
+
+ Every XInput 2 request of KWin's goes to a connection of its own, read
+ through a socket notifier (readXI2()): XISelectEvents() replaces the
+ client's whole mask for a window and device, so on the connection that
+ KWin shares with Qt and the libraries (qt_xdisplay()) a selection of
+ anybody else's on the root window would replace KWin's raw events, or
+ KWin's theirs, and XIQueryVersion() there would fix the version for all
+ of them.  The connection is KWin's alone: its selection is set whole.
+ The pointer barriers are made on it too (their events go only to the
+ client that made them), and the XKB state for the grab-proof shortcuts
+ is selected on it (grabproof.h), so that it comes in order with the raw
+ key events.  KWin's own connection makes no XInput 2 request.
 */
+void Overview::openXI2()
+    {
+#ifdef OVERVIEW_XI2
+    xi_dpy = XOpenDisplay( DisplayString( dpy ));
+    if( xi_dpy == NULL )
+        return;
+    int xi_event, xi_error;
+    int xi_major = 2, xi_minor = 3;
+    if( XQueryExtension( xi_dpy, "XInputExtension", &xi_opcode, &xi_event, &xi_error )
+        && XIQueryVersion( xi_dpy, &xi_major, &xi_minor ) == Success && xi_major >= 2 )
+        {
+        have_xi_raw = xi_major > 2 || xi_minor >= 1;
+        int fixes_event, fixes_error;
+        int fixes_major = 5, fixes_minor = 0;
+        have_barriers = ( xi_major > 2 || xi_minor >= 3 )
+            && XFixesQueryExtension( xi_dpy, &fixes_event, &fixes_error )
+            && XFixesQueryVersion( xi_dpy, &fixes_major, &fixes_minor ) && fixes_major >= 5;
+        }
+    if( !have_xi_raw )
+        {
+        XCloseDisplay( xi_dpy );
+        xi_dpy = NULL;
+        have_barriers = false;
+        return;
+        }
+    xi_notifier = new QSocketNotifier( ConnectionNumber( xi_dpy ), QSocketNotifier::Read, this );
+    connect( xi_notifier, SIGNAL( activated( int )), SLOT( readXI2()));
+#endif
+    }
+
 void Overview::selectXI2()
     {
 #ifdef OVERVIEW_XI2
-    if( !have_xi_raw )
+    if( xi_dpy == NULL )
         {
-        ws->grabProofRawKeysSelected( false );
+        ws->grabProofRawConnection( NULL );
         return;
         }
     XIEventMask mask;
     unsigned char bits[ XIMaskLen( XI_LASTEVENT ) ] = { 0 };
-    // the root window's selection is shared with Qt (the same connection):
-    // its events stay, only KWin's own are set here
-    int count = 0;
-    XIEventMask* current = XIGetSelectedEvents( dpy, root, &count );
-    for( int i = 0;
-         current != NULL && i < count;
-         ++i )
-        if( current[ i ].deviceid == XIAllMasterDevices )
-            memcpy( bits, current[ i ].mask, QMIN( current[ i ].mask_len, (int) sizeof( bits )));
-    if( current != NULL )
-        XFree( current );
-    XIClearMask( bits, XI_RawButtonPress );
-    XIClearMask( bits, XI_BarrierHit );
     // all key presses and releases: the Super key, the screenshot keys while
     // a menu is open and the autorepeat of the shortcuts (grabproof.h)
     XISetMask( bits, XI_RawKeyPress );
@@ -4049,12 +4079,16 @@ void Overview::selectXI2()
     mask.deviceid = XIAllMasterDevices;
     mask.mask_len = sizeof( bits );
     mask.mask = bits;
-    XISelectEvents( dpy, root, &mask, 1 );
+    XISelectEvents( xi_dpy, root, &mask, 1 );
     // (after the selection: the keys down then, the raw events from there on)
-    ws->grabProofRawKeysSelected( true );
+    ws->grabProofRawConnection( xi_dpy );
     super_down = false;
+    XFlush( xi_dpy );
+    // the replies of the connection may have brought events along: read
+    // them (the socket notifier fires only for what is still unread)
+    QTimer::singleShot( 0, this, SLOT( readXI2()));
 #else
-    ws->grabProofRawKeysSelected( false );
+    ws->grabProofRawConnection( NULL );
 #endif
     }
 
@@ -4072,12 +4106,30 @@ bool Overview::superAlone( int keycode )
     return true;
     }
 
-bool Overview::handleXI2( XEvent* e )
+void Overview::readXI2()
+    {
+#ifdef OVERVIEW_XI2
+    if( xi_dpy == NULL )
+        return;
+    while( XPending( xi_dpy ) > 0 )
+        {
+        XEvent e;
+        XNextEvent( xi_dpy, &e );
+        if( e.type == GenericEvent && e.xgeneric.extension == xi_opcode )
+            handleXI2( &e );
+        else
+            ws->grabProofRawConnectionEvent( &e ); // the XKB state
+        }
+    XFlush( xi_dpy ); // (the barrier releases)
+#endif
+    }
+
+void Overview::handleXI2( XEvent* e )
     {
 #ifdef OVERVIEW_XI2
     XGenericEventCookie* cookie = &e->xcookie;
-    if( !XGetEventData( dpy, cookie ))
-        return true;
+    if( !XGetEventData( xi_dpy, cookie ))
+        return;
     bool tap = false;
     int grab_proof_key = 0;
     Time grab_proof_time = CurrentTime;
@@ -4142,13 +4194,13 @@ bool Overview::handleXI2( XEvent* e )
                 kdWarning( 1212 ) << "overview: barrier hit " << p.x() << "," << p.y() << " flags " << ev->flags
                     << " state " << state << ( release ? " released" : "" ) << endl;
             if( release )
-                XIBarrierReleasePointer( dpy, ev->deviceid, ev->barrier, ev->eventid );
+                XIBarrierReleasePointer( xi_dpy, ev->deviceid, ev->barrier, ev->eventid );
             break;
             }
         default:
             break;
         }
-    XFreeEventData( dpy, cookie );
+    XFreeEventData( xi_dpy, cookie );
     if( grab_proof_key != 0 )
         ws->grabProofRawKey( grab_proof_key, grab_proof_time, grab_proof_press, grab_proof_repeat );
     if( tap && options->overviewSuperKey )
@@ -4156,7 +4208,6 @@ bool Overview::handleXI2( XEvent* e )
 #else
     Q_UNUSED( e );
 #endif
-    return true;
     }
 
 bool Overview::x11Event( XEvent* e )
@@ -4213,8 +4264,7 @@ bool Overview::x11Event( XEvent* e )
         return true;
         }
 #ifdef OVERVIEW_XI2
-    if( e->type == GenericEvent && e->xgeneric.extension == xi_opcode && xi_opcode != 0 )
-        return handleXI2( e );
+    // (no XInput 2 events here: they come on the connection of selectXI2())
     if( have_monitors && ( e->type == randr_event + RRScreenChangeNotify || e->type == randr_event + RRNotify ))
         {
         monitors_timer.start( 200, true );
@@ -4293,6 +4343,8 @@ void Overview::frameCreated( Window ) {}
 void Overview::stackingChanged() {}
 void Overview::raiseCorners() {}
 void Overview::setBarriersEnabled( bool ) {}
+void Overview::selectXI2() { ws->grabProofRawConnection( NULL ); }
+void Overview::readXI2() {}
 
 #endif // HAVE_XRENDER
 

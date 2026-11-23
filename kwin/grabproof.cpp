@@ -33,9 +33,10 @@ static const int MenuGrabTime = 500;
 
 GrabProofShortcuts::GrabProofShortcuts()
     : probe( NULL ),
+      raw_dpy( NULL ),
       xkb_event( -1 ),
       xkb_mods( 0 ),
-      raw_keys( false ),
+      core_next( 0 ),
       raw_press_code( 0 ),
       raw_press_time( CurrentTime ),
       release_code( 0 ),
@@ -46,6 +47,8 @@ GrabProofShortcuts::GrabProofShortcuts()
       late_window( None )
     {
     memset( down, 0, sizeof( down ));
+    memset( core_code, 0, sizeof( core_code ));
+    memset( core_time, 0, sizeof( core_time ));
     }
 
 GrabProofShortcuts::~GrabProofShortcuts()
@@ -87,10 +90,7 @@ void GrabProofShortcuts::reconfigure( KGlobalAccel* keys, const QStringList& nam
             }
         }
     if( !grab_keys.isEmpty() && !watching )
-        {
-        selectXkb();
         watchExisting();
-        }
     }
 
 bool GrabProofShortcuts::isEmpty() const
@@ -111,13 +111,25 @@ bool GrabProofShortcuts::isDown( unsigned int keycode ) const
     return down[ ( keycode / 8 ) & 31 ] & ( 1 << ( keycode % 8 ));
     }
 
-void GrabProofShortcuts::setRawKeysSelected( bool selected )
+void GrabProofShortcuts::setRawConnection( Display* raw )
     {
-    // (after the selection: raw events queued before the reply are older,
-    // presses and releases that end where the reply is)
-    if( selected && !raw_keys ) // the keys down already
-        XQueryKeymap( qt_xdisplay(), reinterpret_cast< char* >( down ));
-    raw_keys = selected;
+    if( raw == raw_dpy )
+        return;
+    raw_dpy = raw;
+    xkb_event = -1;
+    if( raw_dpy == NULL )
+        return;
+    selectXkb();
+    // the keys down already (after the selection: raw events queued before
+    // the reply are older, presses and releases that end where the reply is)
+    XQueryKeymap( raw_dpy, reinterpret_cast< char* >( down ));
+    }
+
+void GrabProofShortcuts::rawConnectionEvent( const XEvent* e )
+    {
+    if( xkb_event >= 0 && e->type == xkb_event
+        && reinterpret_cast< const XkbAnyEvent* >( e )->xkb_type == XkbStateNotify )
+        xkb_mods = reinterpret_cast< const XkbStateNotifyEvent* >( e )->compat_grab_mods;
     }
 
 void GrabProofShortcuts::rawKeyEvent( int keycode, Time time, bool press, bool repeat )
@@ -132,14 +144,14 @@ void GrabProofShortcuts::rawKeyEvent( int keycode, Time time, bool press, bool r
 
 /*
  The modifiers of a press are XKB's state then: its StateNotify events
- (absolute states) are taken in the order they come with the key events.
- Selected first, read afterwards: the events queued before the reply
- carry older states and are taken after it, the last of them is the state
- that was read.
+ (absolute states) are taken in the order they come with the key events,
+ on the same connection.  Selected first, read afterwards: the events
+ queued before the reply carry older states and are taken after it, the
+ last of them is the state that was read.
 */
 void GrabProofShortcuts::selectXkb()
     {
-    Display* dpy = qt_xdisplay();
+    Display* dpy = raw_dpy;
     int opcode, error, major = XkbMajorVersion, minor = XkbMinorVersion;
     if( !XkbQueryExtension( dpy, &opcode, &xkb_event, &error, &major, &minor ))
         {
@@ -207,6 +219,11 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
         {
         case KeyPress:
             {
+            const unsigned int code = e->xkey.keycode;
+            core_code[ core_next ] = code;
+            core_time[ core_next ] = e->xkey.time;
+            core_next = ( core_next + 1 ) % CorePresses;
+            emit readRaw(); // (the raw events up to this press, if read in time)
             /*
              The autorepeat of a held key: with the server's usual one KGlobalAccel
              gets a release and a press with the same time again and again, but it
@@ -214,14 +231,14 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
              is not active); the server makes no raw events for repeats, so a press
              of a key down for an earlier raw press is one too.
             */
-            const unsigned int code = e->xkey.keycode;
             repeated = ( code == release_code && e->xkey.time == release_time )
-                || ( raw_keys && isDown( code )
+                || ( raw_dpy != NULL && isDown( code )
                     && !( code == raw_press_code && e->xkey.time == raw_press_time ));
             setDown( code, true );
             break;
             }
         case KeyRelease:
+            emit readRaw();
             release_code = e->xkey.keycode;
             release_time = e->xkey.time;
             repeated = false;
@@ -275,9 +292,6 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
                 }
             break;
         default:
-            if( xkb_event >= 0 && e->type == xkb_event
-                && reinterpret_cast< const XkbAnyEvent* >( e )->xkb_type == XkbStateNotify )
-                xkb_mods = reinterpret_cast< const XkbStateNotifyEvent* >( e )->compat_grab_mods;
             break;
         }
     }
@@ -339,13 +353,20 @@ static Bool scanQueue( Display*, XEvent* e, XPointer arg )
     }
 
 /*
- The server makes the raw event and the core one of a press together, the
- raw one first: after a round trip the core press is in our queue, if we
- get it (KGlobalAccel's passive grab, or a grab of KWin's own).  The focus
- events of the grabs before it are taken into account now too.
+ The server makes the raw event and the core one of a press together:
+ after a round trip on KWin's connection the core press is in its queue, if
+ KWin gets it (KGlobalAccel's passive grab, or a grab of KWin's own), or
+ KWin has had it already (the raw events come on another connection, read
+ when its socket notifier fires or before KWin's own key events).  The
+ focus events of the grabs before it are taken into account now too.
 */
 bool GrabProofShortcuts::deliveredToUs( int keycode, Time time )
     {
+    for( int i = 0;
+         i < CorePresses;
+         ++i )
+        if( core_code[ i ] == (unsigned int) keycode && core_time[ i ] == time )
+            return true;
     Display* dpy = qt_xdisplay();
     XSync( dpy, False );
     QueueScan scan;
@@ -439,3 +460,5 @@ bool GrabProofShortcuts::menuOpen()
     }
 
 } // namespace
+
+#include "grabproof.moc"

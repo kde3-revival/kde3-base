@@ -236,6 +236,8 @@ void Workspace::init()
     // after the electric borders, the hot corners are above them
     overview = new Overview( this );
     overview->setShortcut( keys->shortcut( "Show Window Overview" ));
+    // the raw key events come before KWin's own key events are looked at
+    connect( grab_proof, SIGNAL( readRaw()), overview, SLOT( readXI2()));
     effects = new Effects( this );
 
 // not used yet
@@ -2795,11 +2797,18 @@ bool Workspace::hasGrabProofShortcuts() const
     return grab_proof != NULL && !grab_proof->isEmpty();
     }
 
-// the overview's XInput 2 selection has the raw key events or not
-void Workspace::grabProofRawKeysSelected( bool selected )
+// the overview's XInput 2 connection with the raw key events, or NULL
+void Workspace::grabProofRawConnection( Display* raw )
     {
     if( grab_proof != NULL )
-        grab_proof->setRawKeysSelected( selected );
+        grab_proof->setRawConnection( raw );
+    }
+
+// another event than XInput's of that connection (the XKB state)
+void Workspace::grabProofRawConnectionEvent( const XEvent* e )
+    {
+    if( grab_proof != NULL )
+        grab_proof->rawConnectionEvent( e );
     }
 
 // a raw key event (XInput 2) seen by the overview

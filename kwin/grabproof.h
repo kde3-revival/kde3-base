@@ -44,10 +44,12 @@ namespace KWinInternal
     autorepeat, from any keyboard (the master device's events); the
     modifiers are XKB's (compat grab state: latched and locked ones too,
     e.g. sticky keys) from its StateNotify events up to the press, in
-    order;
+    order (both come on the overview's XInput 2 connection, a connection
+    of KWin's own, see Overview::selectXI2());
   - KWin did not get the key press itself (it is not in KWin's event
-    queue after a round trip), so the normal shortcut did not fire: no
-    double trigger, also not while KWin has the keyboard itself;
+    queue after a round trip, nor one of the last presses KWin got), so
+    the normal shortcut did not fire: no double trigger, also not while
+    KWin has the keyboard itself;
   - another client actively grabs both the keyboard and the pointer
     (AlreadyGrabbed for both), as menus do, tried with grabs of a
     connection of our own that are released at once when they succeed;
@@ -76,8 +78,9 @@ namespace KWinInternal
  XInput 2.1; else only a release and a press with the same time are seen
  as one).
 */
-class GrabProofShortcuts
+class GrabProofShortcuts : public QObject
     {
+    Q_OBJECT
     public:
         GrabProofShortcuts();
         ~GrabProofShortcuts();
@@ -86,8 +89,11 @@ class GrabProofShortcuts
         // the actions named, with their current shortcuts
         void reconfigure( KGlobalAccel* keys, const QStringList& names );
         bool isEmpty() const;
-        // whether the raw key events come (Overview::selectXI2())
-        void setRawKeysSelected( bool selected );
+        // the connection on which the raw key events come (selected
+        // already), NULL: none (Overview::selectXI2())
+        void setRawConnection( Display* raw );
+        // an event of that connection that is not XInput's
+        void rawConnectionEvent( const XEvent* e );
         // a raw key event (the server sends none for autorepeats)
         void rawKeyEvent( int keycode, Time time, bool press, bool repeat );
         // a raw key press, not an autorepeat, while the shortcuts are enabled
@@ -96,6 +102,10 @@ class GrabProofShortcuts
         void x11Event( const XEvent* e );
         // a shortcut fires: whether KWin's key press is an autorepeat
         bool repeatedPress() const { return repeated; }
+    signals:
+        // the events of the raw connection that have come are wanted
+        // (before KWin's own key events)
+        void readRaw();
     private:
         void selectXkb();
         bool deliveredToUs( int keycode, Time time );
@@ -118,11 +128,16 @@ class GrabProofShortcuts
         QMap< QString, Slot > actions;
         QValueList< Key > grab_keys;
         Display* probe; // a connection of our own for testing the grabs
-        int xkb_event; // XKB's event base, -1 without XKB
+        Display* raw_dpy; // the raw key events and the XKB state come there
+        int xkb_event; // XKB's event base there, -1 without XKB
         uint xkb_mods; // the compat grab modifiers, in event order
         // the keys down, from the raw events (and KWin's own key events)
         unsigned char down[ 32 ];
-        bool raw_keys;
+        // the last key presses that KWin got
+        enum { CorePresses = 8 };
+        unsigned int core_code[ CorePresses ];
+        Time core_time[ CorePresses ];
+        int core_next;
         unsigned int raw_press_code; // the last raw press
         Time raw_press_time;
         unsigned int release_code; // KWin's last key release
