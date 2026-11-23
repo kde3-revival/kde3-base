@@ -28,9 +28,13 @@ License. See the file "COPYING" for the exact licensing terms.
 namespace KWinInternal
 {
 
+// ms from the map of a menu to its grab, when the map was too quick to watch it
+static const int MenuGrabTime = 500;
+
 GrabProofShortcuts::GrabProofShortcuts()
     : probe( NULL ),
-      modmap( NULL ),
+      xkb_event( -1 ),
+      xkb_mods( 0 ),
       raw_keys( false ),
       raw_press_code( 0 ),
       raw_press_time( CurrentTime ),
@@ -39,15 +43,13 @@ GrabProofShortcuts::GrabProofShortcuts()
       repeated( false ),
       watching( false ),
       grab_window( None ),
-      last_mapped( None )
+      late_window( None )
     {
     memset( down, 0, sizeof( down ));
     }
 
 GrabProofShortcuts::~GrabProofShortcuts()
     {
-    if( modmap != NULL )
-        XFreeModifiermap( modmap );
     if( probe != NULL )
         XCloseDisplay( probe );
     }
@@ -85,7 +87,10 @@ void GrabProofShortcuts::reconfigure( KGlobalAccel* keys, const QStringList& nam
             }
         }
     if( !grab_keys.isEmpty() && !watching )
+        {
+        selectXkb();
         watchExisting();
+        }
     }
 
 bool GrabProofShortcuts::isEmpty() const
@@ -108,6 +113,8 @@ bool GrabProofShortcuts::isDown( unsigned int keycode ) const
 
 void GrabProofShortcuts::setRawKeysSelected( bool selected )
     {
+    // (after the selection: raw events queued before the reply are older,
+    // presses and releases that end where the reply is)
     if( selected && !raw_keys ) // the keys down already
         XQueryKeymap( qt_xdisplay(), reinterpret_cast< char* >( down ));
     raw_keys = selected;
@@ -123,26 +130,28 @@ void GrabProofShortcuts::rawKeyEvent( int keycode, Time time, bool press, bool r
         }
     }
 
-// the modifiers of the keys down (in the order of the raw events)
-uint GrabProofShortcuts::heldModifiers()
+/*
+ The modifiers of a press are XKB's state then: its StateNotify events
+ (absolute states) are taken in the order they come with the key events.
+ Selected first, read afterwards: the events queued before the reply
+ carry older states and are taken after it, the last of them is the state
+ that was read.
+*/
+void GrabProofShortcuts::selectXkb()
     {
-    if( modmap == NULL )
-        modmap = XGetModifierMapping( qt_xdisplay());
-    if( modmap == NULL )
-        return 0;
-    uint mod = 0;
-    for( int i = 0;
-         i < 8;
-         ++i )
-        for( int j = 0;
-             j < modmap->max_keypermod;
-             ++j )
-            {
-            KeyCode code = modmap->modifiermap[ i * modmap->max_keypermod + j ];
-            if( code != 0 && isDown( code ))
-                mod |= 1 << i;
-            }
-    return mod & KKeyNative::accelModMaskX();
+    Display* dpy = qt_xdisplay();
+    int opcode, error, major = XkbMajorVersion, minor = XkbMinorVersion;
+    if( !XkbQueryExtension( dpy, &opcode, &xkb_event, &error, &major, &minor ))
+        {
+        xkb_event = -1;
+        return;
+        }
+    const unsigned long details = XkbModifierStateMask | XkbModifierBaseMask | XkbModifierLatchMask
+        | XkbModifierLockMask | XkbGrabModsMask | XkbCompatGrabModsMask;
+    XkbSelectEventDetails( dpy, XkbUseCoreKbd, XkbStateNotify, details, details );
+    XkbStateRec state;
+    if( XkbGetState( dpy, XkbUseCoreKbd, &state ) == Success )
+        xkb_mods = state.compat_grab_mods;
     }
 
 void GrabProofShortcuts::keyPressed( int keycode, Time time )
@@ -169,7 +178,9 @@ void GrabProofShortcuts::keyPressed( int keycode, Time time )
             continue;
         if( !ours )
             {
-            mod = heldModifiers();
+            if( xkb_event < 0 )
+                return;
+            mod = xkb_mods & KKeyNative::accelModMaskX();
             ours = true;
             }
         if( key_mod == mod )
@@ -216,11 +227,6 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
             repeated = false;
             setDown( e->xkey.keycode, false );
             break;
-        case MappingNotify:
-            if( modmap != NULL )
-                XFreeModifiermap( modmap );
-            modmap = NULL;
-            break;
         case CreateNotify:
             if( watching && e->xcreatewindow.parent == qt_xrootwin() && e->xcreatewindow.override_redirect )
                 watch( e->xcreatewindow.window );
@@ -230,29 +236,48 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
                 {
                 if( !watched.contains( e->xmap.window ))
                     watch( e->xmap.window );
-                last_mapped = e->xmap.window;
+                // mapped before we could watch it: its grab may come next
+                late_window = watched.contains( e->xmap.window ) && !watched[ e->xmap.window ]
+                    ? e->xmap.window : None;
+                late_time.start();
                 }
             break;
         case UnmapNotify:
             if( e->xunmap.window == grab_window )
                 grab_window = None;
+            if( e->xunmap.window == late_window )
+                late_window = None;
+            if( watched.contains( e->xunmap.window ))
+                watched[ e->xunmap.window ] = true; // its next grab is seen
             break;
         case DestroyNotify:
             watched.remove( e->xdestroywindow.window );
             if( e->xdestroywindow.window == grab_window )
                 grab_window = None;
-            if( e->xdestroywindow.window == last_mapped )
-                last_mapped = None;
+            if( e->xdestroywindow.window == late_window )
+                late_window = None;
             break;
         case FocusIn:
             if( e->xfocus.mode == NotifyGrab && watched.contains( e->xfocus.window ))
+                {
                 grab_window = e->xfocus.window;
+                late_window = None;
+                }
             break;
         case FocusOut:
-            if( e->xfocus.mode == NotifyUngrab && e->xfocus.window == grab_window )
-                grab_window = None;
+            if( e->xfocus.window == grab_window && grab_window != None )
+                grab_window = None; // released, or replaced by another grab
+            else if( e->xfocus.mode == NotifyGrab && !watched.contains( e->xfocus.window )
+                && late_window != None && late_time.elapsed() < MenuGrabTime )
+                { // a grab begins (the focus loses the keyboard) right after the map
+                grab_window = late_window;
+                late_window = None;
+                }
             break;
         default:
+            if( xkb_event >= 0 && e->type == xkb_event
+                && reinterpret_cast< const XkbAnyEvent* >( e )->xkb_type == XkbStateNotify )
+                xkb_mods = reinterpret_cast< const XkbStateNotifyEvent* >( e )->compat_grab_mods;
             break;
         }
     }
@@ -381,7 +406,6 @@ bool GrabProofShortcuts::menuOpen()
     if( !XQueryTree( dpy, root, &dummy_root, &dummy_parent, &children, &count ))
         return false;
     bool grab_window_shown = false;
-    Window topmost = None;
     bool locker = false;
     for( unsigned int i = 0; // bottom to top
          i < count && !locker;
@@ -403,7 +427,6 @@ bool GrabProofShortcuts::menuOpen()
         if( attr.x > 0 || attr.y > 0 || attr.x + attr.width < root_attr.width
             || attr.y + attr.height < root_attr.height )
             { // smaller than the screen
-            topmost = children[ i ];
             if( children[ i ] == grab_window )
                 grab_window_shown = true;
             }
@@ -412,11 +435,7 @@ bool GrabProofShortcuts::menuOpen()
         XFree( children );
     if( locker )
         return false;
-    if( grab_window_shown )
-        return true;
-    // mapped too quickly to know its grab: the topmost one, mapped last
-    return topmost != None && topmost == last_mapped && watched.contains( topmost )
-        && !watched[ topmost ];
+    return grab_window_shown;
     }
 
 } // namespace

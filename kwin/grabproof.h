@@ -12,6 +12,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #define KWIN_GRABPROOF_H
 
 #include <qcstring.h>
+#include <qdatetime.h>
 #include <qguardedptr.h>
 #include <qmap.h>
 #include <qobject.h>
@@ -41,32 +42,39 @@ namespace KWinInternal
   - the key and the modifiers are one of the action's shortcuts, as
     KGlobalAccel grabs it (Alt+Print on the old keycodes too), not an
     autorepeat, from any keyboard (the master device's events); the
-    modifiers are those held at the press, from the raw events of the
-    modifier keys before it, in order;
+    modifiers are XKB's (compat grab state: latched and locked ones too,
+    e.g. sticky keys) from its StateNotify events up to the press, in
+    order;
   - KWin did not get the key press itself (it is not in KWin's event
     queue after a round trip), so the normal shortcut did not fire: no
     double trigger, also not while KWin has the keyboard itself;
   - another client actively grabs both the keyboard and the pointer
     (AlreadyGrabbed for both), as menus do, tried with grabs of a
     connection of our own that are released at once when they succeed;
-  - the keyboard grab is the menu's: an override-redirect window smaller
-    than the screen got the grab's FocusIn (NotifyGrab; KWin selects
-    FocusChange on override-redirect windows when they are created).  For
-    one created and mapped too quickly for that, the topmost viewable
-    override-redirect window, when it is the one mapped last, stands in;
+  - the keyboard grab is on a shown override-redirect window smaller than
+    the screen (a menu): it got the grab's FocusIn (NotifyGrab; KWin
+    selects FocusChange on override-redirect windows when they are
+    created).  A menu created, mapped and grabbed at once (most context
+    menus) is mapped before KWin can select that: then the grab that
+    begins (FocusOut NotifyGrab on a window of KWin's, the focus) right
+    after its map, within MenuGrabTime, is taken as its grab.  Another
+    focus change of the grab (a grab replaced, released) forgets it;
   - the screen locker (kdesktop_lock) is not shown.
  What is left: a program that holds both grabs on an override-redirect
- window smaller than the screen looks like a menu (and with the stand-in,
- one whose override-redirect window was mapped last while it grabs from
- elsewhere).  Virtual machine and remote desktop viewers grab on their own
- managed window or the root window, so they don't.
+ window smaller than the screen looks like a menu, as does a viewer that
+ grabs (from the focus) within MenuGrabTime after some other program maps
+ an override-redirect window it creates at once.  Virtual machine and
+ remote desktop viewers grab on their own managed window or the root
+ window, so otherwise they don't.
  Nothing else is looked at or kept: of the other keys only whether they are
- down (the modifiers, the autorepeat), no logging of keys.
+ down (the autorepeat), no logging of keys.
 
  Holding a shortcut key also fired the shortcut again for every autorepeat
  (KGlobalAccel's passive grab activates again): repeatedPress() tells
  whether KWin's current key press is an autorepeat, for the shortcuts that
- want to fire once.
+ want to fire once.  KWin always watches the raw key events for this (with
+ XInput 2.1; else only a release and a press with the same time are seen
+ as one).
 */
 class GrabProofShortcuts
     {
@@ -89,7 +97,7 @@ class GrabProofShortcuts
         // a shortcut fires: whether KWin's key press is an autorepeat
         bool repeatedPress() const { return repeated; }
     private:
-        uint heldModifiers();
+        void selectXkb();
         bool deliveredToUs( int keycode, Time time );
         bool menuHasGrabs();
         bool menuOpen();
@@ -110,7 +118,8 @@ class GrabProofShortcuts
         QMap< QString, Slot > actions;
         QValueList< Key > grab_keys;
         Display* probe; // a connection of our own for testing the grabs
-        XModifierKeymap* modmap;
+        int xkb_event; // XKB's event base, -1 without XKB
+        uint xkb_mods; // the compat grab modifiers, in event order
         // the keys down, from the raw events (and KWin's own key events)
         unsigned char down[ 32 ];
         bool raw_keys;
@@ -123,7 +132,8 @@ class GrabProofShortcuts
         QMap< Window, bool > watched;
         bool watching;
         Window grab_window; // the one with the keyboard grab (FocusIn NotifyGrab)
-        Window last_mapped;
+        Window late_window; // mapped before it could be watched
+        QTime late_time;
     };
 
 } // namespace

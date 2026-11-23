@@ -85,6 +85,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 extern Time qt_x_time;
@@ -4017,32 +4018,43 @@ void Overview::endDrag( bool drop, const QPoint& p )
 void Overview::selectXI2()
     {
 #ifdef OVERVIEW_XI2
-    // the screenshot keys while a menu is open (grabproof.h): the presses,
-    // and the releases for the modifiers and the autorepeat
-    const bool grab_proof = have_xi_raw && ws->hasGrabProofShortcuts();
-    ws->grabProofRawKeysSelected( have_xi_raw && ( grab_proof || options->overviewSuperKey ));
     if( !have_xi_raw )
+        {
+        ws->grabProofRawKeysSelected( false );
         return;
+        }
     XIEventMask mask;
     unsigned char bits[ XIMaskLen( XI_LASTEVENT ) ] = { 0 };
+    // the root window's selection is shared with Qt (the same connection):
+    // its events stay, only KWin's own are set here
+    int count = 0;
+    XIEventMask* current = XIGetSelectedEvents( dpy, root, &count );
+    for( int i = 0;
+         current != NULL && i < count;
+         ++i )
+        if( current[ i ].deviceid == XIAllMasterDevices )
+            memcpy( bits, current[ i ].mask, QMIN( current[ i ].mask_len, (int) sizeof( bits )));
+    if( current != NULL )
+        XFree( current );
+    XIClearMask( bits, XI_RawButtonPress );
+    XIClearMask( bits, XI_BarrierHit );
+    // all key presses and releases: the Super key, the screenshot keys while
+    // a menu is open and the autorepeat of the shortcuts (grabproof.h)
+    XISetMask( bits, XI_RawKeyPress );
+    XISetMask( bits, XI_RawKeyRelease );
     if( options->overviewSuperKey )
-        {
-        XISetMask( bits, XI_RawKeyPress );
-        XISetMask( bits, XI_RawKeyRelease );
         XISetMask( bits, XI_RawButtonPress );
-        }
-    if( grab_proof )
-        {
-        XISetMask( bits, XI_RawKeyPress );
-        XISetMask( bits, XI_RawKeyRelease );
-        }
     if( have_barriers && !barrier_lines.isEmpty())
         XISetMask( bits, XI_BarrierHit );
     mask.deviceid = XIAllMasterDevices;
     mask.mask_len = sizeof( bits );
     mask.mask = bits;
     XISelectEvents( dpy, root, &mask, 1 );
+    // (after the selection: the keys down then, the raw events from there on)
+    ws->grabProofRawKeysSelected( true );
     super_down = false;
+#else
+    ws->grabProofRawKeysSelected( false );
 #endif
     }
 
