@@ -310,7 +310,7 @@ class OverviewItem
     public:
         enum Kind { Desktop, Dock, Managed, Other };
         OverviewItem()
-            : kind( Other ), client( NULL ), id( None ), depth( 0 ), format( NULL ),
+            : kind( Other ), client( NULL ), id( None ), depth( 0 ), format( NULL ), visual( NULL ),
               alpha_format( false ), shaped( false ), pixmap( None ), damage( None ),
               in_layout( false ), screen( 0 ), matches( true ),
               fade_from( 1 ), fade_to( 1 ), fade_start( 0 ), fade( 1 ),
@@ -334,6 +334,7 @@ class OverviewItem
         QRect geom; // the real geometry, including the X border
         int depth;
         XRenderPictFormat* format;
+        Visual* visual; // (of format: the pixmap's textures need it)
         bool alpha_format;
         bool shaped;
         QValueVector< XRectangle > shape; // relative to geom
@@ -1725,6 +1726,7 @@ OverviewItem* Overview::createItem( Window w, const XWindowAttributes& attr )
     item->geom = QRect( attr.x, attr.y, attr.width + 2 * attr.border_width, attr.height + 2 * attr.border_width );
     item->depth = attr.depth;
     item->format = XRenderFindVisualFormat( dpy, attr.visual );
+    item->visual = attr.visual;
     item->alpha_format = item->format != NULL && item->format->type == PictTypeDirect
         && item->format->direct.alphaMask != 0;
     item->client = ws->findClient( FrameIdMatchPredicate( w ));
@@ -1788,6 +1790,7 @@ OverviewItem* Overview::createMinimizedItem( Client* c )
         if( format != NULL && format->depth == depth && renderer() != NULL )
             { // (the texture keeps the contents when Effects frees the pixmap)
             item->format = format;
+            item->visual = visual;
             item->depth = depth;
             item->alpha_format = format->type == PictTypeDirect && format->direct.alphaMask != 0;
             item->mip[ 0 ] = renderer()->textureFromPixmap( pixmap, size.width(), size.height(), depth, visual );
@@ -1830,6 +1833,7 @@ void Overview::makeLive( OverviewItem* item )
         {
         item->depth = attr.depth;
         item->format = XRenderFindVisualFormat( dpy, attr.visual );
+        item->visual = attr.visual;
         item->alpha_format = item->format != NULL && item->format->type == PictTypeDirect
             && item->format->direct.alphaMask != 0;
         bindContents( item, false );
@@ -1892,12 +1896,13 @@ bool Overview::bindContents( OverviewItem* item, bool can_copy )
             item->geom.width(), item->geom.height(), 0, 0 );
         XFreeGC( dpy, gc );
         item->format = r->format;
+        item->visual = DefaultVisual( dpy, DefaultScreen( dpy )); // (r->format's)
         item->depth = depth;
         item->alpha_format = false;
         item->snapshot = true;
         }
     item->mip[ 0 ] = renderer()->textureFromPixmap( item->pixmap, item->geom.width(), item->geom.height(),
-        item->depth, NULL );
+        item->depth, item->visual );
     item->mip_w[ 0 ] = item->geom.width();
     item->mip_h[ 0 ] = item->geom.height();
     for( int i = 1;
@@ -2687,13 +2692,13 @@ void Overview::updateMips( OverviewItem* item, int level )
             {
             item->mip[ l ] = rr->createOffscreen( w, h, item->alpha_format );
             if( item->mip[ l ] == NULL )
-                return;
+                break; // (the target goes back to the frame below)
             item->mip_w[ l ] = w;
             item->mip_h[ l ] = h;
             }
         Render::Texture* src = mipTexture( item, l - 1 );
         if( src == NULL )
-            return;
+            break;
         // exactly 2x2 boxes: bilinear sampling between four pixels
         rr->clearClip();
         rr->setTarget( item->mip[ l ] );

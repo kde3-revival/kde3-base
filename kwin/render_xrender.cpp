@@ -167,7 +167,8 @@ Texture* XRenderRenderer::textureFromPixmap( Pixmap pixmap, int w, int h, int de
     if( format == NULL )
         format = XRenderFindStandardFormat( dpy, depth == 32 ? PictStandardARGB32
             : depth == 8 ? PictStandardA8 : PictStandardRGB24 );
-    if( format == NULL )
+    // (a format of another depth: BadMatch, a picture that doesn't exist)
+    if( format == NULL || format->depth != depth )
         return NULL;
     const bool alpha = format->type == PictTypeDirect && format->direct.alphaMask != 0;
     Picture pic = XRenderCreatePicture( dpy, pixmap, format, 0, NULL );
