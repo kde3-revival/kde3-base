@@ -385,7 +385,7 @@ class EffectAnim
             : kind( Iconify ), client( NULL ), frame( None ), shaped( false ), keep_snap( false ),
               style( 1 ), p( 0 ), p_from( 0 ), p_to( 0 ), seg_start( 0 ), seg_duration( 0 ), linear( false ),
               defer( false ), wait( false ), damage( None ), wait_start( 0 ), damage_first( 0 ),
-              damage_last( 0 ), ready( true ), fade( 0 ), fade_start( 0 ), grow( false ), moved( false ), max_wait( MaxWait ), on_top( false ), use_below( false ), below( None ),
+              damage_last( 0 ), ready( true ), fade( 0 ), fade_start( 0 ), grow( false ), moved( false ), opacity( 1.0 ), max_wait( MaxWait ), on_top( false ), use_below( false ), below( None ),
               done( false ), fresh( true ), started( 0 ), live_shape_read( false ), live_shaped( false )
             {}
         Kind kind;
@@ -415,6 +415,7 @@ class EffectAnim
         double fade, fade_start; // Morph: the new contents fading in
         bool grow; // Morph: to a larger size
         bool moved; // Morph: only moved (to another monitor), the same size
+        double opacity; // the window's (_NET_WM_WINDOW_OPACITY, composited), the last one known
         double max_wait; // the longest wait for the repaint
         bool on_top;
         // drawn right above this scene window (None: the bottom one), where
@@ -610,6 +611,9 @@ EffectAnim* Effects::newAnim( int kind, Client* c )
     anim->caption = c->caption();
     anim->geom = c->geometry();
     anim->started = now();
+    Compositor* cm = composited_now() ? compositor() : NULL;
+    if( cm != NULL && cm->hasWindow( anim->frame ))
+        anim->opacity = cm->windowOpacity( anim->frame );
     return anim;
     }
 
@@ -1959,6 +1963,15 @@ void Effects::drawShadow( EffectAnim* anim, bool live, const RectF& rect, double
 
 void Effects::drawAnim( EffectAnim* anim )
     {
+    // translucent windows stay so while animated (the compositor draws
+    // them with their opacity; a closed one keeps the last one known)
+    if( comp_session )
+        {
+        Compositor* cm = compositor();
+        if( cm != NULL && cm->hasWindow( anim->frame ))
+            anim->opacity = cm->windowOpacity( anim->frame );
+        }
+    const double op = comp_session ? anim->opacity : 1.0;
     switch( anim->kind )
         {
         case EffectAnim::Iconify:
@@ -1979,14 +1992,14 @@ void Effects::drawAnim( EffectAnim* anim )
             if( anim->p <= 0 && anim->p_to == 0 )
                 { // restored, waiting for the repaint
                 drawShadow( anim, live, RectF( anim->geom ), 1.0 );
-                drawPicture( *pic, RectF( anim->geom ), 1.0, shaped, *shape );
+                drawPicture( *pic, RectF( anim->geom ), op, shaped, *shape );
                 return;
                 }
             if( anim->style == Genie )
                 {
                 // (the shadow goes at once: the funnel has none)
                 drawShadow( anim, live, RectF( anim->geom ), 1 - clamp01( anim->p / 0.15 ));
-                drawGenie( anim, *pic, true, anim->p, 1.0 );
+                drawGenie( anim, *pic, true, anim->p, op );
                 return;
                 }
             RectF target_rect = fitInto( anim->geom.width(), anim->geom.height(), anim->icon );
@@ -1994,7 +2007,7 @@ void Effects::drawAnim( EffectAnim* anim )
             anim->drawn = rect;
             const double alpha = 1 - anim->p * anim->p * anim->p * anim->p;
             drawShadow( anim, live, rect, alpha * ( 1 - anim->p ));
-            drawPicture( *pic, rect, alpha, shaped, *shape );
+            drawPicture( *pic, rect, alpha * op, shaped, *shape );
             break;
             }
         case EffectAnim::Morph:
@@ -2006,9 +2019,9 @@ void Effects::drawAnim( EffectAnim* anim )
             drawShadow( anim, true, rect, anim->p );
             EffectPicture* live = anim->fade > 0 ? livePicture( anim ) : NULL;
             if( anim->fade < 1 || ( anim->moved && live == NULL ))
-                drawPicture( anim->snap, rect, 1.0, anim->shaped, anim->shape );
+                drawPicture( anim->snap, rect, op, anim->shaped, anim->shape );
             if( live != NULL )
-                drawPicture( *live, rect, anim->fade, anim->live_shaped, anim->live_shape );
+                drawPicture( *live, rect, anim->fade * op, anim->live_shaped, anim->live_shape );
             break;
             }
         case EffectAnim::Open:
@@ -2034,7 +2047,7 @@ void Effects::drawAnim( EffectAnim* anim )
             if( anim->p >= 1 )
                 rect = g;
             drawShadow( anim, live, rect, anim->p );
-            drawPicture( *pic, rect, anim->p, shaped, *shape );
+            drawPicture( *pic, rect, anim->p * op, shaped, *shape );
             break;
             }
         }
