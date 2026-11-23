@@ -628,6 +628,14 @@ void Compositor::stop( bool failed, const QString& why )
 
 bool Compositor::createBuffers()
     {
+    // KWIN_COMPOSITOR_TEST_FAIL_BUFFERS=n (tests): the buffers made after
+    // the n-th time fail
+    static int test_fail = getenv( "KWIN_COMPOSITOR_TEST_FAIL_BUFFERS" ) != NULL
+        ? atoi( getenv( "KWIN_COMPOSITOR_TEST_FAIL_BUFFERS" )) : -1;
+    if( test_fail == 0 )
+        return false;
+    if( test_fail > 0 )
+        --test_fail;
     // (BadAlloc: not enough video memory)
     trapErrors( dpy );
     bool ok = true;
@@ -1348,7 +1356,7 @@ void Compositor::updateRootPixmap()
 */
 void Compositor::scheduleRepaint()
     {
-    if( !active )
+    if( !active || outputs.isEmpty())
         return;
     if( frame_wanted )
         return; // (the completion of the queued frame starts it)
@@ -1533,8 +1541,11 @@ void Compositor::setupOutputs( bool per_monitor_mode )
           // new ones (the server keeps the old ones while it needs them)
         freeBuffers();
         if( !createBuffers())
-            {
-            stop( true, i18n( "the frame buffers could not be made" ));
+            { // no outputs (nothing is drawn) until stopped from the event
+              // loop: the callers (unredirecting, a presentation's
+              // completion) still use the windows and the presenters
+            freeBuffers();
+            QTimer::singleShot( 0, this, SLOT( outputsFailed()));
             return;
             }
         }
@@ -1615,6 +1626,12 @@ void Compositor::outputStalled()
     if( debug )
         kdWarning( 1212 ) << "compositor: no presentation events, buffers anew" << endl;
     QTimer::singleShot( 0, this, SLOT( resetOutputs()));
+    }
+
+void Compositor::outputsFailed()
+    {
+    if( active && outputs.isEmpty())
+        stop( true, i18n( "the frame buffers could not be made" ));
     }
 
 void Compositor::resetOutputs()
@@ -1698,8 +1715,8 @@ bool Compositor::presentTo( CompositorOutput* o, int buf )
 void Compositor::performRepaint()
     {
 #ifdef COMPOSITOR_BUILD
-    if( !active )
-        return;
+    if( !active || outputs.isEmpty())
+        return; // (outputsFailed() comes)
     Effects* fx = ws->windowEffects();
     Overview* ov = ws->windowOverview();
     const bool fx_on = fx != NULL && fx->composited();
@@ -1939,6 +1956,7 @@ void Compositor::paintBackground( const QRegion& region )
 */
 void Compositor::paint( Render::Texture* target, const QRegion& region )
     {
+#ifdef COMPOSITOR_BUILD
     if( !rend->setTarget( target ))
         return;
     Overview* ov = ws->windowOverview();
@@ -2044,6 +2062,10 @@ void Compositor::paint( Render::Texture* target, const QRegion& region )
     if( ov != NULL ) // (the ripples of the hot corner)
         ov->paintOverlay( rend, target, region );
     rend->clearClip();
+#else
+    Q_UNUSED( target );
+    Q_UNUSED( region );
+#endif
     }
 
 //****************************************
@@ -2079,6 +2101,11 @@ Render::Texture* Compositor::windowTexture( Window id, QRect* geom )
     if( geom != NULL )
         *geom = w->geom;
     return w->texture;
+    }
+
+bool Compositor::hasWindow( Window id ) const
+    {
+    return findWindow( id ) != NULL;
     }
 
 double Compositor::windowOpacity( Window id ) const

@@ -114,7 +114,8 @@ class Compositor : public QObject
         // the contents of a mapped, redirected window (NULL: none)
         Render::Texture* windowTexture( Window w, QRect* geom );
         QRegion windowShape( Window w ) const; // window relative, null: the rectangle
-        double windowOpacity( Window w ) const;
+        double windowOpacity( Window w ) const; // (1.0 when unknown)
+        bool hasWindow( Window w ) const;
         // the root window's background (into the current target, clipped to region)
         void drawBackground( const QRegion& region );
         // no window unredirected but the screen locker (the overview is shown)
@@ -136,6 +137,7 @@ class Compositor : public QObject
         void outputCompleted( bool skipped, int missed );
         void outputStalled();
         void resetOutputs();
+        void outputsFailed();
         void outputIdle();
         void checkUnredirect();
         void retry();

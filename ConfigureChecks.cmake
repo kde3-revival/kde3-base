@@ -293,6 +293,11 @@ if(KDE3_WITH_XINERAMA AND X11_Xinerama_FOUND)
 endif()
 
 # ---- kwin ------------------------------------------------------------------
+# KWin draws with XRender (the overview, the animations, the compositor's
+# fallback; its moc'ed Presenter class exists only with it): required
+if(NOT X11_Xrender_FOUND)
+  message(FATAL_ERROR "kwin needs the X Rendering Extension library (libXrender)")
+endif()
 # (kompmgr is gone: KWin composites itself, kwin/compositor.cpp)
 option(KDE3_WITH_COMPOSITE "Xcomposite support (KWin compositing, taskmanager)" ON)
 # the window overview: XRender for drawing; window contents with

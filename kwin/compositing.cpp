@@ -357,8 +357,12 @@ void Presenter::presentBuffer( int buf, XID update, int x, int y )
         return;
         }
 #endif
+#ifdef COMPOSITING_COMPOSITE
     if( update != None )
         XFixesSetGCClipRegion( dpy, gc, -x, -y, update );
+#else
+    update = None; // (only the compositor gives regions: not built)
+#endif
     XCopyArea( dpy, buffers[ buf ], window, gc, x, y, width, height, 0, 0 );
     if( update != None )
         XSetClipMask( dpy, gc, None );
