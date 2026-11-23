@@ -233,7 +233,9 @@ void Workspace::setActiveClient( Client* c, allowed_t )
         last_active_client = active_client;
     if ( active_client ) 
         {
-        if( !active_client->isDesktop() && !active_client->isDock())
+        if( active_client->isDesktop()) // a click on the desktop of a monitor
+            setActiveScreen( pointerScreen());
+        else if( !active_client->isDock())
             setActiveScreen( clientScreen( active_client ));
         updateFocusChains( active_client, FocusChainMakeFirst );
         active_client->demandAttention( false );

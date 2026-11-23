@@ -245,6 +245,11 @@ QStringList Workspace::screenIds() const
         {
         int count = 0;
         XRRMonitorInfo* mon = XRRGetMonitors( dpy, root, True, &count );
+        if( mon != NULL && count == 0 )
+            { // every output off (Qt falls back to the whole root window): none
+            XRRFreeMonitors( mon );
+            return QStringList();
+            }
         XRRScreenResources* res = XRRGetScreenResourcesCurrent( dpy, root );
         Atom edid_atom = XInternAtom( dpy, RR_PROPERTY_RANDR_EDID, False );
         for( int m = 0;
@@ -346,8 +351,8 @@ void Workspace::updateScreens()
          ++i )
         geometries.append( dw->screenGeometry( i ));
     const QStringList ids = screenIds();
-    if( geometries.isEmpty())
-        return; // zero monitors: nothing moves
+    if( geometries.isEmpty() || ids.isEmpty())
+        return; // zero monitors: nothing moves (the old ones stay known)
     const QStringList old_ids = screen_desktops.ids();
     const QValueVector< QRect > old_geometries = screen_geometries;
     // the old monitor of every window, from the old geometries

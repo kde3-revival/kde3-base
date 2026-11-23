@@ -17,3 +17,12 @@ kde3_add_executable(compositorbench NO_INSTALL
 if(KWIN_HAVE_GLES)
   target_sources(compositorbench PRIVATE ../render_gles.cpp)
 endif()
+
+# screendesktopstest: the per monitor desktops state (screendesktops.cpp, no X)
+kde3_add_executable(screendesktopstest NO_INSTALL
+  SOURCES
+    screendesktopstest.cpp
+    ../screendesktops.cpp
+  LINK
+    KDE3::kdecore
+)
