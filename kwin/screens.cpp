@@ -112,7 +112,7 @@ void Workspace::publishScreenDesktops()
         published_desktop = currentDesktop();
         rootInfo->setCurrentDesktop( published_desktop );
         }
-    QString state;
+    QString state = ""; // (not null: published_screens is null until the first time)
     QValueList< long > data;
     if( desktopsPerScreen())
         {
@@ -130,7 +130,7 @@ void Workspace::publishScreenDesktops()
                 .arg( g.height()).arg( currentDesktop( i ));
             }
         }
-    if( state == published_screens && !state.isEmpty())
+    if( state == published_screens && !published_screens.isNull())
         return;
     published_screens = state;
     if( data.isEmpty())
