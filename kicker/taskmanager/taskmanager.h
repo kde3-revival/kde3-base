@@ -630,6 +630,35 @@ public:
 
     KWinModule* winModule() const { return m_winModule; }
 
+    /**
+     * Desktops per monitor (KWin's "Desktops switch per monitor",
+     * _KDE_NET_SCREEN_DESKTOPS): true when each monitor shows its own
+     * desktop.
+     */
+    bool perScreenDesktops() const { return !m_screenDesktops.isEmpty(); }
+
+    /**
+     * The desktop shown on the monitor containing @p p (the monitor
+     * showing most of @p r), currentDesktop() in classic mode.
+     */
+    int screenDesktop(const QPoint& p) const;
+    int screenDesktop(const QRect& r) const;
+
+    /**
+     * Shows @p desktop on the monitor containing @p p (classic mode: on
+     * all monitors).
+     */
+    void setScreenDesktop(const QPoint& p, int desktop);
+
+    /**
+     * True if a window on @p desktop (0 or -1: all) at @p geometry is shown
+     * on its monitor's desktop.
+     */
+    bool isOnShownDesktop(int desktop, const QRect& geometry) const;
+
+    //* @internal
+    void readScreenDesktops();
+
     void setXCompositeEnabled(bool state);
     static bool xCompositeEnabled() { return m_xCompositeEnabled != 0; }
 
@@ -660,6 +689,12 @@ signals:
      * Emitted when the current desktop changes.
      */
     void desktopChanged(int desktop);
+
+    /**
+     * Emitted when the desktop of a monitor changes (desktops per monitor),
+     * or the mode changes.  desktopChanged() is emitted too.
+     */
+    void screenDesktopsChanged();
 
     /**
      * Emitted when a window changes desktop.
@@ -703,6 +738,8 @@ private:
     KStartupInfo* _startup_info;
     KWinModule* m_winModule;
     bool m_trackGeometry;
+    QValueList< QPair< QRect, int > > m_screenDesktops; // monitor, desktop
+    QWidget* m_screenDesktopsWatcher;
 
     static TaskManager* m_self;
     static uint m_xCompositeEnabled;

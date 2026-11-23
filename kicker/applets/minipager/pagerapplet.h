@@ -73,7 +73,14 @@ public:
 
     bool desktopPreview() const { return m_settings->preview(); }
     bool windowIcons() const { return m_settings->icons(); }
-    bool currentScreenOnly() const { return m_settings->currentScreenOnly(); }
+    // (each monitor showing its own desktop: the pager shows the panel's monitor)
+    bool currentScreenOnly() const;
+
+    // the desktop the pager shows as current: the one of the panel's
+    // monitor when the desktops switch per monitor
+    int shownDesktop() const { return m_curDesk; }
+    int panelDesktop() const;
+    QPoint panelPoint() const;
 
     // The part of the desktop the pager shows: the screen the panel is on
     // with CurrentScreenOnly on several screens, otherwise all of it.
@@ -98,6 +105,7 @@ public slots:
     void slotShowMenu( const QPoint&, int );
     void slotDesktopNamesChanged();
     void slotBackgroundChanged( int );
+    void slotScreenDesktopsChanged();
 
     void refresh();
 

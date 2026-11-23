@@ -117,7 +117,7 @@ KMiniPager::KMiniPager(const QString& configFile, Type type, int actions,
 
     m_kwin = new KWinModule(this);
     m_activeWindow = m_kwin->activeWindow();
-    m_curDesk = m_kwin->currentDesktop();
+    m_curDesk = panelDesktop();
 
     if (m_curDesk == 0) // kwin not yet launched
     {
@@ -143,6 +143,7 @@ KMiniPager::KMiniPager(const QString& configFile, Type type, int actions,
     connect( m_kwin, SIGNAL( windowChanged(WId,unsigned int) ), this, SLOT( slotWindowChanged(WId,unsigned int) ) );
     connect( m_kwin, SIGNAL( desktopNamesChanged() ), this, SLOT( slotDesktopNamesChanged() ) );
     connect( kapp, SIGNAL(backgroundChanged(int)), SLOT(slotBackgroundChanged(int)) );
+    connect( TaskManager::the(), SIGNAL(screenDesktopsChanged()), SLOT(slotScreenDesktopsChanged()) );
 
     if (kapp->authorizeKAction("kicker_rmb") && kapp->authorizeControlModule("kde-kcmtaskbar.desktop"))
     {
@@ -195,7 +196,11 @@ void KMiniPager::slotSetDesktop(int desktop)
         slotSetDesktopCount( m_kwin->numberOfDesktops() );
     }
 
-    if (!m_useViewports && (desktop != KWin::currentDesktop()))
+    if (TaskManager::the()->perScreenDesktops())
+    {
+        desktop = panelDesktop(); // (_NET_CURRENT_DESKTOP is the active monitor's)
+    }
+    else if (!m_useViewports && (desktop != KWin::currentDesktop()))
     {
         // this can happen when the user clicks on a desktop,
         // holds down the key combo to switch desktops, lets the
@@ -239,10 +244,41 @@ void KMiniPager::slotButtonSelected( int desk )
 
         KWin::setCurrentDesktopViewport(m_kwin->currentDesktop(), p);
     }
+    else if (TaskManager::the()->perScreenDesktops())
+    {
+        // the panel's monitor (the button shows it when KWin did it)
+        TaskManager::the()->setScreenDesktop(panelPoint(), desk);
+        return;
+    }
     else
         KWin::setCurrentDesktop( desk );
 
     slotSetDesktop( desk );
+}
+
+QPoint KMiniPager::panelPoint() const
+{
+    return mapToGlobal(QPoint(width() / 2, height() / 2));
+}
+
+int KMiniPager::panelDesktop() const
+{
+    if (TaskManager::the()->perScreenDesktops())
+    {
+        return TaskManager::the()->screenDesktop(panelPoint());
+    }
+    return m_kwin->currentDesktop();
+}
+
+bool KMiniPager::currentScreenOnly() const
+{
+    return m_settings->currentScreenOnly() || TaskManager::the()->perScreenDesktops();
+}
+
+void KMiniPager::slotScreenDesktopsChanged()
+{
+    slotSetDesktop(panelDesktop());
+    refresh(); // the windows of the panel's monitor only, or of all again
 }
 
 int KMiniPager::widthForHeight(int h) const
@@ -835,7 +871,7 @@ void KMiniPager::contextMenuActivated(int result)
 QRect KMiniPager::pagerArea() const
 {
     QDesktopWidget *desktop = QApplication::desktop();
-    if (m_settings->currentScreenOnly() && desktop->numScreens() > 1)
+    if (currentScreenOnly() && desktop->numScreens() > 1)
     {
         int screen = desktop->screenNumber(const_cast<KMiniPager*>(this));
         if (screen >= 0)

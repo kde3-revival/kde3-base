@@ -25,7 +25,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <qcursor.h>
 #include <qimage.h>
 #include <qtimer.h>
+#include <qwidget.h>
 
+#include <kapplication.h>
 #include <kconfig.h>
 #include <kdebug.h>
 #include <kglobal.h>
@@ -37,8 +39,24 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <kxerrorhandler.h>
 #include <netwm.h>
 
+#include <X11/Xlib.h>
+#include <X11/Xatom.h>
+
 #include "taskmanager.h"
 #include "taskmanager.moc"
+
+extern Time qt_x_time;
+
+// KWin's desktops per monitor: _KDE_NET_SCREEN_DESKTOPS changes
+class ScreenDesktopsWatcher : public QWidget
+{
+public:
+    ScreenDesktopsWatcher(TaskManager* manager);
+protected:
+    virtual bool x11Event(XEvent* e);
+private:
+    TaskManager* m_manager;
+};
 
 TaskManager* TaskManager::m_self = 0;
 static KStaticDeleter<TaskManager> staticTaskManagerDeleter;
@@ -58,7 +76,8 @@ TaskManager::TaskManager()
       _active(0),
       _startup_info(0),
       m_winModule(new KWinModule()),
-      m_trackGeometry(false)
+      m_trackGeometry(false),
+      m_screenDesktopsWatcher(0)
 {
     KGlobal::locale()->insertCatalogue("libtaskmanager");
     connect(m_winModule, SIGNAL(windowAdded(WId)),
@@ -84,6 +103,11 @@ TaskManager::TaskManager()
     WId win = m_winModule->activeWindow();
     activeWindowChanged(win);
     configure_startup();
+
+    // KWin's desktops per monitor
+    m_screenDesktopsWatcher = new ScreenDesktopsWatcher(this);
+    kapp->installX11EventFilter(m_screenDesktopsWatcher);
+    readScreenDesktops();
 }
 
 TaskManager::~TaskManager()
@@ -784,6 +808,11 @@ bool Task::isShaded() const
 
 bool Task::isOnCurrentDesktop() const
 {
+    if (_info.valid() && TaskManager::the()->perScreenDesktops())
+    {
+        return _info.onAllDesktops()
+            || TaskManager::the()->isOnShownDesktop(_info.desktop(), _info.geometry());
+    }
     return _info.valid() && _info.isOnCurrentDesktop();
 }
 
@@ -996,11 +1025,12 @@ bool Task::idMatch( const QString& id1, const QString& id2 )
 
 void Task::move()
 {
-    bool on_current = _info.isOnCurrentDesktop();
+    bool on_current = isOnCurrentDesktop();
 
     if (!on_current)
     {
-        KWin::setCurrentDesktop(_info.desktop());
+        if (!TaskManager::the()->perScreenDesktops()) // (else the activation switches its monitor)
+            KWin::setCurrentDesktop(_info.desktop());
         KWin::forceActiveWindow(_win);
     }
 
@@ -1019,11 +1049,12 @@ void Task::move()
 
 void Task::resize()
 {
-    bool on_current = _info.isOnCurrentDesktop();
+    bool on_current = isOnCurrentDesktop();
 
     if (!on_current)
     {
-        KWin::setCurrentDesktop(_info.desktop());
+        if (!TaskManager::the()->perScreenDesktops()) // (else the activation switches its monitor)
+            KWin::setCurrentDesktop(_info.desktop());
         KWin::forceActiveWindow(_win);
     }
 
@@ -1043,11 +1074,12 @@ void Task::resize()
 void Task::setMaximized(bool maximize)
 {
     KWin::WindowInfo info = KWin::windowInfo(_win, NET::WMState | NET::XAWMState | NET::WMDesktop);
-    bool on_current = info.isOnCurrentDesktop();
+    bool on_current = TaskManager::the()->isOnShownDesktop(info.onAllDesktops() ? 0 : info.desktop(), geometry());
 
     if (!on_current)
     {
-        KWin::setCurrentDesktop(info.desktop());
+        if (!TaskManager::the()->perScreenDesktops()) // (else the activation switches its monitor)
+            KWin::setCurrentDesktop(info.desktop());
     }
 
     if (info.isMinimized())
@@ -1080,11 +1112,12 @@ void Task::toggleMaximized()
 void Task::restore()
 {
     KWin::WindowInfo info = KWin::windowInfo(_win, NET::WMState | NET::XAWMState | NET::WMDesktop);
-    bool on_current = info.isOnCurrentDesktop();
+    bool on_current = TaskManager::the()->isOnShownDesktop(info.onAllDesktops() ? 0 : info.desktop(), geometry());
 
     if (!on_current)
     {
-        KWin::setCurrentDesktop(info.desktop());
+        if (!TaskManager::the()->perScreenDesktops()) // (else the activation switches its monitor)
+            KWin::setCurrentDesktop(info.desktop());
     }
 
     if( info.isMinimized())
@@ -1110,10 +1143,11 @@ void Task::setIconified(bool iconify)
     else
     {
         KWin::WindowInfo info = KWin::windowInfo(_win, NET::WMState | NET::XAWMState | NET::WMDesktop);
-        bool on_current = info.isOnCurrentDesktop();
+        bool on_current = TaskManager::the()->isOnShownDesktop(info.onAllDesktops() ? 0 : info.desktop(), geometry());
 
         if (!on_current)
         {
+            if (!TaskManager::the()->perScreenDesktops()) // (else the activation switches its monitor)
             KWin::setCurrentDesktop(info.desktop());
         }
 
@@ -1183,7 +1217,7 @@ void Task::toDesktop(int desk)
     {
         if (_info.valid() && _info.onAllDesktops())
         {
-            ni.setDesktop(TaskManager::the()->winModule()->currentDesktop());
+            ni.setDesktop(TaskManager::the()->screenDesktop(geometry()));
             KWin::forceActiveWindow(_win);
         }
         else
@@ -1194,13 +1228,14 @@ void Task::toDesktop(int desk)
         return;
     }
     ni.setDesktop(desk);
-    if(desk == TaskManager::the()->winModule()->currentDesktop())
+    if(desk == TaskManager::the()->screenDesktop(geometry()))
         KWin::forceActiveWindow(_win);
 }
 
 void Task::toCurrentDesktop()
 {
-    toDesktop(TaskManager::the()->winModule()->currentDesktop());
+    // (desktops per monitor: the one its monitor shows)
+    toDesktop(TaskManager::the()->screenDesktop(geometry()));
 }
 
 void Task::setAlwaysOnTop(bool stay)
@@ -1471,6 +1506,139 @@ void Startup::update(const KStartupInfoData& data)
 int TaskManager::currentDesktop() const
 {
     return m_winModule->currentDesktop();
+}
+
+static Atom screenDesktopsAtom()
+{
+    static Atom atom = None;
+    if (atom == None)
+    {
+        atom = XInternAtom(qt_xdisplay(), "_KDE_NET_SCREEN_DESKTOPS", False);
+    }
+    return atom;
+}
+
+/*
+ * Watches _KDE_NET_SCREEN_DESKTOPS on the root window: x, y, width, height
+ * and desktop (CARDINALs) of every monitor, set by KWin when each monitor
+ * shows its own desktop.
+ */
+ScreenDesktopsWatcher::ScreenDesktopsWatcher(TaskManager* manager)
+    : QWidget(0, "screen_desktops_watcher"),
+      m_manager(manager)
+{
+    XWindowAttributes attr;
+    if (XGetWindowAttributes(qt_xdisplay(), qt_xrootwin(), &attr))
+    {
+        XSelectInput(qt_xdisplay(), qt_xrootwin(), attr.your_event_mask | PropertyChangeMask);
+    }
+}
+
+bool ScreenDesktopsWatcher::x11Event(XEvent* e)
+{
+    if (e->type == PropertyNotify && e->xproperty.window == qt_xrootwin()
+        && e->xproperty.atom == screenDesktopsAtom())
+    {
+        m_manager->readScreenDesktops();
+    }
+    return false;
+}
+
+void TaskManager::readScreenDesktops()
+{
+    QValueList< QPair< QRect, int > > screens;
+    Atom type;
+    int format;
+    unsigned long count, after;
+    unsigned char* data = 0;
+    if (XGetWindowProperty(qt_xdisplay(), qt_xrootwin(), screenDesktopsAtom(), 0, 5 * 64, False,
+                           XA_CARDINAL, &type, &format, &count, &after, &data) == Success
+        && data && type == XA_CARDINAL && format == 32)
+    {
+        const long* l = reinterpret_cast<long*>(data);
+        for (unsigned long i = 0; i + 4 < count; i += 5)
+        {
+            screens.append(qMakePair(QRect(l[i], l[i + 1], l[i + 2], l[i + 3]), int(l[i + 4])));
+        }
+    }
+    if (data)
+    {
+        XFree(data);
+    }
+    if (screens == m_screenDesktops)
+    {
+        return;
+    }
+    m_screenDesktops = screens;
+    emit screenDesktopsChanged();
+    emit desktopChanged(currentDesktop()); // the taskbars filter anew
+}
+
+int TaskManager::screenDesktop(const QPoint& p) const
+{
+    for (QValueList< QPair< QRect, int > >::ConstIterator it = m_screenDesktops.begin();
+         it != m_screenDesktops.end(); ++it)
+    {
+        if ((*it).first.contains(p))
+        {
+            return (*it).second;
+        }
+    }
+    return currentDesktop();
+}
+
+int TaskManager::screenDesktop(const QRect& r) const
+{
+    int desktop = -1;
+    long best = 0;
+    for (QValueList< QPair< QRect, int > >::ConstIterator it = m_screenDesktops.begin();
+         it != m_screenDesktops.end(); ++it)
+    {
+        QRect is = (*it).first.intersect(r);
+        long area = is.isValid() ? long(is.width()) * is.height() : 0;
+        if (area > best)
+        {
+            best = area;
+            desktop = (*it).second;
+        }
+    }
+    return desktop > 0 ? desktop : screenDesktop(r.center());
+}
+
+void TaskManager::setScreenDesktop(const QPoint& p, int desktop)
+{
+    if (!perScreenDesktops())
+    {
+        KWin::setCurrentDesktop(desktop);
+        return;
+    }
+    XEvent e;
+    memset(&e, 0, sizeof(e));
+    e.xclient.type = ClientMessage;
+    e.xclient.display = qt_xdisplay();
+    e.xclient.window = qt_xrootwin();
+    e.xclient.message_type = XInternAtom(qt_xdisplay(), "_KDE_NET_SCREEN_DESKTOP", False);
+    e.xclient.format = 32;
+    e.xclient.data.l[0] = desktop;
+    e.xclient.data.l[1] = p.x();
+    e.xclient.data.l[2] = p.y();
+    e.xclient.data.l[3] = qt_x_time;
+    XSendEvent(qt_xdisplay(), qt_xrootwin(), False,
+               SubstructureRedirectMask | SubstructureNotifyMask, &e);
+    XFlush(qt_xdisplay());
+}
+
+bool TaskManager::isOnShownDesktop(int desktop, const QRect& geometry) const
+{
+    if (desktop <= 0 || desktop == NET::OnAllDesktops)
+    {
+        return true;
+    }
+    if (!perScreenDesktops())
+    {
+        return desktop == currentDesktop();
+    }
+    return desktop == screenDesktop(geometry);
 }
 
 TaskDrag::TaskDrag(const Task::List& tasks, QWidget* source, const char* name)

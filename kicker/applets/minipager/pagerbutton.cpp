@@ -735,7 +735,7 @@ void KMiniPagerButton::dragLeaveEvent( QDragLeaveEvent* e )
 {
     m_dragSwitchTimer.stop();
 
-    if (m_pager->kwin()->currentDesktop() != m_desktop)
+    if (m_pager->shownDesktop() != m_desktop)
     {
         setDown(false);
     }
