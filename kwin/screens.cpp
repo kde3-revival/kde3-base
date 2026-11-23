@@ -133,6 +133,15 @@ void Workspace::publishScreenDesktops()
     if( state == published_screens && !published_screens.isNull())
         return;
     published_screens = state;
+    // KWin's own state for its next start: also the monitors away ("id=desktop" lines)
+    if( desktopsPerScreen())
+        {
+        QCString saved = screen_desktops.save().utf8();
+        XChangeProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops_state, XA_STRING, 8,
+            PropModeReplace, reinterpret_cast< const unsigned char* >( saved.data()), saved.length());
+        }
+    else
+        XDeleteProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops_state );
     if( data.isEmpty())
         XDeleteProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops );
     else
@@ -188,6 +197,15 @@ void Workspace::readScreenDesktops()
         int format;
         unsigned long count, after;
         unsigned char* data = NULL;
+        // the state the KWin before this one left (by identity, with the monitors away)
+        if( XGetWindowProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops_state, 0, 4096, False,
+                XA_STRING, &type, &format, &count, &after, &data ) == Success
+            && data != NULL && type == XA_STRING && format == 8 )
+            screen_desktops.restore( QString::fromUtf8( reinterpret_cast< const char* >( data ), count ));
+        if( data != NULL )
+            XFree( data );
+        data = NULL;
+        // else the monitors by geometry
         if( XGetWindowProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops, 0, 5 * 64, False,
                 XA_CARDINAL, &type, &format, &count, &after, &data ) == Success
             && data != NULL && type == XA_CARDINAL && format == 32 )

@@ -102,6 +102,8 @@ Atoms::Atoms()
     names[n++] = (char*) "_KDE_NET_SCREEN_DESKTOP";
     atoms[n] = &kde_net_wm_screen_home;
     names[n++] = (char*) "_KDE_NET_WM_SCREEN_HOME";
+    atoms[n] = &kde_net_screen_desktops_state;
+    names[n++] = (char*) "_KDE_NET_SCREEN_DESKTOPS_STATE";
     
     assert( n <= max );
 
