@@ -426,6 +426,9 @@ void Workspace::init()
         {
         --block_focus;
         new_active_client = findClient( WindowMatchPredicate( client_info.activeWindow()));
+        // (desktops per monitor: a hidden one would switch its monitor away from the restored desktop)
+        if( new_active_client != NULL && desktopsPerScreen() && !new_active_client->isOnCurrentDesktop())
+            new_active_client = NULL;
         }
     if( new_active_client == NULL
         && activeClient() == NULL && should_get_focus.count() == 0 ) // no client activated in manage()

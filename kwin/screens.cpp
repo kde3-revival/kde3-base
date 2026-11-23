@@ -42,6 +42,8 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <kconfig.h>
 #include <kglobal.h>
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #ifdef KWIN_HAVE_XRANDR
@@ -107,6 +109,8 @@ void Workspace::setActiveScreen( int screen )
 */
 void Workspace::publishScreenDesktops()
     {
+    if( getenv( "KWIN_SCREENS_DEBUG" ))
+        fprintf( stderr, "kwin screens: publish %s active %d\n", screen_desktops.save().latin1(), activeScreen());
     if( published_desktop != currentDesktop())
         {
         published_desktop = currentDesktop();
@@ -226,6 +230,9 @@ void Workspace::readScreenDesktops()
     else if( !restart_state.isEmpty())
         { // what the KWin before this one left (read before the first publishing)
         screen_desktops.restore( restart_state );
+        if( getenv( "KWIN_SCREENS_DEBUG" ))
+            fprintf( stderr, "kwin screens: restart state '%s' -> %s\n", restart_state.latin1(),
+                screen_desktops.save().latin1());
         // the active monitor: the pointer's if it shows _NET_CURRENT_DESKTOP
         if( currentDesktop( pointerScreen()) == currentDesktop())
             screen_desktops.setActive( pointerScreen());
