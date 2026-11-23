@@ -811,14 +811,19 @@ Texture* GlesRenderer::createOffscreen( int w, int h, bool alpha )
     GLTexture* t = new GLTexture( d, w, h, alpha, false );
     glBindTexture( GL_TEXTURE_2D, t->tex );
     glTexStorage2D( GL_TEXTURE_2D, 1, GL_RGBA8, w, h );
-    if( !d->makeFramebuffer( t ))
+    const bool made = d->makeFramebuffer( t );
+    if( made )
+        {
+        glBindFramebuffer( GL_FRAMEBUFFER, t->fbo );
+        glClearColor( 0, 0, 0, 0 );
+        glClear( GL_COLOR_BUFFER_BIT );
+        }
+    else
         {
         delete t;
-        return NULL;
+        t = NULL;
         }
-    glBindFramebuffer( GL_FRAMEBUFFER, t->fbo );
-    glClearColor( 0, 0, 0, 0 );
-    glClear( GL_COLOR_BUFFER_BIT );
+    // (also when it failed: makeFramebuffer() left framebuffer 0 bound)
     if( d->target != NULL )
         glBindFramebuffer( GL_FRAMEBUFFER, d->target->fbo );
     return t;

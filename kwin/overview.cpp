@@ -3397,7 +3397,12 @@ void Overview::drawCloseButton( OverviewItem* item )
             }
         endOffscreen();
         if( r->close_tex[ 0 ] == NULL || r->close_tex[ 1 ] == NULL )
+            { // both or none (made again next time)
+            delete r->close_tex[ 0 ];
+            delete r->close_tex[ 1 ];
+            r->close_tex[ 0 ] = r->close_tex[ 1 ] = NULL;
             return;
+            }
         }
     const QPoint center = closeCenter( item->cur );
     const double a = item->close_fade * title_alpha * item->fade;
