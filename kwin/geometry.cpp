@@ -61,6 +61,9 @@ static Options::MoveResizeMode effectiveMoveResizeMode( const WindowRules* rules
 void Workspace::desktopResized()
     {
     // the monitors anew: windows of a monitor gone move, those of one back go home
+    // (the per-monitor work areas belong to the old layout until updateClientArea():
+    // clientArea() uses the monitors themselves meanwhile)
+    screenarea_screens = 0;
     ++block_screen_follow;
     updateScreens();
     QRect geom = QApplication::desktop()->geometry();
@@ -1196,9 +1199,9 @@ void Client::leaveScreen( const QString& id, const QRect& from, const QRect& to 
         }
     const QPoint d = to.topLeft() - from.topLeft();
     if( !geom_restore.isNull())
-        geom_restore.moveBy( d.x(), d.y());
+        geom_restore = keepRectInside( QRect( geom_restore.topLeft() + d, geom_restore.size()), to );
     if( !geom_fs_restore.isNull())
-        geom_fs_restore.moveBy( d.x(), d.y());
+        geom_fs_restore = keepRectInside( QRect( geom_fs_restore.topLeft() + d, geom_fs_restore.size()), to );
     placeOnScreen( QRect( pos() + d, full ), to, maximizeMode(), isFullScreen());
     }
 
@@ -1217,9 +1220,11 @@ void Client::placeOnScreen( QRect g, const QRect& monitor, int maximize, bool fu
         setGeometry( workspace()->clientArea( FullScreenArea, center, desktop()));
         return;
         }
-    if( !isShade() && maximize != MaximizeRestore && maximizeMode() == MaximizeMode( maximize ))
+    if( maximize != MaximizeRestore && maximizeMode() == MaximizeMode( maximize ))
         {
-        const QRect area = workspace()->clientArea( MaximizeArea, center, desktop()).intersect( monitor );
+        QRect area = workspace()->clientArea( MaximizeArea, center, desktop()).intersect( monitor );
+        if( area.isEmpty()) // (work areas of another layout)
+            area = monitor;
         if( maximize & MaximizeVertical )
             {
             g.setTop( area.top());
@@ -1231,20 +1236,41 @@ void Client::placeOnScreen( QRect g, const QRect& monitor, int maximize, bool fu
             g.setWidth( area.width());
             }
         }
-    if( !isShade() && isResizable() && ( g.width() > monitor.width() || g.height() > monitor.height()))
+    if( isResizable() && ( g.width() > monitor.width() || g.height() > monitor.height()))
         g.setSize( adjustedSize( QSize( QMIN( g.width(), monitor.width()), QMIN( g.height(), monitor.height())), SizemodeMax ));
-    if( g.right() > monitor.right())
-        g.moveRight( monitor.right());
-    if( g.bottom() > monitor.bottom())
-        g.moveBottom( monitor.bottom());
-    if( g.left() < monitor.left())
-        g.moveLeft( monitor.left());
-    if( g.top() < monitor.top())
-        g.moveTop( monitor.top());
-    if( isShade() || g.size() == ( isShade() ? adjustedSize() : size()))
+    g = keepRectInside( g, monitor );
+    // (g has the unshaded size: setGeometry() keeps a shaded window shaded with it)
+    if( g.size() == ( isShade() ? adjustedSize() : size()))
         move( g.topLeft());
     else
         setGeometry( g );
+    }
+
+/*!
+  \a r moved inside \a monitor, and no larger than it; a restore geometry
+  remembering only one direction (the other one 0) keeps that.
+ */
+QRect Client::keepRectInside( QRect r, const QRect& monitor )
+    {
+    if( r.width() > monitor.width())
+        r.setWidth( monitor.width());
+    if( r.height() > monitor.height())
+        r.setHeight( monitor.height());
+    if( r.width() > 0 )
+        {
+        if( r.right() > monitor.right())
+            r.moveRight( monitor.right());
+        if( r.left() < monitor.left())
+            r.moveLeft( monitor.left());
+        }
+    if( r.height() > 0 )
+        {
+        if( r.bottom() > monitor.bottom())
+            r.moveBottom( monitor.bottom());
+        if( r.top() < monitor.top())
+            r.moveTop( monitor.top());
+        }
+    return r;
     }
 
 /*!
@@ -1261,9 +1287,9 @@ void Client::returnHome( const QRect& monitor )
         return;
     const QPoint origin = monitor.topLeft();
     if( !h.restore.isNull())
-        geom_restore = QRect( h.restore.topLeft() + origin, h.restore.size());
+        geom_restore = keepRectInside( QRect( h.restore.topLeft() + origin, h.restore.size()), monitor );
     if( !h.fs_restore.isNull())
-        geom_fs_restore = QRect( h.fs_restore.topLeft() + origin, h.fs_restore.size());
+        geom_fs_restore = keepRectInside( QRect( h.fs_restore.topLeft() + origin, h.fs_restore.size()), monitor );
     placeOnScreen( QRect( h.geometry.topLeft() + origin, h.geometry.size()), monitor, h.maximize, h.fullscreen );
     }
 

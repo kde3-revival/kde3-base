@@ -451,6 +451,11 @@ void Workspace::init()
 
 Workspace::~Workspace()
     {
+    if( screen_ids_timer.isActive())
+        { // a monitor change not handled yet: its windows get their homes before KWin goes
+        screen_ids_timer.stop();
+        checkScreenIds();
+        }
     delete compositor_; // the windows back on the screen
     compositor_ = NULL;
     delete effects; // (before the overview: it asks it about the windows)
@@ -2298,7 +2303,7 @@ void Workspace::clientMoved(const QPoint &pos, Time now)
                 {
                 case 1:
                  slotSwitchDesktopLeft();
-                 if (currentDesktop( screen ) != desk_before) 
+                 if (currentDesktop( screen ) != desk_before)
                     {
                     offset = r.width() / 5;
                     QCursor::setPos(r.width() - offset, pos.y());
@@ -2307,7 +2312,7 @@ void Workspace::clientMoved(const QPoint &pos, Time now)
 
                case 2:
                 slotSwitchDesktopRight();
-                if (currentDesktop( screen ) != desk_before) 
+                if (currentDesktop( screen ) != desk_before)
                     {
                     offset = r.width() / 5;
                     QCursor::setPos(offset, pos.y());
@@ -2316,7 +2321,7 @@ void Workspace::clientMoved(const QPoint &pos, Time now)
 
                case 3:
                 slotSwitchDesktopUp();
-                if (currentDesktop( screen ) != desk_before) 
+                if (currentDesktop( screen ) != desk_before)
                     {
                     offset = r.height() / 5;
                     QCursor::setPos(pos.x(), r.height() - offset);
@@ -2325,7 +2330,7 @@ void Workspace::clientMoved(const QPoint &pos, Time now)
 
                case 4:
                 slotSwitchDesktopDown();
-                if (currentDesktop( screen ) != desk_before) 
+                if (currentDesktop( screen ) != desk_before)
                     {
                     offset = r.height() / 5;
                     QCursor::setPos(pos.x(), offset);

@@ -905,7 +905,7 @@ void Client::enterNotifyEvent( XCrossingEvent* e )
         if ( options->autoRaise && !isDesktop() &&
              !isDock() && !isTopMenu() && workspace()->focusChangeEnabled() &&
              workspace()->topClientOnDesktop( workspace()->currentDesktop( workspace()->clientScreen( this )),
-                false, true, workspace()->clientScreen( this )) != this ) 
+                false, true, workspace()->clientScreen( this )) != this )
             {
             delete autoRaiseTimer;
             autoRaiseTimer = new QTimer( this );

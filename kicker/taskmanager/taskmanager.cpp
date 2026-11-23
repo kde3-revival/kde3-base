@@ -1603,7 +1603,17 @@ void TaskManager::readScreenDesktops()
     {
         return;
     }
+    const bool entering = m_screenDesktops.isEmpty() && !screens.isEmpty();
     m_screenDesktops = screens;
+    if (entering)
+    {
+        // geometries weren't followed in classic mode (unless tracked): read them anew,
+        // they tell the tasks' monitors now
+        for (Task::Dict::iterator it = m_tasksByWId.begin(); it != m_tasksByWId.end(); ++it)
+        {
+            it.data()->refresh(NET::WMGeometry);
+        }
+    }
     emit screenDesktopsChanged();
     emit desktopChanged(currentDesktop()); // the taskbars filter anew
 }

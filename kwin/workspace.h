@@ -554,7 +554,8 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         QValueVector< QRect > screen_geometries; // the monitors screen_desktops numbers
         void initScreens();
         void updateScreens();
-        QStringList screenIds() const;
+        QStringList screenIds();
+        QStringList ambiguous_monitors; // identities seen twice at once: always with the connector
         void publishScreenDesktops();
         void readScreenDesktops();
         bool screenDesktopMessage( XEvent* e );

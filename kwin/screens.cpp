@@ -175,6 +175,10 @@ void Workspace::publishScreenDesktops()
 */
 void Workspace::initScreens()
     {
+        {
+        KConfigGroupSaver saver( KGlobal::config(), "Desktops" );
+        ambiguous_monitors = KGlobal::config()->readListEntry( "AmbiguousMonitors" );
+        }
 #ifdef KWIN_RANDR_MONITORS
     int error_base, major = 0, minor = 0;
     if( XRRQueryExtension( qt_xdisplay(), &randr_event_base, &error_base )
@@ -273,7 +277,7 @@ void Workspace::readScreenDesktops()
  "screen N" without RandR 1.5.  Identical monitors without serials get the
  connector added.
 */
-QStringList Workspace::screenIds() const
+QStringList Workspace::screenIds()
     {
     QDesktopWidget* dw = QApplication::desktop();
     const int screens = dw->numScreens();
@@ -381,19 +385,29 @@ QStringList Workspace::screenIds() const
             XRRFreeMonitors( mon );
         }
 #endif
-    // the same monitor (EDID, serial) twice: the connector tells them
+    // the same monitor (EDID, serial) twice: the connector tells them, from then on
+    // always (also when one of them is away: the identity mustn't depend on the
+    // monitors connected); remembered in kwinrc
+    bool new_ambiguous = false;
     for( int i = 0;
          i < screens;
          ++i )
-        if( ids.contains( ids[ i ] ) > 1 )
+        if( ids.contains( ids[ i ] ) > 1 && !ambiguous_monitors.contains( ids[ i ] ))
             {
-            const QString dup = ids[ i ];
-            for( int j = i;
-                 j < screens;
-                 ++j )
-                if( ids[ j ] == dup )
-                    ids[ j ] = dup + '@' + connectors[ j ];
+            ambiguous_monitors.append( ids[ i ] );
+            new_ambiguous = true;
             }
+    if( new_ambiguous )
+        {
+        KConfigGroupSaver saver( KGlobal::config(), "Desktops" );
+        KGlobal::config()->writeEntry( "AmbiguousMonitors", ambiguous_monitors );
+        KGlobal::config()->sync();
+        }
+    for( int i = 0;
+         i < screens;
+         ++i )
+        if( ambiguous_monitors.contains( ids[ i ] ) && !connectors[ i ].isEmpty())
+            ids[ i ] += '@' + connectors[ i ];
     return ids;
     }
 

@@ -333,12 +333,6 @@ bool Client::manage( Window w, bool isMapped )
         setScreenHome( ScreenHome::fromString( session->screenHome ));
     else if( isMapped )
         readScreenHome();
-    if( session && !screenHome().isNull() && workspace()->desktopsPerScreen())
-        {
-        const int home = workspace()->screenDesktops().output( screenHome().id );
-        if( home >= 0 )
-            returnHome( QApplication::desktop()->screenGeometry( home ));
-        }
     // a window meant for the current desktop: the one shown on its monitor
     if( desk_of_screen && desk != NET::OnAllDesktops && workspace()->desktopsPerScreen())
         {
@@ -469,6 +463,15 @@ bool Client::manage( Window w, bool isMapped )
             setModal( true );
         if( fullscreen_mode != FullScreenHack && isFullScreenable())
             setFullScreen( rules()->checkFullScreen( info->state() & NET::FullScreen, !isMapped ), false );
+        }
+
+    // desktops per monitor: its monitor is back, home (after the session's maximize,
+    // full screen and restore geometries, which returnHome() moves there)
+    if( session && !screenHome().isNull() && workspace()->desktopsPerScreen())
+        {
+        const int home = workspace()->screenDesktops().output( screenHome().id );
+        if( home >= 0 )
+            returnHome( QApplication::desktop()->screenGeometry( home ));
         }
 
     updateAllowedActions( true );

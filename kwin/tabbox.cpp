@@ -171,7 +171,8 @@ void TabBox::reset()
 
         // get all clients to show
         // (desktops per monitor: the windows of the desktop each monitor shows)
-        createClientList(clients, options_traverse_all ? -1 : -2, current_client, true);
+        createClientList(clients, options_traverse_all ? -1
+            : workspace()->desktopsPerScreen() ? -2 : workspace()->currentDesktop(), current_client, true);
 
         // calculate maximum caption width
         cw = fontMetrics().width(no_tasks)+20;
