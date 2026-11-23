@@ -4144,7 +4144,9 @@ void Overview::handleXI2( XEvent* e )
             grab_proof_time = ev->time;
             grab_proof_press = true;
             grab_proof_repeat = ev->flags & XIKeyRepeat;
-            if( ev->flags & XIKeyRepeat )
+            // (the raw key events come for the grab-proof shortcuts anyway:
+            // the Super key is looked at only when it toggles the overview)
+            if(( ev->flags & XIKeyRepeat ) || !options->overviewSuperKey )
                 break;
             KeySym sym = XkbKeycodeToKeysym( dpy, ev->detail, 0, 0 );
             // (a release lost under a grab of kwin's own must not spoil the
@@ -4164,8 +4166,10 @@ void Overview::handleXI2( XEvent* e )
             XIRawEvent* ev = (XIRawEvent*) cookie->data;
             grab_proof_key = ev->detail;
             grab_proof_time = ev->time;
+            if( !super_down ) // (only when SuperKey is set, see above)
+                break;
             KeySym sym = XkbKeycodeToKeysym( dpy, ev->detail, 0, 0 );
-            if(( sym == XK_Super_L || sym == XK_Super_R ) && super_down )
+            if( sym == XK_Super_L || sym == XK_Super_R )
                 {
                 super_down = false;
                 tap = super_alone && (unsigned int)( ev->time - super_time ) < SuperTapTime;
