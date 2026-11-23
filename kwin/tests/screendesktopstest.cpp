@@ -97,6 +97,23 @@ int main()
     sd2.setCurrent( -1, 1 );
     sd2.setOutputs( three, NULL, NULL );
     CHECK( sd2.current( sd2.output( "edid:B" )) == 1 );
+    // an identity made unambiguous keeps its desktop, present or away
+    ScreenDesktops sd3;
+    sd3.setDesktopCount( 4 );
+    QStringList one;
+    one << "edid:E" << "edid:F";
+    sd3.setOutputs( one, NULL, NULL );
+    sd3.setCurrent( 0, 3 );
+    sd3.rename( "edid:E", "edid:E@DP-1" );
+    CHECK( sd3.output( "edid:E@DP-1" ) == 0 && sd3.current( 0 ) == 3 && sd3.output( "edid:E" ) < 0 );
+    QStringList onlyF;
+    onlyF << "edid:F";
+    sd3.setOutputs( onlyF, NULL, NULL );
+    sd3.rename( "edid:E@DP-1", "edid:E@DP-2" );
+    QStringList back;
+    back << "edid:E@DP-2" << "edid:F";
+    sd3.setOutputs( back, NULL, NULL );
+    CHECK( sd3.current( 0 ) == 3 );
     // ScreenHome round trip, an identity with '|'
     ScreenHome h;
     h.id = "edid:00ff|x:SER 1";

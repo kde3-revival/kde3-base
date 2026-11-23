@@ -389,14 +389,44 @@ QStringList Workspace::screenIds()
     // always (also when one of them is away: the identity mustn't depend on the
     // monitors connected); remembered in kwinrc
     bool new_ambiguous = false;
+    QMap< QString, QString > renamed; // the monitor known so far as "E" is "E@connector" now
     for( int i = 0;
          i < screens;
          ++i )
         if( ids.contains( ids[ i ] ) > 1 && !ambiguous_monitors.contains( ids[ i ] ))
             {
-            ambiguous_monitors.append( ids[ i ] );
+            const QString e = ids[ i ];
+            ambiguous_monitors.append( e );
             new_ambiguous = true;
+            // which of them it was: the one at its old place, else the first
+            const int known = screen_desktops.output( e );
+            int was = -1;
+            for( int j = 0;
+                 j < screens && known >= 0;
+                 ++j )
+                if( ids[ j ] == e && known < int( screen_geometries.count())
+                    && dw->screenGeometry( j ) == screen_geometries[ known ] && was < 0 )
+                    was = j;
+            if( was < 0 )
+                was = ids.findIndex( e );
+            if( !connectors[ was ].isEmpty())
+                renamed[ e ] = e + '@' + connectors[ was ];
             }
+    for( QMap< QString, QString >::ConstIterator it = renamed.begin();
+         it != renamed.end();
+         ++it )
+        { // its desktop and the homes of its windows go with it
+        screen_desktops.rename( it.key(), it.data());
+        for( ClientList::ConstIterator c = clients.begin();
+             c != clients.end();
+             ++c )
+            if( (*c)->screenHome().id == it.key())
+                {
+                ScreenHome h = (*c)->screenHome();
+                h.id = it.data();
+                (*c)->setScreenHome( h );
+                }
+        } // (the windows' monitors: reset after the monitor change, desktopResized())
     if( new_ambiguous )
         {
         KConfigGroupSaver saver( KGlobal::config(), "Desktops" );

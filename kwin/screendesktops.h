@@ -60,6 +60,8 @@ class ScreenDesktops
         int current( int output ) const;
         // returns true if a desktop shown changed; classic: all monitors
         bool setCurrent( int output, int desktop );
+        // the identity of a monitor (present or away) changed: it keeps its desktop
+        void rename( const QString& from, const QString& to );
         int active() const { return active_; }
         void setActive( int output );
         int activeDesktop() const { return current( active_ ); }

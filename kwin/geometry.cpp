@@ -63,7 +63,8 @@ void Workspace::desktopResized()
     // the monitors anew: windows of a monitor gone move, those of one back go home
     // (the per-monitor work areas belong to the old layout until updateClientArea():
     // clientArea() uses the monitors themselves meanwhile)
-    screenarea_screens = 0;
+    if( desktopsPerScreen()) // (classic mode: as before, no extra work area check)
+        screenarea_screens = 0;
     ++block_screen_follow;
     updateScreens();
     QRect geom = QApplication::desktop()->geometry();
@@ -1236,8 +1237,6 @@ void Client::placeOnScreen( QRect g, const QRect& monitor, int maximize, bool fu
             g.setWidth( area.width());
             }
         }
-    if( isResizable() && ( g.width() > monitor.width() || g.height() > monitor.height()))
-        g.setSize( adjustedSize( QSize( QMIN( g.width(), monitor.width()), QMIN( g.height(), monitor.height())), SizemodeMax ));
     g = keepRectInside( g, monitor );
     // (g has the unshaded size: setGeometry() keeps a shaded window shaded with it)
     if( g.size() == ( isShade() ? adjustedSize() : size()))
@@ -1247,15 +1246,24 @@ void Client::placeOnScreen( QRect g, const QRect& monitor, int maximize, bool fu
     }
 
 /*!
-  \a r moved inside \a monitor, and no larger than it; a restore geometry
-  remembering only one direction (the other one 0) keeps that.
+  \a r moved inside \a monitor: no larger than it if the window may be
+  resized (with its size hints applied: increments, minimum size), else its
+  top left corner inside.  A restore geometry remembering only one direction
+  (the other one 0) keeps that, and only that direction is fitted.
  */
-QRect Client::keepRectInside( QRect r, const QRect& monitor )
+QRect Client::keepRectInside( QRect r, const QRect& monitor ) const
     {
-    if( r.width() > monitor.width())
-        r.setWidth( monitor.width());
-    if( r.height() > monitor.height())
-        r.setHeight( monitor.height());
+    if( isResizable() && ( r.width() > monitor.width() || r.height() > monitor.height()))
+        {
+        if( r.width() > 0 && r.height() > 0 )
+            r.setSize( adjustedSize( QSize( QMIN( r.width(), monitor.width()), QMIN( r.height(), monitor.height())),
+                SizemodeMax ));
+        else if( r.width() > 0 )
+            r.setWidth( adjustedSize( QSize( QMIN( r.width(), monitor.width()), height()), SizemodeFixedH ).width());
+        else if( r.height() > 0 )
+            r.setHeight( adjustedSize( QSize( width(), QMIN( r.height(), monitor.height())), SizemodeFixedW ).height());
+        }
+    // (still larger, e.g. a minimum size: the top left corner stays inside)
     if( r.width() > 0 )
         {
         if( r.right() > monitor.right())
