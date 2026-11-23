@@ -94,6 +94,17 @@ void KickerTip::display()
         return;
     }
 
+    // Not over an open menu (a button's context menu, say): the tip was
+    // asked for when the mouse came in, and a menu may have opened since;
+    // showing a window then would close the menu.
+    if (mouseGrabber() || qApp->activePopupWidget())
+    {
+        // given up: the next Enter asks again; plain tool tips come back
+        QToolTip::setGloballyEnabled(m_toolTipsEnabled);
+        tipFor(0);
+        return;
+    }
+
     {
         // prevent tips from showing when the active window is fullscreened
         NETRootInfo ri(qt_xdisplay(), NET::ActiveWindow);
