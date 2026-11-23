@@ -1409,12 +1409,12 @@ KCompositingConfig::KCompositingConfig (bool _standAlone, KConfig *_config, QWid
   QWhatsThis::add(shadows, i18n("The active window has the larger shadow, inactive windows smaller ones,"
     " menus and tooltips small ones; none for the desktop, panels and full screen or maximized windows."));
   sLay->addWidget(shadows);
-  shadowSize = new KIntNumInput(14, sPage);
+  shadowSize = new KIntNumInput(12, sPage);
   shadowSize->setRange(2, 40, 1, true);
   shadowSize->setSuffix(i18n(" px"));
   shadowSize->setLabel(i18n("Size (active window):"));
   sLay->addWidget(shadowSize);
-  shadowOpacity = new KIntNumInput(shadowSize, 45, sPage);
+  shadowOpacity = new KIntNumInput(shadowSize, 50, sPage);
   shadowOpacity->setRange(5, 100, 5, true);
   shadowOpacity->setSuffix("%");
   shadowOpacity->setLabel(i18n("Darkness:"));
@@ -1544,10 +1544,10 @@ void KCompositingConfig::load( void )
   backend->setCurrentItem(b == "gles" ? 1 : b == "xrender" ? 2 : 0);
   unredirectFullscreen->setChecked(config->readBoolEntry("UnredirectFullscreen", true));
   shadows->setChecked(config->readBoolEntry("Shadows", true));
-  shadowSize->setValue(config->readNumEntry("ShadowSize", 14));
-  shadowOpacity->setValue(config->readNumEntry("ShadowOpacity", 45));
-  shadowOffsetX->setValue(config->readNumEntry("ShadowOffsetX", 0));
-  shadowOffsetY->setValue(config->readNumEntry("ShadowOffsetY", 3));
+  shadowSize->setValue(config->readNumEntry("ShadowSize", 12));
+  shadowOpacity->setValue(config->readNumEntry("ShadowOpacity", 50));
+  shadowOffsetX->setValue(config->readNumEntry("ShadowOffsetX", 1));
+  shadowOffsetY->setValue(config->readNumEntry("ShadowOffsetY", 1));
 
   config->setGroup("Translucency");
   activeWindowTransparency->setChecked(config->readBoolEntry("TranslucentActiveWindows", false));
@@ -1611,10 +1611,10 @@ void KCompositingConfig::defaults()
   backend->setCurrentItem(0);
   unredirectFullscreen->setChecked(true);
   shadows->setChecked(true);
-  shadowSize->setValue(14);
-  shadowOpacity->setValue(45);
-  shadowOffsetX->setValue(0);
-  shadowOffsetY->setValue(3);
+  shadowSize->setValue(12);
+  shadowOpacity->setValue(50);
+  shadowOffsetX->setValue(1);
+  shadowOffsetY->setValue(1);
   activeWindowTransparency->setChecked(false);
   inactiveWindowTransparency->setChecked(false);
   movingWindowTransparency->setChecked(false);

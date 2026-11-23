@@ -224,10 +224,10 @@ unsigned long Options::updateSettings()
     compositingBackend = backend == "gles" ? 1 : backend == "xrender" ? 2 : 0;
     compositingUnredirectFullscreen = config->readBoolEntry( "UnredirectFullscreen", true );
     compositingShadows = config->readBoolEntry( "Shadows", true );
-    compositingShadowSize = QMAX( 1, QMIN( 64, config->readNumEntry( "ShadowSize", 14 )));
-    compositingShadowOpacity = QMAX( 0, QMIN( 100, config->readNumEntry( "ShadowOpacity", 45 )));
-    compositingShadowOffsetX = QMAX( -32, QMIN( 32, config->readNumEntry( "ShadowOffsetX", 0 )));
-    compositingShadowOffsetY = QMAX( -32, QMIN( 32, config->readNumEntry( "ShadowOffsetY", 3 )));
+    compositingShadowSize = QMAX( 1, QMIN( 64, config->readNumEntry( "ShadowSize", 12 )));
+    compositingShadowOpacity = QMAX( 0, QMIN( 100, config->readNumEntry( "ShadowOpacity", 50 )));
+    compositingShadowOffsetX = QMAX( -32, QMIN( 32, config->readNumEntry( "ShadowOffsetX", 1 )));
+    compositingShadowOffsetY = QMAX( -32, QMIN( 32, config->readNumEntry( "ShadowOffsetY", 1 )));
     
     
     
