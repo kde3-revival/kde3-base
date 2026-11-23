@@ -2607,9 +2607,8 @@ void Client::finishMoveResize( bool cancel )
         setGeometry( initialMoveResizeGeom );
     else
         {
+        userMovedFromHome(); // (moved or resized: it stays when its monitor returns)
         setGeometry( moveResizeGeom );
-        if( isMove())
-            userMovedFromHome();
         }
     checkMaximizeGeometry();
 // FRAME    update();
