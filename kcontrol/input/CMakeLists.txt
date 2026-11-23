@@ -8,6 +8,17 @@ include_directories(
   "${CMAKE_CURRENT_SOURCE_DIR}/${_themepage}"
 )
 
+# the Touchpad tab (libinput X driver's touchpads), with XInput 2
+set(_touchpad_sources)
+set(_touchpad_moc)
+set(_touchpad_link)
+if(X11_Xi_FOUND)
+  add_subdirectory(touchpad)
+  set(_touchpad_sources touchpadpage.cpp)
+  set(_touchpad_moc touchpadpage.h)
+  set(_touchpad_link touchpadsettings)
+endif()
+
 kde3_add_module(kcm_input
   SOURCES
     mouse.cpp
@@ -15,11 +26,14 @@ kde3_add_module(kcm_input
     main.cpp
     logitechmouse.cpp
     logitechmouse_base.ui
+    ${_touchpad_sources}
   MOC
     logitechmouse.h
     mouse.h
+    ${_touchpad_moc}
   LINK
     themepage
+    ${_touchpad_link}
     ${LIB_XTEST}
     KDE3::kio
     ${LIB_XCURSOR}
@@ -59,6 +73,11 @@ if(MKFONTDIR_EXECUTABLE)
     \"\$ENV{DESTDIR}${_overridedir}\" RESULT_VARIABLE _r)")
 else()
   install(CODE "message(STATUS \"mkfontdir not found: no fonts.dir in ${_overridedir}\")")
+endif()
+
+if(X11_Xi_FOUND)
+  target_compile_definitions(kcm_input PRIVATE KCM_INPUT_TOUCHPAD)
+  target_include_directories(kcm_input PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/touchpad")
 endif()
 
 add_subdirectory(${_themepage})
