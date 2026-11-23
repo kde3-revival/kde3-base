@@ -88,6 +88,23 @@ void ScreenDesktops::setOutputs( const QStringList& ids, QStringList* lost, QStr
         setCurrent( active_, active_desktop );
     }
 
+void ScreenDesktops::rename( const QString& from, const QString& to )
+    {
+    if( from == to || to.isEmpty())
+        return;
+    const int o = output( from );
+    if( o >= 0 && output( to ) < 0 )
+        ids_[ o ] = to;
+    QMap< QString, int >::Iterator it = remembered_.find( from );
+    if( it != remembered_.end())
+        {
+        const int desktop = *it;
+        remembered_.remove( it );
+        if( !remembered_.contains( to ))
+            remembered_[ to ] = desktop;
+        }
+    }
+
 QString ScreenDesktops::id( int output ) const
     {
     if( output < 0 || output >= int( ids_.count()))
