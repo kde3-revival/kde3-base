@@ -1880,7 +1880,7 @@ bool Effects::blendTarget( int w, int h )
         return true;
     const int bw = QMAX( w, blend != NULL ? blend->width() : 0 );
     const int bh = QMAX( h, blend != NULL ? blend->height() : 0 );
-    freeBlendTarget();
+    delete blend; // (only it: the layer may be the target now)
     blend = rr->createOffscreen( bw, bh, true );
     return blend != NULL;
     }
