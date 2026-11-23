@@ -739,15 +739,33 @@ bool LockProcess::startSaver()
 // answer to two requests over 6 seconds: its X connection is closed, the
 // X server drops its grabs, the redirection and the overlay with it.
 //
-// Limits (a recovery, not a security boundary): only a selection whose
-// window says it is KWin's (WM_CLASS class "KWin", which KWin sets; any
-// client could set it, but the connection closed is always the one that
-// owns the selection, so a fake gets only itself closed; another window
-// manager or compositing manager may never answer selection requests and
-// is left alone, as before); a live KWin that handles no event for 6
-// seconds is closed too (it then exits, the session goes on without a
+// A recovery heuristic, not a security boundary.  Only a selection whose
+// window says it is KWin's (WM_CLASS class "KWin", which KWin sets): another
+// window manager or compositing manager may never answer selection
+// requests and is left alone, as before (a hung one of those can still keep
+// the desktop shown or the grabs taken).  The label is no identity: any
+// client can set it, and can even claim the selection with a window of
+// another client; XKillClient() closes the connection that created the
+// window, so such a client can get another one closed (X11 clients can
+// already do as much to each other).  A live KWin that handles no event for
+// 6 seconds is closed too (it then exits; the session goes on without a
 // window manager until it is started again).
 //
+struct ProbeAnswer
+{
+    Window window;
+    Atom target;
+};
+
+// (KSelectionOwner leaves the selection field of its answer unset: the
+// requestor and the target tell)
+static Bool isProbeAnswer(Display *, XEvent *ev, XPointer arg)
+{
+    const ProbeAnswer *want = reinterpret_cast< const ProbeAnswer * >(arg);
+    return ev->type == SelectionNotify && ev->xselection.requestor == want->window
+        && ev->xselection.target == want->target;
+}
+
 // true: KWin owned selection and its connection was closed
 bool LockProcess::closeHungKWin(const char *selection)
 {
@@ -771,27 +789,23 @@ bool LockProcess::closeHungKWin(const char *selection)
     Atom prop = XInternAtom(dpy, "_KDE_LOCK_WM_PROBE", False);
     Atom timestamp = XInternAtom(dpy, "TIMESTAMP", False);
     bool answered = false;
-    QValueList< XEvent > others;
     XEvent ev;
+    ProbeAnswer want;
+    want.window = winId();
+    want.target = timestamp;
     for (int request = 0; request < 2 && !answered; ++request) {
         XConvertSelection(dpy, sel, timestamp, prop, winId(), CurrentTime);
         QTime t;
         t.start();
         while (!answered && t.elapsed() < 3000) {
-            if (XCheckTypedWindowEvent(dpy, winId(), SelectionNotify, &ev)) {
-                // (KSelectionOwner leaves the selection field of its answer
-                // unset: the target tells)
-                if (ev.xselection.target == timestamp)
-                    answered = true;
-                else
-                    others.append(ev);
-            } else
+            // (only the answer leaves the queue: the other events stay
+            // where they are, for Qt)
+            if (XCheckIfEvent(dpy, &ev, isProbeAnswer, reinterpret_cast< XPointer >(&want)))
+                answered = true;
+            else
                 usleep(10000);
         }
     }
-    // (XPutBackEvent() puts each in front: the last one first)
-    for (QValueList< XEvent >::Iterator it = others.fromLast(); it != others.end(); --it)
-        XPutBackEvent(dpy, &*it);
     XDeleteProperty(dpy, winId(), prop);
     if (answered || XGetSelectionOwner(dpy, sel) != owner)
         return false;
