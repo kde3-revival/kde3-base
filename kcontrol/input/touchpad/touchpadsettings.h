@@ -38,7 +38,8 @@ enum AccelProfile { AccelAdaptive = 0, AccelFlat = 1 };
 // the buttons of a tap with 1, 2 and 3 fingers
 enum TapButtonMap { TapLeftRightMiddle = 0, TapLeftMiddleRight = 1 };
 
-// the settings a device has (one bit each)
+// the settings a device has, and the settings touchpadrc names (one bit
+// each)
 enum Feature {
     HasTap = 1 << 0,
     HasTapDrag = 1 << 1,
@@ -98,12 +99,17 @@ DeviceList touchpads( Display *dpy );
 // the device's own defaults, but with tap-to-click on
 Settings defaults( Display *dpy, const Device &dev );
 
-// the settings of touchpadrc over the given defaults
-Settings load( KConfig *config, const Settings &defaults );
+// the settings of touchpadrc over the given defaults; *named gets the
+// Feature bits of those touchpadrc names (with a valid value)
+Settings load( KConfig *config, const Settings &defaults, unsigned *named = 0 );
 
-// writes to touchpadrc the settings that differ from the defaults and
-// removes the others
-void save( KConfig *config, const Settings &settings, const Settings &defaults );
+// the Feature bits of the settings that differ
+unsigned differences( const Settings &a, const Settings &b );
+
+// writes to touchpadrc the named settings (Feature bits), whatever any
+// device's default is, and removes the others: each device then keeps its
+// own default for those
+void save( KConfig *config, const Settings &settings, unsigned named );
 
 // sets the device's properties to the settings (only those it has)
 void apply( Display *dpy, const Device &dev, const Settings &settings );

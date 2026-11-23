@@ -101,7 +101,27 @@ Atom atom( Display *dpy, const char *name )
     return XInternAtom( dpy, name, True );
 }
 
-// the 8-bit values of a property; empty when the device lacks it
+// the number of values the driver gives a property (its "... Default"
+// and "... Available" companions have as many): one per method for a
+// choice, else one; the acceleration profiles are adaptive and flat, and
+// custom since xf86-input-libinput 1.3
+void expectedCount( const char *name, unsigned *min, unsigned *max )
+{
+    const QString n = QString::fromLatin1( name );
+    *min = *max = 1;
+    if ( n.contains( "Scroll Method" ) )
+	*min = *max = 3;
+    else if ( n.contains( "Click Method" ) || n.contains( "Send Events Mode" )
+	      || n.contains( "Tapping Button Mapping" ) )
+	*min = *max = 2;
+    else if ( n.contains( "Accel Profile" ) ) {
+	*min = 2;
+	*max = 3;
+    }
+}
+
+// the 8-bit values of a property; empty when the device lacks it or it
+// is not what the driver makes (XA_INTEGER, the expected count, whole)
 Bytes readBytes( Display *dpy, int dev, const char *name )
 {
     Bytes values;
@@ -115,7 +135,9 @@ Bytes readBytes( Display *dpy, int dev, const char *name )
     if ( XIGetProperty( dpy, dev, prop, 0, 16, False, AnyPropertyType,
 			&type, &format, &count, &after, &data ) != Success )
 	return values;
-    if ( type != None && format == 8 )
+    unsigned min, max;
+    expectedCount( name, &min, &max );
+    if ( type == XA_INTEGER && format == 8 && after == 0 && count >= min && count <= max )
 	values.assign( data, data + count );
     if ( data )
 	XFree( data );
@@ -136,7 +158,7 @@ bool readFloat( Display *dpy, int dev, const char *name, double *value )
     if ( XIGetProperty( dpy, dev, prop, 0, 1, False, floatType,
 			&type, &format, &count, &after, &data ) != Success )
 	return false;
-    const bool ok = type == floatType && format == 32 && count == 1;
+    const bool ok = type == floatType && format == 32 && count == 1 && after == 0;
     if ( ok ) {
 	float f;
 	memcpy( &f, data, sizeof( f ) );
@@ -237,38 +259,46 @@ const char *const clickNames[] = { "None", "ButtonAreas", "Clickfinger" };	// Cl
 const char *const profileNames[] = { "Adaptive", "Flat" };
 const char *const tapMapNames[] = { "LeftRightMiddle", "LeftMiddleRight" };
 
+// the reading of touchpadrc's keys: a key that is there with a known
+// value is named (its bit set in *named), else the fallback
 int readName( KConfig *config, const char *key, const char *const *names, int count,
-	      int offset, int fallback )
+	      int offset, int fallback, unsigned bit, unsigned *named )
 {
     if ( !config->hasKey( key ) )
 	return fallback;
     const QString value = config->readEntry( key );
     for ( int i = 0; i < count; ++i )
-	if ( value.lower() == QString::fromLatin1( names[i] ).lower() )
+	if ( value.lower() == QString::fromLatin1( names[i] ).lower() ) {
+	    *named |= bit;
 	    return i - offset;
+	}
     return fallback;
 }
 
+bool readFlag( KConfig *config, const char *key, bool fallback, unsigned bit, unsigned *named )
+{
+    if ( !config->hasKey( key ) )
+	return fallback;
+    *named |= bit;
+    return config->readBoolEntry( key, fallback );
+}
+
+// a named setting is written, the others removed
 void writeName( KConfig *config, const char *key, const char *const *names,
-		int offset, int value, int fallback )
+		int offset, int value, bool named )
 {
-    if ( value == fallback )
-	config->deleteEntry( key );
-    else
+    if ( named )
 	config->writeEntry( key, QString::fromLatin1( names[value + offset] ) );
-}
-
-bool readFlag( KConfig *config, const char *key, bool fallback )
-{
-    return config->hasKey( key ) ? config->readBoolEntry( key, fallback ) : fallback;
-}
-
-void writeFlag( KConfig *config, const char *key, bool value, bool fallback )
-{
-    if ( value == fallback )
-	config->deleteEntry( key );
     else
+	config->deleteEntry( key );
+}
+
+void writeFlag( KConfig *config, const char *key, bool value, bool named )
+{
+    if ( named )
 	config->writeEntry( key, value );
+    else
+	config->deleteEntry( key );
 }
 
 // the accel speed as touchpadrc and the control module keep it: in
@@ -427,44 +457,87 @@ Settings defaults( Display *dpy, const Device &dev )
     return s;
 }
 
-Settings load( KConfig *config, const Settings &defaults )
+Settings load( KConfig *config, const Settings &defaults, unsigned *named )
 {
+    unsigned n = 0;
     Settings s = defaults;
     config->setGroup( group );
-    s.tap = readFlag( config, "TapToClick", s.tap );
-    s.tapDrag = readFlag( config, "TapAndDrag", s.tapDrag );
-    s.tapDragLock = readFlag( config, "TapDragLock", s.tapDragLock );
-    s.tapButtonMap = readName( config, "TapButtonMap", tapMapNames, 2, 0, s.tapButtonMap );
-    s.scrollMethod = readName( config, "ScrollMethod", scrollNames, 3, 1, s.scrollMethod );
-    s.naturalScroll = readFlag( config, "NaturalScroll", s.naturalScroll );
-    s.disableWhileTyping = readFlag( config, "DisableWhileTyping", s.disableWhileTyping );
-    if ( config->hasKey( "PointerSpeed" ) )
+    s.tap = readFlag( config, "TapToClick", s.tap, HasTap, &n );
+    s.tapDrag = readFlag( config, "TapAndDrag", s.tapDrag, HasTapDrag, &n );
+    s.tapDragLock = readFlag( config, "TapDragLock", s.tapDragLock, HasTapDragLock, &n );
+    s.tapButtonMap = readName( config, "TapButtonMap", tapMapNames, 2, 0, s.tapButtonMap,
+			       HasTapButtonMap, &n );
+    s.scrollMethod = readName( config, "ScrollMethod", scrollNames, 3, 1, s.scrollMethod,
+			       HasScrollMethod, &n );
+    s.naturalScroll = readFlag( config, "NaturalScroll", s.naturalScroll, HasNaturalScroll, &n );
+    s.disableWhileTyping = readFlag( config, "DisableWhileTyping", s.disableWhileTyping,
+				     HasDisableWhileTyping, &n );
+    if ( config->hasKey( "PointerSpeed" ) ) {
 	s.accelSpeed = roundSpeed( config->readDoubleNumEntry( "PointerSpeed", s.accelSpeed ) );
-    s.accelProfile = readName( config, "AccelProfile", profileNames, 2, 0, s.accelProfile );
-    s.clickMethod = readName( config, "ClickMethod", clickNames, 3, 1, s.clickMethod );
-    s.middleEmulation = readFlag( config, "MiddleButtonEmulation", s.middleEmulation );
-    s.disableOnExternalMouse = readFlag( config, "DisableOnExternalMouse", s.disableOnExternalMouse );
+	n |= HasAccelSpeed;
+    }
+    s.accelProfile = readName( config, "AccelProfile", profileNames, 2, 0, s.accelProfile,
+			       HasAccelProfile, &n );
+    s.clickMethod = readName( config, "ClickMethod", clickNames, 3, 1, s.clickMethod,
+			      HasClickMethod, &n );
+    s.middleEmulation = readFlag( config, "MiddleButtonEmulation", s.middleEmulation,
+				  HasMiddleEmulation, &n );
+    s.disableOnExternalMouse = readFlag( config, "DisableOnExternalMouse", s.disableOnExternalMouse,
+					 HasDisableOnExternalMouse, &n );
+    if ( named )
+	*named = n;
     return s;
 }
 
-void save( KConfig *config, const Settings &s, const Settings &d )
+unsigned differences( const Settings &a, const Settings &b )
+{
+    unsigned d = 0;
+    if ( a.tap != b.tap )
+	d |= HasTap;
+    if ( a.tapDrag != b.tapDrag )
+	d |= HasTapDrag;
+    if ( a.tapDragLock != b.tapDragLock )
+	d |= HasTapDragLock;
+    if ( a.tapButtonMap != b.tapButtonMap )
+	d |= HasTapButtonMap;
+    if ( a.scrollMethod != b.scrollMethod )
+	d |= HasScrollMethod;
+    if ( a.naturalScroll != b.naturalScroll )
+	d |= HasNaturalScroll;
+    if ( a.disableWhileTyping != b.disableWhileTyping )
+	d |= HasDisableWhileTyping;
+    if ( roundSpeed( a.accelSpeed ) != roundSpeed( b.accelSpeed ) )
+	d |= HasAccelSpeed;
+    if ( a.accelProfile != b.accelProfile )
+	d |= HasAccelProfile;
+    if ( a.clickMethod != b.clickMethod )
+	d |= HasClickMethod;
+    if ( a.middleEmulation != b.middleEmulation )
+	d |= HasMiddleEmulation;
+    if ( a.disableOnExternalMouse != b.disableOnExternalMouse )
+	d |= HasDisableOnExternalMouse;
+    return d;
+}
+
+void save( KConfig *config, const Settings &s, unsigned named )
 {
     config->setGroup( group );
-    writeFlag( config, "TapToClick", s.tap, d.tap );
-    writeFlag( config, "TapAndDrag", s.tapDrag, d.tapDrag );
-    writeFlag( config, "TapDragLock", s.tapDragLock, d.tapDragLock );
-    writeName( config, "TapButtonMap", tapMapNames, 0, s.tapButtonMap, d.tapButtonMap );
-    writeName( config, "ScrollMethod", scrollNames, 1, s.scrollMethod, d.scrollMethod );
-    writeFlag( config, "NaturalScroll", s.naturalScroll, d.naturalScroll );
-    writeFlag( config, "DisableWhileTyping", s.disableWhileTyping, d.disableWhileTyping );
-    if ( roundSpeed( s.accelSpeed ) == roundSpeed( d.accelSpeed ) )
-	config->deleteEntry( "PointerSpeed" );
-    else
+    writeFlag( config, "TapToClick", s.tap, named & HasTap );
+    writeFlag( config, "TapAndDrag", s.tapDrag, named & HasTapDrag );
+    writeFlag( config, "TapDragLock", s.tapDragLock, named & HasTapDragLock );
+    writeName( config, "TapButtonMap", tapMapNames, 0, s.tapButtonMap, named & HasTapButtonMap );
+    writeName( config, "ScrollMethod", scrollNames, 1, s.scrollMethod, named & HasScrollMethod );
+    writeFlag( config, "NaturalScroll", s.naturalScroll, named & HasNaturalScroll );
+    writeFlag( config, "DisableWhileTyping", s.disableWhileTyping, named & HasDisableWhileTyping );
+    if ( named & HasAccelSpeed )
 	config->writeEntry( "PointerSpeed", roundSpeed( s.accelSpeed ) );
-    writeName( config, "AccelProfile", profileNames, 0, s.accelProfile, d.accelProfile );
-    writeName( config, "ClickMethod", clickNames, 1, s.clickMethod, d.clickMethod );
-    writeFlag( config, "MiddleButtonEmulation", s.middleEmulation, d.middleEmulation );
-    writeFlag( config, "DisableOnExternalMouse", s.disableOnExternalMouse, d.disableOnExternalMouse );
+    else
+	config->deleteEntry( "PointerSpeed" );
+    writeName( config, "AccelProfile", profileNames, 0, s.accelProfile, named & HasAccelProfile );
+    writeName( config, "ClickMethod", clickNames, 1, s.clickMethod, named & HasClickMethod );
+    writeFlag( config, "MiddleButtonEmulation", s.middleEmulation, named & HasMiddleEmulation );
+    writeFlag( config, "DisableOnExternalMouse", s.disableOnExternalMouse,
+	       named & HasDisableOnExternalMouse );
     config->sync();
 }
 

@@ -32,7 +32,7 @@
 using namespace KTouchpad;
 
 TouchpadPage::TouchpadPage( QWidget *parent, const char *name )
-    : QWidget( parent, name ), m_features( 0 ), m_scrollMethods( 0 ), m_libinput( false )
+    : QWidget( parent, name ), m_named( 0 ), m_features( 0 ), m_scrollMethods( 0 ), m_libinput( false )
 {
     m_devices = touchpads( qt_xdisplay() );
     unsigned clickMethods = 0, accelProfiles = 0;
@@ -205,9 +205,10 @@ void TouchpadPage::load( bool useDefaults )
 {
     if ( useDefaults ) {
 	m_loaded = m_defaults;
+	m_named = 0;
     } else {
 	KConfig config( "touchpadrc", true, false );
-	m_loaded = KTouchpad::load( &config, m_defaults );
+	m_loaded = KTouchpad::load( &config, m_defaults, &m_named );
     }
     toWidgets( m_loaded );
 }
@@ -216,9 +217,14 @@ void TouchpadPage::save()
 {
     if ( !m_libinput )
 	return;
+    // what touchpadrc named stays named, and so does what was changed
+    // here, even back to the default of the touchpad shown: another
+    // touchpad's default may differ
+    const Settings s = fromWidgets();
+    m_named |= differences( s, m_loaded );
+    m_loaded = s;
     KConfig config( "touchpadrc", false, false );
-    m_loaded = fromWidgets();
-    KTouchpad::save( &config, m_loaded, m_defaults );
+    KTouchpad::save( &config, m_loaded, m_named );
     applyAll( qt_xdisplay() );
 }
 

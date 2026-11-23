@@ -60,8 +60,9 @@ static int selftest()
     const Settings d;
     {
 	KSimpleConfig config( path );
-	const Settings s = load( &config, d );
-	check( s == d && s.tap, "no touchpadrc: the defaults, tap-to-click on" );
+	unsigned named = 1;
+	const Settings s = load( &config, d, &named );
+	check( s == d && s.tap && named == 0, "no touchpadrc: the defaults, tap-to-click on, nothing named" );
     }
 
     Settings custom = d;
@@ -76,18 +77,23 @@ static int selftest()
     custom.clickMethod = ClickFinger;
     custom.middleEmulation = true;
     custom.disableOnExternalMouse = true;
+    const unsigned all = 0xfff;
+    check( differences( custom, d ) == ( all & ~HasTapDrag ), "differences() names each changed setting" );
     {
 	KSimpleConfig config( path );
-	save( &config, custom, d );
+	save( &config, custom, differences( custom, d ) );
     }
     {
 	KSimpleConfig config( path );
-	check( load( &config, d ) == custom, "every setting comes back" );
+	unsigned named = 0;
+	check( load( &config, d, &named ) == custom && named == ( all & ~HasTapDrag ),
+	       "every setting comes back, named" );
 	config.setGroup( "Touchpad" );
 	check( config.readEntry( "ScrollMethod" ) == "Edge"
 	       && config.readEntry( "ClickMethod" ) == "Clickfinger"
 	       && config.readEntry( "TapButtonMap" ) == "LeftMiddleRight"
-	       && !config.readBoolEntry( "TapToClick", true ), "readable values" );
+	       && !config.readBoolEntry( "TapToClick", true ) && !config.hasKey( "TapAndDrag" ),
+	       "readable values, the unnamed one left out" );
     }
 
     // other defaults (another device): what touchpadrc names stays
@@ -96,8 +102,29 @@ static int selftest()
     other.scrollMethod = ScrollNone;
     {
 	KSimpleConfig config( path );
-	const Settings s = load( &config, other );
-	check( s == custom, "named settings override another device's defaults" );
+	check( load( &config, other ) == custom, "named settings override another device's defaults" );
+    }
+
+    // a choice equal to the first touchpad's default is still a choice:
+    // a second touchpad whose default differs follows it too
+    Settings first = d;
+    first.clickMethod = ClickButtonAreas;
+    Settings second = d;
+    second.clickMethod = ClickFinger;
+    {
+	KSimpleConfig config( path );
+	unsigned named = 0;
+	Settings s = load( &config, first, &named );
+	s.clickMethod = ClickButtonAreas;
+	named |= differences( s, load( &config, first ) );
+	save( &config, s, named );
+    }
+    {
+	KSimpleConfig config( path );
+	config.setGroup( "Touchpad" );
+	check( config.readEntry( "ClickMethod" ) == "ButtonAreas"
+	       && load( &config, second ).clickMethod == ClickButtonAreas,
+	       "a choice equal to one device's default reaches another device" );
     }
 
     Settings none = d;
@@ -105,7 +132,7 @@ static int selftest()
     none.clickMethod = ClickNone;
     {
 	KSimpleConfig config( path );
-	save( &config, none, d );
+	save( &config, none, HasScrollMethod | HasClickMethod );
     }
     {
 	KSimpleConfig config( path );
@@ -115,7 +142,7 @@ static int selftest()
     // back to the defaults: nothing is left in touchpadrc
     {
 	KSimpleConfig config( path );
-	save( &config, d, d );
+	save( &config, d, 0 );
     }
     {
 	KSimpleConfig config( path );
@@ -138,9 +165,11 @@ static int selftest()
 	KSimpleConfig config( path );
 	Settings base = d;
 	base.scrollMethod = ScrollEdge;
-	const Settings s = load( &config, base );
-	check( s.accelSpeed == 1.0 && s.scrollMethod == ScrollTwoFinger && s.clickMethod == d.clickMethod,
-	       "out-of-range and unknown values" );
+	unsigned named = 0;
+	const Settings s = load( &config, base, &named );
+	check( s.accelSpeed == 1.0 && s.scrollMethod == ScrollTwoFinger && s.clickMethod == d.clickMethod
+	       && named == ( HasAccelSpeed | HasScrollMethod ),
+	       "out-of-range and unknown values (an unknown one is not named)" );
     }
 
     unlink( path );

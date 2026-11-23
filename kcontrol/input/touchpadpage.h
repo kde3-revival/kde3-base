@@ -52,6 +52,9 @@ private:
     // leaves out
     KTouchpad::Settings m_defaults;
     KTouchpad::Settings m_loaded;
+    // the settings touchpadrc names (KTouchpad::Feature bits): what the
+    // user chose, not each device's default
+    unsigned m_named;
     // what any of the libinput touchpads has
     unsigned m_features;
     unsigned m_scrollMethods;
