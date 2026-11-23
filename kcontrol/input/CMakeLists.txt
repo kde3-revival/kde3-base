@@ -17,6 +17,8 @@ if(X11_Xi_FOUND)
   set(_touchpad_sources touchpadpage.cpp)
   set(_touchpad_moc touchpadpage.h)
   set(_touchpad_link touchpadsettings)
+else()
+  message(STATUS "kcm_input: no XInput 2 (libXi): no Touchpad tab, no kded_touchpad")
 endif()
 
 kde3_add_module(kcm_input
