@@ -42,9 +42,10 @@ namespace KWinInternal
   - the key and the modifiers are one of the action's shortcuts, as
     KGlobalAccel grabs it (Alt+Print on the old keycodes too), not an
     autorepeat, from any keyboard (the master device's events); the
-    modifiers are XKB's (compat grab state: latched and locked ones too,
-    e.g. sticky keys) from its StateNotify events up to the press, in
-    order (both come on the overview's XInput 2 connection, a connection
+    modifiers are XKB's (the grab state that the server compares with
+    KGlobalAccel's passive grabs, see keyPressed(): latched and locked
+    ones too, e.g. sticky keys) from its StateNotify events up to the
+    press, in order (both come on the overview's XInput 2 connection, a connection
     of KWin's own, see Overview::selectXI2());
   - KWin did not get the key press itself (it is not in KWin's event
     queue after a round trip, nor one of the last presses KWin got), so
@@ -108,6 +109,7 @@ class GrabProofShortcuts : public QObject
         void readRaw();
     private:
         void selectXkb();
+        uint grabModifiers() const;
         bool deliveredToUs( int keycode, Time time );
         bool menuHasGrabs();
         bool menuOpen();
@@ -130,7 +132,9 @@ class GrabProofShortcuts : public QObject
         Display* probe; // a connection of our own for testing the grabs
         Display* raw_dpy; // the raw key events and the XKB state come there
         int xkb_event; // XKB's event base there, -1 without XKB
-        uint xkb_mods; // the compat grab modifiers, in event order
+        // the XKB grab modifiers and the core-compatible ones, in event order
+        uint xkb_grab_mods;
+        uint xkb_compat_grab_mods;
         // the keys down, from the raw events (and KWin's own key events)
         unsigned char down[ 32 ];
         // the last key presses that KWin got

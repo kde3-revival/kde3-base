@@ -35,7 +35,8 @@ GrabProofShortcuts::GrabProofShortcuts()
     : probe( NULL ),
       raw_dpy( NULL ),
       xkb_event( -1 ),
-      xkb_mods( 0 ),
+      xkb_grab_mods( 0 ),
+      xkb_compat_grab_mods( 0 ),
       core_next( 0 ),
       raw_press_code( 0 ),
       raw_press_time( CurrentTime ),
@@ -129,7 +130,11 @@ void GrabProofShortcuts::rawConnectionEvent( const XEvent* e )
     {
     if( xkb_event >= 0 && e->type == xkb_event
         && reinterpret_cast< const XkbAnyEvent* >( e )->xkb_type == XkbStateNotify )
-        xkb_mods = reinterpret_cast< const XkbStateNotifyEvent* >( e )->compat_grab_mods;
+        {
+        const XkbStateNotifyEvent* state = reinterpret_cast< const XkbStateNotifyEvent* >( e );
+        xkb_grab_mods = state->grab_mods;
+        xkb_compat_grab_mods = state->compat_grab_mods;
+        }
     }
 
 void GrabProofShortcuts::rawKeyEvent( int keycode, Time time, bool press, bool repeat )
@@ -163,7 +168,29 @@ void GrabProofShortcuts::selectXkb()
     XkbSelectEventDetails( dpy, XkbUseCoreKbd, XkbStateNotify, details, details );
     XkbStateRec state;
     if( XkbGetState( dpy, XkbUseCoreKbd, &state ) == Success )
-        xkb_mods = state.compat_grab_mods;
+        {
+        xkb_grab_mods = state.grab_mods;
+        xkb_compat_grab_mods = state.compat_grab_mods;
+        }
+    }
+
+/*
+ The modifiers that KGlobalAccel's passive grabs (on KWin's connection)
+ are matched with.  The XKB protocol lets a per-client flag decide:
+ GrabsUseXKBState set, the XKB grab state (grab_mods), else the
+ core-compatible one (compat_grab_mods, plus the modifiers that the
+ compatibility map gives the keyboard group).  Qt sets the flag on its
+ connection (QApplication's XKB initialization), so it is asked for, not
+ assumed (a round trip, only for a press of a shortcut's key).  The X.Org
+ server (dix, CheckPassiveGrabsOnWindow()) compares grab_mods whatever
+ the flag; with Qt's flag set both agree.
+*/
+uint GrabProofShortcuts::grabModifiers() const
+    {
+    unsigned int flags = 0;
+    if( XkbGetPerClientControls( qt_xdisplay(), &flags ) && ( flags & XkbPCF_GrabsUseXKBStateMask ))
+        return xkb_grab_mods;
+    return xkb_compat_grab_mods;
     }
 
 void GrabProofShortcuts::keyPressed( int keycode, Time time )
@@ -192,7 +219,7 @@ void GrabProofShortcuts::keyPressed( int keycode, Time time )
             {
             if( xkb_event < 0 )
                 return;
-            mod = xkb_mods & KKeyNative::accelModMaskX();
+            mod = grabModifiers() & KKeyNative::accelModMaskX();
             ours = true;
             }
         if( key_mod == mod )
