@@ -303,6 +303,29 @@ class EffectPicture
             tex = r != NULL ? r->textureFromPixmap( p, w, h, d, vis ) : NULL;
             alpha = tex != NULL && tex->hasAlpha();
             }
+        /*
+         The contents as they are now, in a texture of their own: a named
+         pixmap is the window's, it follows what is drawn into the window
+         until the window is resized (KWin repaints the decoration of a
+         window being maximized before it resizes it: the morph would show
+         the new title bar over the old contents).  The pixmap stays (owned
+         as before).  Nothing changes when the copy can't be made.
+        */
+        void freeze( Render::Renderer* r )
+            {
+            if( r == NULL || tex == NULL || external )
+                return;
+            Render::Texture* t = r->createOffscreen( w, h, alpha );
+            if( t == NULL )
+                return;
+            r->acquireClientBuffers(); // (what the X server drew so far)
+            r->setTarget( t );
+            r->drawTexture( tex, 0, 0, 1.0, Render::BlendSource );
+            r->finish(); // (submitted now: before the X server draws into the window again)
+            dropCopies();
+            delete tex;
+            tex = t;
+            }
         // the compositor's texture of a window (not owned; its copies are)
         void setExternal( Render::Texture* t, const QSize& size )
             {
@@ -989,6 +1012,7 @@ void Effects::morphBegin( Client* c, const QRect& bounds )
         return;
         }
     anim->snap.set( renderer(), p, geom.size(), depth, visual, true, composited_now());
+    anim->snap.freeze( renderer());
     if( mayBeShaped( c ))
         anim->shaped = readShape( dpy, c->frameId(), geom.size(), anim->shape );
     anim->old_geom = anim->geom = geom;
