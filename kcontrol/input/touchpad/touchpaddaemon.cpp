@@ -75,16 +75,18 @@ int TouchpadDaemon::reconfigure()
 {
     if ( !m_dpy )
 	return 0;
-    return KTouchpad::applyAll( m_dpy );
+    const int n = KTouchpad::applyAll( m_dpy );
+    // the replies read meanwhile may have queued events (a touchpad
+    // added since): the socket will not tell
+    if ( XQLength( m_dpy ) > 0 )
+	QTimer::singleShot( 0, this, SLOT( readEvents() ) );
+    return n;
 }
 
 void TouchpadDaemon::apply()
 {
     const int n = reconfigure();
     kdDebug() << "kded_touchpad: applied to " << n << " touchpad(s)" << endl;
-    // the replies read meanwhile may have queued events
-    if ( m_dpy && XQLength( m_dpy ) > 0 )
-	QTimer::singleShot( 0, this, SLOT( readEvents() ) );
 }
 
 void TouchpadDaemon::readEvents()
