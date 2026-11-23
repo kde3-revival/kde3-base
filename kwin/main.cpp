@@ -108,6 +108,12 @@ Application::Application( )
         ::exit(1);
         }
     connect( &owner, SIGNAL( lostOwnership()), SLOT( lostSelection()));
+    // kdesktop_lock asks this window whether KWin still answers (a hung
+    // KWin's grabs would keep the session from being locked): who owns it
+    XClassHint hint;
+    hint.res_name = const_cast< char* >( "kwin" );
+    hint.res_class = const_cast< char* >( "KWin" );
+    XSetClassHint( qt_xdisplay(), owner.ownerWindow(), &hint );
     
     // if there was already kwin running, it saved its configuration after loosing the selection -> reread
     config()->reparseConfiguration();

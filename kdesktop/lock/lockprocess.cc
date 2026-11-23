@@ -655,9 +655,13 @@ bool LockProcess::grabInput()
 
     XSync(qt_xdisplay(), False);
 
+    // a hung KWin keeps the overview's grabs: closed, they are gone
+    bool closed = false;
     if (!grabKeyboard())
     {
-        sleep(1);
+        closed = closeHungKWin("WM_S");
+        if (!closed)
+            sleep(1);
         if (!grabKeyboard())
         {
             return false;
@@ -666,7 +670,8 @@ bool LockProcess::grabInput()
 
     if (!grabMouse())
     {
-        sleep(1);
+        if (closed || !closeHungKWin("WM_S"))
+            sleep(1);
         if (!grabMouse())
         {
             XUngrabKeyboard(qt_xdisplay(), CurrentTime);
@@ -724,24 +729,35 @@ bool LockProcess::startSaver()
 
 //---------------------------------------------------------------------------
 //
-// KWin composites the screen: the locker is shown once KWin has seen it
-// mapped (it then stops compositing it).  A KWin that no longer answers
-// would keep showing its last frame instead, the unlocked desktop.  Ask
-// it (its _NET_WM_CM_Sn selection: KWin's event loop answers TIMESTAMP);
-// no answer within 3 seconds: close its X connection, the X server then
-// drops the compositing and shows the screen as it is.  Only KWin's
-// (WM_CLASS of the selection's window): another compositing manager may
-// not answer selection requests at all.
+// A KWin that no longer answers (a deadlock, a stuck GPU driver) can keep
+// the session unlocked: while it composites the screen, the locker shows
+// only once KWin has seen it mapped (until then the screen keeps KWin's
+// last frame, the unlocked desktop); its window overview holds the
+// keyboard and the pointer, so the locker's grabs fail.  KWin is asked
+// through one of its manager selections (WM_Sn, _NET_WM_CM_Sn: its event
+// loop answers TIMESTAMP, as every manager selection owner does); no
+// answer to two requests over 6 seconds: its X connection is closed, the
+// X server drops its grabs, the redirection and the overlay with it.
 //
-void LockProcess::checkCompositor()
+// Limits (a recovery, not a security boundary): only a selection whose
+// window says it is KWin's (WM_CLASS class "KWin", which KWin sets; any
+// client could set it, but the connection closed is always the one that
+// owns the selection, so a fake gets only itself closed; another window
+// manager or compositing manager may never answer selection requests and
+// is left alone, as before); a live KWin that handles no event for 6
+// seconds is closed too (it then exits, the session goes on without a
+// window manager until it is started again).
+//
+// true: KWin owned selection and its connection was closed
+bool LockProcess::closeHungKWin(const char *selection)
 {
     Display *dpy = qt_xdisplay();
     char name[ 32 ];
-    snprintf(name, sizeof(name), "_NET_WM_CM_S%d", DefaultScreen(dpy));
-    Atom cm = XInternAtom(dpy, name, False);
-    Window owner = XGetSelectionOwner(dpy, cm);
+    snprintf(name, sizeof(name), "%s%d", selection, DefaultScreen(dpy));
+    Atom sel = XInternAtom(dpy, name, False);
+    Window owner = XGetSelectionOwner(dpy, sel);
     if (owner == None)
-        return;
+        return false;
     XClassHint hint;
     hint.res_name = hint.res_class = NULL;
     bool kwin = XGetClassHint(dpy, owner, &hint) && hint.res_class != NULL
@@ -751,33 +767,44 @@ void LockProcess::checkCompositor()
     if (hint.res_class != NULL)
         XFree(hint.res_class);
     if (!kwin)
-        return;
-    Atom prop = XInternAtom(dpy, "_KDE_LOCK_CM_PROBE", False);
+        return false;
+    Atom prop = XInternAtom(dpy, "_KDE_LOCK_WM_PROBE", False);
     Atom timestamp = XInternAtom(dpy, "TIMESTAMP", False);
-    XConvertSelection(dpy, cm, timestamp, prop, winId(), CurrentTime);
-    QTime t;
-    t.start();
     bool answered = false;
     QValueList< XEvent > others;
     XEvent ev;
-    while (!answered && t.elapsed() < 3000) {
-        if (XCheckTypedWindowEvent(dpy, winId(), SelectionNotify, &ev)) {
-            // (KSelectionOwner leaves the selection field of its answer unset)
-            if (ev.xselection.target == timestamp)
-                answered = true;
-            else
-                others.append(ev);
-        } else
-            usleep(10000);
+    for (int request = 0; request < 2 && !answered; ++request) {
+        XConvertSelection(dpy, sel, timestamp, prop, winId(), CurrentTime);
+        QTime t;
+        t.start();
+        while (!answered && t.elapsed() < 3000) {
+            if (XCheckTypedWindowEvent(dpy, winId(), SelectionNotify, &ev)) {
+                // (KSelectionOwner leaves the selection field of its answer
+                // unset: the target tells)
+                if (ev.xselection.target == timestamp)
+                    answered = true;
+                else
+                    others.append(ev);
+            } else
+                usleep(10000);
+        }
     }
-    for (QValueList< XEvent >::Iterator it = others.begin(); it != others.end(); ++it)
+    // (XPutBackEvent() puts each in front: the last one first)
+    for (QValueList< XEvent >::Iterator it = others.fromLast(); it != others.end(); --it)
         XPutBackEvent(dpy, &*it);
     XDeleteProperty(dpy, winId(), prop);
-    if (answered || XGetSelectionOwner(dpy, cm) != owner)
-        return;
-    kdWarning(1204) << "the compositing manager (KWin) does not answer, closing its X connection" << endl;
+    if (answered || XGetSelectionOwner(dpy, sel) != owner)
+        return false;
+    kdWarning(1204) << "KWin does not answer (" << name << "), closing its X connection" << endl;
     XKillClient(dpy, owner);
     XSync(dpy, False);
+    return true;
+}
+
+// the locker is mapped (or a dialog comes): it must be seen
+void LockProcess::checkCompositor()
+{
+    closeHungKWin("_NET_WM_CM_S");
 }
 
 //---------------------------------------------------------------------------

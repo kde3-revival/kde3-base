@@ -92,6 +92,7 @@ private:
     bool checkPass();
     void stayOnTop();
     void checkCompositor();
+    bool closeHungKWin(const char *selection);
     void lockXF86();
     void unlockXF86();
     void resume( bool force );
