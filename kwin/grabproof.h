@@ -12,7 +12,6 @@ License. See the file "COPYING" for the exact licensing terms.
 #define KWIN_GRABPROOF_H
 
 #include <qcstring.h>
-#include <qdatetime.h>
 #include <qguardedptr.h>
 #include <qmap.h>
 #include <qobject.h>
@@ -60,13 +59,19 @@ namespace KWinInternal
     created).  A menu created, mapped and grabbed at once (most context
     menus) is mapped before KWin can select that: then the grab that
     begins (FocusOut NotifyGrab on a window of KWin's, the focus) right
-    after its map, within MenuGrabTime, is taken as its grab.  Another
-    focus change of the grab (a grab replaced, released) forgets it;
+    after its map is taken as its grab: when KWin handles that FocusOut
+    less than MenuGrabTime after the end of KWin's last wait (with
+    everything read) before the map (see aboutToBlock()).  Another focus change of the
+    grab (a grab replaced, released) forgets it;
   - the screen locker (kdesktop_lock) is not shown.
  What is left: a program that holds both grabs on an override-redirect
  window smaller than the screen looks like a menu, as does a viewer that
  grabs (from the focus) within MenuGrabTime after some other program maps
- an override-redirect window it creates at once.  Virtual machine and
+ an override-redirect window it creates at once (less, as KWin reads the
+ map late; more only when KWin was stopped or not scheduled while it
+ waited, or the map waited in the server's output buffer).  A menu that
+ maps and grabs while KWin is busy (it reads both late) is not taken as
+ one.  Virtual machine and
  remote desktop viewers grab on their own managed window or the root
  window, so otherwise they don't.
  Nothing else is looked at or kept: of the other keys only whether they are
@@ -103,6 +108,9 @@ class GrabProofShortcuts : public QObject
         void x11Event( const XEvent* e );
         // a shortcut fires: whether KWin's key press is an autorepeat
         bool repeatedPress() const { return repeated; }
+    private slots:
+        void aboutToBlock();
+        void awake();
     signals:
         // the events of the raw connection that have come are wanted
         // (before KWin's own key events)
@@ -152,7 +160,11 @@ class GrabProofShortcuts : public QObject
         bool watching;
         Window grab_window; // the one with the keyboard grab (FocusIn NotifyGrab)
         Window late_window; // mapped before it could be watched
-        QTime late_time;
+        // the end of the last wait of KWin's event loop that began with
+        // every event read (ms, see aboutToBlock())
+        bool caught_up;
+        double wake_time;
+        double late_wake; // wake_time then, when late_window was mapped
     };
 
 } // namespace

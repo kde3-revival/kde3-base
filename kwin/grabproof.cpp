@@ -10,6 +10,8 @@ License. See the file "COPYING" for the exact licensing terms.
 
 #include "grabproof.h"
 
+#include <qapplication.h>
+#include <qeventloop.h>
 #include <qtimer.h>
 
 #include <kglobalaccel.h>
@@ -24,12 +26,21 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <fixx11h.h>
 
 #include <string.h>
+#include <time.h>
 
 namespace KWinInternal
 {
 
 // ms from the map of a menu to its grab, when the map was too quick to watch it
-static const int MenuGrabTime = 500;
+static const double MenuGrabTime = 500.0;
+
+// a monotonic clock (ms)
+static double now()
+    {
+    struct timespec ts;
+    clock_gettime( CLOCK_MONOTONIC, &ts );
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
+    }
 
 GrabProofShortcuts::GrabProofShortcuts()
     : probe( NULL ),
@@ -45,8 +56,13 @@ GrabProofShortcuts::GrabProofShortcuts()
       repeated( false ),
       watching( false ),
       grab_window( None ),
-      late_window( None )
+      late_window( None ),
+      caught_up( false ),
+      wake_time( 0 ),
+      late_wake( 0 )
     {
+    connect( qApp->eventLoop(), SIGNAL( aboutToBlock()), SLOT( aboutToBlock()));
+    connect( qApp->eventLoop(), SIGNAL( awake()), SLOT( awake()));
     memset( down, 0, sizeof( down ));
     memset( core_code, 0, sizeof( core_code ));
     memset( core_time, 0, sizeof( core_time ));
@@ -283,7 +299,7 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
                 // mapped before we could watch it: its grab may come next
                 late_window = watched.contains( e->xmap.window ) && !watched[ e->xmap.window ]
                     ? e->xmap.window : None;
-                late_time.start();
+                late_wake = wake_time; // (the map came after it)
                 }
             break;
         case UnmapNotify:
@@ -312,7 +328,7 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
             if( e->xfocus.window == grab_window && grab_window != None )
                 grab_window = None; // released, or replaced by another grab
             else if( e->xfocus.mode == NotifyGrab && !watched.contains( e->xfocus.window )
-                && late_window != None && late_time.elapsed() < MenuGrabTime )
+                && late_window != None && late_wake > 0 && now() - late_wake < MenuGrabTime )
                 { // a grab begins (the focus loses the keyboard) right after the map
                 grab_window = late_window;
                 late_window = None;
@@ -321,6 +337,43 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
         default:
             break;
         }
+    }
+
+/*
+ Neither MapNotify nor FocusOut has a time stamp, and how long both waited
+ in KWin's queue is not known (KWin may have been busy while the map and,
+ much later, an unrelated grab happened, and then read both at once); a
+ server time from a round trip only tells when KWin asked, after both.
+ What KWin can know: when its event loop is about to wait and nothing is
+ left to read on its connection (the queue empty and nothing pending,
+ XPending()), every event the server has sent so far is handled; the wait
+ ends (awake()) as soon as something comes, so whatever KWin reads
+ afterwards came after the end of that wait.  The grab of a late menu (its
+ FocusOut) must be handled within MenuGrabTime of the end of the last such
+ wait before its map: map and grab then lie within that time, and KWin's
+ own delays (busy, round trips) only make it stricter.
+ Not seen: time that KWin did not run while it waited (stopped, not
+ scheduled: the wait ends late, with older events), and time that an
+ event waited in the server's output buffer.
+*/
+void GrabProofShortcuts::aboutToBlock()
+    {
+    caught_up = false;
+    if( !watching )
+        return;
+    if( XPending( qt_xdisplay()) > 0 )
+        { // (read now, after Qt looked: don't wait with them in the queue)
+        qApp->eventLoop()->wakeUp();
+        return;
+        }
+    caught_up = true;
+    }
+
+void GrabProofShortcuts::awake()
+    {
+    if( caught_up )
+        wake_time = now();
+    caught_up = false;
     }
 
 /*
