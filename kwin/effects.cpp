@@ -496,6 +496,7 @@ Effects::Effects( Workspace* w )
       finishing( false ),
       need_immediate( false ),
       blend( NULL ),
+      layer( NULL ),
       own_renderer( NULL ),
       rr( NULL ),
       target( NULL ),
@@ -1884,10 +1885,24 @@ bool Effects::blendTarget( int w, int h )
     return blend != NULL;
     }
 
+// the scratch picture for the crossfade of a translucent window, at least w x h
+bool Effects::layerTarget( int w, int h )
+    {
+    if( layer != NULL && w <= layer->width() && h <= layer->height())
+        return true;
+    const int lw = QMAX( w, layer != NULL ? layer->width() : 0 );
+    const int lh = QMAX( h, layer != NULL ? layer->height() : 0 );
+    delete layer;
+    layer = rr->createOffscreen( lw, lh, true );
+    return layer != NULL;
+    }
+
 void Effects::freeBlendTarget()
     {
     delete blend;
     blend = NULL;
+    delete layer;
+    layer = NULL;
     }
 
 // the window's contents now (the scene's, the compositor's)
@@ -2018,7 +2033,37 @@ void Effects::drawAnim( EffectAnim* anim )
             drawShadow( anim, false, rect, 1 - anim->p );
             drawShadow( anim, true, rect, anim->p );
             EffectPicture* live = anim->fade > 0 ? livePicture( anim ) : NULL;
-            if( anim->fade < 1 || ( anim->moved && live == NULL ))
+            const bool snap = anim->fade < 1 || ( anim->moved && live == NULL );
+            const int dx = (int) floor( rect.x );
+            const int dy = (int) floor( rect.y );
+            const int dw = (int) ceil( rect.x + rect.w ) - dx;
+            const int dh = (int) ceil( rect.y + rect.h ) - dy;
+            if( snap && live != NULL && op < 1 && dw > 0 && dh > 0 && layerTarget( dw, dh ))
+                { // both: crossfaded at full opacity, then drawn with the window's
+                  // (two translucent layers would add up to more)
+                Render::Texture* const frame_target = target;
+                const int frame_ox = ox;
+                const int frame_oy = oy;
+                const QRegion frame_clip = clip_base;
+                target = layer;
+                ox = dx;
+                oy = dy;
+                clip_base = QRegion( dx, dy, dw, dh );
+                restoreTarget();
+                rr->fill( RectF( 0, 0, dw, dh ), Qt::black, 0.0, Render::BlendSource );
+                drawPicture( anim->snap, rect, 1.0, anim->shaped, anim->shape );
+                drawPicture( *live, rect, anim->fade, anim->live_shaped, anim->live_shape );
+                target = frame_target;
+                ox = frame_ox;
+                oy = frame_oy;
+                clip_base = frame_clip;
+                restoreTarget();
+                setClip( QRegion( dx, dy, dw, dh ));
+                rr->drawTexture( layer, RectF( 0, 0, dw, dh ), RectF( dx - ox, dy - oy, dw, dh ), op,
+                    Render::NearestFilter, Render::BlendOver, Render::NoRepeat );
+                break;
+                }
+            if( snap )
                 drawPicture( anim->snap, rect, op, anim->shaped, anim->shape );
             if( live != NULL )
                 drawPicture( *live, rect, anim->fade * op, anim->live_shaped, anim->live_shape );

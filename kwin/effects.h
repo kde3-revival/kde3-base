@@ -157,6 +157,7 @@ class Effects : public QObject
         void drawPicture( EffectPicture& pic, const Compositing::RectF& rect, double alpha, bool shaped,
             const QValueVector< XRectangle >& shape );
         bool blendTarget( int w, int h );
+        bool layerTarget( int w, int h );
         void freeBlendTarget();
         void drawGenie( EffectAnim* anim, EffectPicture& pic, bool scaled_copies, double p, double alpha );
         void drawShadow( EffectAnim* anim, bool live, const Compositing::RectF& rect, double alpha );
@@ -210,6 +211,8 @@ class Effects : public QObject
         bool need_immediate; // our window is new: its first frame is copied at once
         // the scratch picture for blending the downscaled copies
         Render::Texture* blend;
+        // a crossfade of a translucent window, drawn with its opacity once
+        Render::Texture* layer;
         // drawing: the renderer, its target and where it is on the screen,
         // what may be drawn (screen coordinates)
         Render::Renderer* own_renderer;
