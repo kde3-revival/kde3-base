@@ -595,7 +595,8 @@ Overview::Overview( Workspace* w )
     connect( presenter, SIGNAL( idle()), SLOT( presentIdle()));
 #ifdef OVERVIEW_XI2
     if( have_monitors ) // monitors arranged anew without a new screen size
-        XRRSelectInput( dpy, root, RRScreenChangeNotifyMask | RRCrtcChangeNotifyMask | RROutputChangeNotifyMask );
+        XRRSelectInput( dpy, root, RRScreenChangeNotifyMask | RRCrtcChangeNotifyMask | RROutputChangeNotifyMask
+            | RROutputPropertyNotifyMask ); // (the same as Workspace::initScreens(): one selection per client)
 #endif
     reconfigure();
     }

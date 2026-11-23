@@ -179,7 +179,8 @@ void Workspace::initScreens()
     if( XRRQueryExtension( qt_xdisplay(), &randr_event_base, &error_base )
         && XRRQueryVersion( qt_xdisplay(), &major, &minor ) && ( major > 1 || minor >= 5 ))
         { // (the same mask as the overview's: one selection per client; Qt needs the screen changes)
-        XRRSelectInput( qt_xdisplay(), root, RRScreenChangeNotifyMask | RRCrtcChangeNotifyMask | RROutputChangeNotifyMask );
+        XRRSelectInput( qt_xdisplay(), root, RRScreenChangeNotifyMask | RRCrtcChangeNotifyMask | RROutputChangeNotifyMask
+            | RROutputPropertyNotifyMask ); // (an EDID replaced on the same connector)
         connect( &screen_ids_timer, SIGNAL( timeout()), SLOT( checkScreenIds()));
         }
     else
