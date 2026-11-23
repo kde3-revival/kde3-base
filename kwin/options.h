@@ -313,6 +313,10 @@ class Options : public KDecorationOptions
         bool overviewHotCornerRipple; // ripples from the corner when it fires
         bool overviewShowMinimized; // minimized windows in the overview too
 
+        // the actions whose shortcuts work also while a menu is open
+        // ([Shortcuts] UnderGrab, see grabproof.h)
+        QStringList grabProofShortcuts;
+
         // window animations ([Effects])
         bool effectsEnabled; // off: no window animations at all (reduced motion)
         int effectsMinimizeAnimation; // 0 none, 1 scale, 2 genie

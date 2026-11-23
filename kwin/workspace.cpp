@@ -41,6 +41,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "group.h"
 #include "rules.h"
 #include "overview.h"
+#include "grabproof.h"
 #include "effects.h"
 #include "compositor.h"
 #include "compositing.h"
@@ -198,6 +199,7 @@ Workspace::Workspace( bool restore )
     );
 
     client_keys = new KGlobalAccel( this );
+    grab_proof = new GrabProofShortcuts;
     initShortcuts();
     tab_box = new TabBox( this );
     popupinfo = new PopupInfo( );
@@ -495,6 +497,7 @@ Workspace::~Workspace()
     delete startup;
     delete initPositioning;
     delete topmenu_watcher;
+    delete grab_proof;
     delete topmenu_selection;
     delete topmenu_space;
     delete client_keys_dialog;
@@ -1768,18 +1771,24 @@ static bool runKSnapshot( const char* mode )
 
 void Workspace::slotGrabRegion()
     {
+    if( shortcutKeyRepeated())
+        return;
     if( !runKSnapshot( "--region" ))
         grabDesktopToClipboard();
     }
 
 void Workspace::slotGrabWindow()
     {
+    if( shortcutKeyRepeated())
+        return;
     if( !runKSnapshot( "--window" ))
         grabWindowToClipboard();
     }
 
 void Workspace::slotGrabDesktop()
     {
+    if( shortcutKeyRepeated())
+        return;
     if( !runKSnapshot( "--fullscreen" ))
         grabDesktopToClipboard();
     }
@@ -2773,6 +2782,35 @@ void Workspace::disableGlobalShortcutsForClient( bool disable )
         KIPC::sendMessageAll( KIPC::BlockShortcuts, disable );
         // kwin will get the kipc message too
         }
+    }
+
+bool Workspace::hasGrabProofShortcuts() const
+    {
+    return grab_proof != NULL && !grab_proof->isEmpty();
+    }
+
+// the overview's XInput 2 selection has the raw key events or not
+void Workspace::grabProofRawKeysSelected( bool selected )
+    {
+    if( grab_proof != NULL )
+        grab_proof->setRawKeysSelected( selected );
+    }
+
+// a raw key event (XInput 2) seen by the overview
+void Workspace::grabProofRawKey( int keycode, Time time, bool press, bool repeat )
+    {
+    if( grab_proof == NULL )
+        return;
+    grab_proof->rawKeyEvent( keycode, time, press, repeat );
+    if( !press || repeat || globalShortcutsDisabled() || client_keys_dialog != NULL || !keys->isEnabled())
+        return;
+    grab_proof->keyPressed( keycode, time );
+    }
+
+// the key of the shortcut is held: one screenshot, not one per autorepeat
+bool Workspace::shortcutKeyRepeated() const
+    {
+    return grab_proof != NULL && grab_proof->repeatedPress();
     }
 
 void Workspace::disableGlobalShortcuts( bool disable )

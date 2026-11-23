@@ -22,6 +22,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "group.h"
 #include "rules.h"
 #include "overview.h"
+#include "grabproof.h"
 #include "effects.h"
 #include "compositing.h"
 #include "compositor.h"
@@ -199,6 +200,8 @@ void RootInfo::changeShowingDesktop( bool showing )
  */
 bool Workspace::workspaceEvent( XEvent * e )
     {
+    if( grab_proof != NULL )
+        grab_proof->x11Event( e ); // (keys before KGlobalAccel, menus' grabs)
     screenIdsEvent( e ); // (not eaten: Qt and the overview need them too)
     if( Compositing::dispatchPresentEvent( e ))
         return true; // the compositor's, the overview's and the animations' frames

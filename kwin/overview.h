@@ -101,6 +101,9 @@ class Overview : public QObject
         // crosses to the other monitor freely (whatever the server tells
         // about kwin's own grab)
         void setBarriersEnabled( bool enable );
+        // the XInput 2 events to watch (also for the grab-proof shortcuts,
+        // grabproof.h, which get the raw key presses)
+        void selectXI2();
 
         // ---- in the compositor's frames ----
         // drawn by the compositor: the overview, or its ripples after it
@@ -136,7 +139,6 @@ class Overview : public QObject
         void createCorners();
         void addCorner( const QRect& area, const QPoint& point );
         void destroyCorners();
-        void selectXI2();
         bool handleXI2( XEvent* e );
         bool cornerHit( const QPoint& p ) const;
         bool cornerAllowed( const QPoint& corner, unsigned int buttonState ) const;

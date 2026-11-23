@@ -19,6 +19,7 @@ License. See the file "COPYING" for the exact licensing terms.
 
 #include "client.h"
 #include "workspace.h"
+#include "grabproof.h"
 
 #include <fixx11h.h>
 #include <qhbox.h>
@@ -339,6 +340,9 @@ void Workspace::readShortcuts()
     cutWalkThroughWindowsReverse = keys->shortcut("Walk Through Windows (Reverse)");
     if( overview != NULL )
         overview->setShortcut( keys->shortcut( "Show Window Overview" ));
+    grab_proof->reconfigure( keys, options->grabProofShortcuts );
+    if( overview != NULL ) // it watches the keys with XInput 2
+        overview->selectXI2();
 
     keys->updateConnections();
     disable_shortcuts_keys->updateConnections();

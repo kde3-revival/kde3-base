@@ -50,6 +50,7 @@ class Placement;
 class Rules;
 class WindowRules;
 class Overview;
+class GrabProofShortcuts;
 class Effects;
 class Compositor;
 
@@ -295,6 +296,11 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         bool globalShortcutsDisabled() const;
         void disableGlobalShortcuts( bool disable );
         void disableGlobalShortcutsForClient( bool disable );
+        // the shortcuts that work while a menu is open (grabproof.h)
+        bool hasGrabProofShortcuts() const;
+        bool shortcutKeyRepeated() const;
+        void grabProofRawKeysSelected( bool selected );
+        void grabProofRawKey( int keycode, Time time, bool press, bool repeat );
 
         void sessionSaveStarted();
         void sessionSaveDone();
@@ -646,6 +652,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         ShortcutDialog* client_keys_dialog;
         Client* client_keys_client;
         KGlobalAccel *disable_shortcuts_keys;
+        GrabProofShortcuts* grab_proof;
         bool global_shortcuts_disabled;
         bool global_shortcuts_disabled_for_client;
 
