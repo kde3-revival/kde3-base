@@ -2784,12 +2784,20 @@ bool Workspace::hasGrabProofShortcuts() const
     return grab_proof != NULL && !grab_proof->isEmpty();
     }
 
-// a raw key press (XInput 2, not an autorepeat) seen by the overview
-void Workspace::grabProofKeyPressed( int keycode, Time time )
+// the overview's XInput 2 selection has the raw key events or not
+void Workspace::grabProofRawKeysSelected( bool selected )
+    {
+    if( grab_proof != NULL )
+        grab_proof->setRawKeysSelected( selected );
+    }
+
+// a raw key event (XInput 2) seen by the overview
+void Workspace::grabProofRawKey( int keycode, Time time, bool press, bool repeat )
     {
     if( grab_proof == NULL )
         return;
-    if( globalShortcutsDisabled() || client_keys_dialog != NULL || !keys->isEnabled())
+    grab_proof->rawKeyEvent( keycode, time, press, repeat );
+    if( !press || repeat || globalShortcutsDisabled() || client_keys_dialog != NULL || !keys->isEnabled())
         return;
     grab_proof->keyPressed( keycode, time );
     }

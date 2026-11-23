@@ -200,8 +200,8 @@ void RootInfo::changeShowingDesktop( bool showing )
  */
 bool Workspace::workspaceEvent( XEvent * e )
     {
-    if(( e->type == KeyPress || e->type == KeyRelease ) && grab_proof != NULL )
-        grab_proof->coreKeyEvent( e->xkey ); // (before KGlobalAccel)
+    if( grab_proof != NULL )
+        grab_proof->x11Event( e ); // (keys before KGlobalAccel, menus' grabs)
     screenIdsEvent( e ); // (not eaten: Qt and the overview need them too)
     if( Compositing::dispatchPresentEvent( e ))
         return true; // the compositor's, the overview's and the animations' frames

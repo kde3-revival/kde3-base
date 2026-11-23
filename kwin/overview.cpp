@@ -4017,6 +4017,10 @@ void Overview::endDrag( bool drop, const QPoint& p )
 void Overview::selectXI2()
     {
 #ifdef OVERVIEW_XI2
+    // the screenshot keys while a menu is open (grabproof.h): the presses,
+    // and the releases for the modifiers and the autorepeat
+    const bool grab_proof = have_xi_raw && ws->hasGrabProofShortcuts();
+    ws->grabProofRawKeysSelected( have_xi_raw && ( grab_proof || options->overviewSuperKey ));
     if( !have_xi_raw )
         return;
     XIEventMask mask;
@@ -4027,9 +4031,11 @@ void Overview::selectXI2()
         XISetMask( bits, XI_RawKeyRelease );
         XISetMask( bits, XI_RawButtonPress );
         }
-    // the screenshot keys while a menu is open (grabproof.h)
-    if( ws->hasGrabProofShortcuts())
+    if( grab_proof )
+        {
         XISetMask( bits, XI_RawKeyPress );
+        XISetMask( bits, XI_RawKeyRelease );
+        }
     if( have_barriers && !barrier_lines.isEmpty())
         XISetMask( bits, XI_BarrierHit );
     mask.deviceid = XIAllMasterDevices;
@@ -4063,15 +4069,19 @@ bool Overview::handleXI2( XEvent* e )
     bool tap = false;
     int grab_proof_key = 0;
     Time grab_proof_time = CurrentTime;
+    bool grab_proof_press = false;
+    bool grab_proof_repeat = false;
     switch( cookie->evtype )
         {
         case XI_RawKeyPress:
             {
             XIRawEvent* ev = (XIRawEvent*) cookie->data;
-            if( ev->flags & XIKeyRepeat )
-                break;
             grab_proof_key = ev->detail;
             grab_proof_time = ev->time;
+            grab_proof_press = true;
+            grab_proof_repeat = ev->flags & XIKeyRepeat;
+            if( ev->flags & XIKeyRepeat )
+                break;
             KeySym sym = XkbKeycodeToKeysym( dpy, ev->detail, 0, 0 );
             // (a release lost under a grab of kwin's own must not spoil the
             // next tap: every press is a new one, modifiers don't repeat)
@@ -4088,6 +4098,8 @@ bool Overview::handleXI2( XEvent* e )
         case XI_RawKeyRelease:
             {
             XIRawEvent* ev = (XIRawEvent*) cookie->data;
+            grab_proof_key = ev->detail;
+            grab_proof_time = ev->time;
             KeySym sym = XkbKeycodeToKeysym( dpy, ev->detail, 0, 0 );
             if(( sym == XK_Super_L || sym == XK_Super_R ) && super_down )
                 {
@@ -4126,7 +4138,7 @@ bool Overview::handleXI2( XEvent* e )
         }
     XFreeEventData( dpy, cookie );
     if( grab_proof_key != 0 )
-        ws->grabProofKeyPressed( grab_proof_key, grab_proof_time );
+        ws->grabProofRawKey( grab_proof_key, grab_proof_time, grab_proof_press, grab_proof_repeat );
     if( tap && options->overviewSuperKey )
         toggle();
 #else
