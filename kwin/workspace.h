@@ -545,6 +545,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         bool desktop_set; // setCurrentDesktop() was called once
         int published_desktop; // _NET_CURRENT_DESKTOP
         QString published_screens; // _KDE_NET_SCREEN_DESKTOPS
+        QString restart_state; // the previous KWin's (initScreens() -> readScreenDesktops())
         int block_screen_follow; // windows moved by KWin don't take the desktop of the new monitor
         QValueVector< QRect > screen_geometries; // the monitors screen_desktops numbers
         void initScreens();

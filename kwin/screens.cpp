@@ -169,6 +169,38 @@ void Workspace::initScreens()
          ++i )
         screen_geometries.append( dw->screenGeometry( i ));
     screen_desktops.setOutputs( screenIds(), NULL, NULL );
+    // a KWin before this one: its state by identity (with the monitors away), else by geometry
+    Atom type;
+    int format;
+    unsigned long count, after;
+    unsigned char* data = NULL;
+    if( XGetWindowProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops_state, 0, 4096, False,
+            XA_STRING, &type, &format, &count, &after, &data ) == Success
+        && data != NULL && type == XA_STRING && format == 8 )
+        restart_state = QString::fromUtf8( reinterpret_cast< const char* >( data ), count );
+    if( data != NULL )
+        XFree( data );
+    data = NULL;
+    if( restart_state.isEmpty()
+        && XGetWindowProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops, 0, 5 * 64, False,
+            XA_CARDINAL, &type, &format, &count, &after, &data ) == Success
+        && data != NULL && type == XA_CARDINAL && format == 32 )
+        {
+        const long* l = reinterpret_cast< long* >( data );
+        for( unsigned long i = 0;
+             i + 4 < count;
+             i += 5 )
+            {
+            const QRect g( l[ i ], l[ i + 1 ], l[ i + 2 ], l[ i + 3 ] );
+            for( int s = 0;
+                 s < int( screen_geometries.count());
+                 ++s )
+                if( screen_geometries[ s ] == g && !screen_desktops.id( s ).isEmpty())
+                    restart_state += screen_desktops.id( s ) + '=' + QString::number( l[ i + 4 ] ) + '\n';
+            }
+        }
+    if( data != NULL )
+        XFree( data );
     }
 
 /*
@@ -191,47 +223,14 @@ void Workspace::readScreenDesktops()
         if( active >= 0 )
             screen_desktops.setActive( active );
         }
-    else
-        {
-        Atom type;
-        int format;
-        unsigned long count, after;
-        unsigned char* data = NULL;
-        // the state the KWin before this one left (by identity, with the monitors away)
-        if( XGetWindowProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops_state, 0, 4096, False,
-                XA_STRING, &type, &format, &count, &after, &data ) == Success
-            && data != NULL && type == XA_STRING && format == 8 )
-            screen_desktops.restore( QString::fromUtf8( reinterpret_cast< const char* >( data ), count ));
-        if( data != NULL )
-            XFree( data );
-        data = NULL;
-        // else the monitors by geometry
-        if( XGetWindowProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops, 0, 5 * 64, False,
-                XA_CARDINAL, &type, &format, &count, &after, &data ) == Success
-            && data != NULL && type == XA_CARDINAL && format == 32 )
-            {
-            const long* l = reinterpret_cast< long* >( data );
-            for( unsigned long i = 0;
-                 i + 4 < count;
-                 i += 5 )
-                {
-                const QRect g( l[ i ], l[ i + 1 ], l[ i + 2 ], l[ i + 3 ] );
-                int screen = -1;
-                for( int s = 0;
-                     s < int( screen_geometries.count()) && screen < 0;
-                     ++s )
-                    if( screen_geometries[ s ] == g )
-                        screen = s;
-                if( screen >= 0 && l[ i + 4 ] != currentDesktop())
-                    screen_desktops.setCurrent( screen, l[ i + 4 ] );
-                }
-            // the active monitor: the one showing _NET_CURRENT_DESKTOP, the pointer's first
-            if( currentDesktop( pointerScreen()) == currentDesktop())
-                screen_desktops.setActive( pointerScreen());
-            }
-        if( data != NULL )
-            XFree( data );
+    else if( !restart_state.isEmpty())
+        { // what the KWin before this one left (read before the first publishing)
+        screen_desktops.restore( restart_state );
+        // the active monitor: the pointer's if it shows _NET_CURRENT_DESKTOP
+        if( currentDesktop( pointerScreen()) == currentDesktop())
+            screen_desktops.setActive( pointerScreen());
         }
+    restart_state = QString::null;
     publishScreenDesktops();
     }
 
