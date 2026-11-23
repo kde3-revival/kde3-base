@@ -46,6 +46,7 @@ struct SessionInfo
     bool userNoBorder;
     NET::WindowType windowType;
     QString shortcut;
+    QString screenHome; // ScreenHome::toString()
     bool active; // means 'was active in the saved session'
     };
 

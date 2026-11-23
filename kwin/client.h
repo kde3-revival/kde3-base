@@ -19,6 +19,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <kdebug.h>
 #include <assert.h>
 #include <kshortcut.h>
+#include "screendesktops.h"
 #include <X11/X.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -116,6 +117,15 @@ class Client : public QObject, public KDecorationDefines
         void setDesktop( int );
         bool isOnDesktop( int d ) const;
         bool isOnCurrentDesktop() const;
+        // desktops per monitor (screens.cpp)
+        void checkScreen(); // after a geometry change: did the monitor change?
+        void resetScreen(); // the monitor now, without consequences
+        const ScreenHome& screenHome() const { return screen_home; }
+        void setScreenHome( const ScreenHome& home );
+        void readScreenHome();
+        void userMovedFromHome();
+        void leaveScreen( const QString& id, const QRect& from, const QRect& to );
+        void returnHome( const QRect& monitor );
         bool isOnAllDesktops() const;
         void setOnAllDesktops( bool set );
 
@@ -505,6 +515,8 @@ class Client : public QObject, public KDecorationDefines
         MaximizeMode max_mode;
         QRect geom_restore;
         QRect geom_fs_restore;
+        QString screen_id; // the monitor showing most of the window (identity)
+        ScreenHome screen_home; // where to go when the monitor returns
         MaximizeMode maxmode_restore;
         int workarea_diff_x, workarea_diff_y;
         WinInfo* info;

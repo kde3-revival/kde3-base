@@ -1161,12 +1161,13 @@ void Client::setOnAllDesktops( bool b )
     if( b )
         setDesktop( NET::OnAllDesktops );
     else
-        setDesktop( workspace()->currentDesktop());
+        setDesktop( workspace()->currentDesktop( workspace()->clientScreen( this )));
     }
 
+// desktops per monitor: the desktop of the monitor showing most of the window
 bool Client::isOnCurrentDesktop() const
     {
-    return isOnDesktop( workspace()->currentDesktop());
+    return workspace()->isOnShownDesktop( this );
     }
 
 // performs activation and/or raising of the window

@@ -19,6 +19,8 @@ License. See the file "COPYING" for the exact licensing terms.
 
 #include <kstartupinfo.h>
 #include <kglobal.h>
+#include <qapplication.h>
+#include <qdesktopwidget.h>
 #include <X11/extensions/shape.h>
 
 #include "notifications.h"
@@ -147,6 +149,7 @@ bool Client::manage( Window w, bool isMapped )
     checkAndSetInitialRuledOpacity();
 
     // initial desktop placement
+    bool desk_of_screen = false; // desktops per monitor: the one shown where it's placed
     if ( session ) 
         {
         desk = session->desktop;
@@ -175,7 +178,10 @@ bool Client::manage( Window w, bool isMapped )
                     on_current = true;
                 }
             if( on_current )
+                {
                 desk = workspace()->currentDesktop();
+                desk_of_screen = true;
+                }
             else if( maincl != NULL )
                 desk = maincl->desktop();
             }
@@ -185,7 +191,12 @@ bool Client::manage( Window w, bool isMapped )
             desk = asn_data.desktop();
         }
     if ( desk == 0 ) // assume window wants to be visible on the current desktop
+        {
         desk = workspace()->currentDesktop();
+        desk_of_screen = true;
+        }
+    if( rules()->checkDesktop( desk, !isMapped ) != desk )
+        desk_of_screen = false;
     desk = rules()->checkDesktop( desk, !isMapped );
     if( desk != NET::OnAllDesktops ) // do range check
         desk = KMAX( 1, KMIN( workspace()->numberOfDesktops(), desk ));
@@ -316,6 +327,29 @@ bool Client::manage( Window w, bool isMapped )
 
     if(( !isSpecialWindow() || isToolbar()) && isMovable())
         keepInArea( area, partial_keep_in_area );
+
+    // desktops per monitor: where its monitor is away, the home to return to
+    if( session )
+        setScreenHome( ScreenHome::fromString( session->screenHome ));
+    else if( isMapped )
+        readScreenHome();
+    if( session && !screenHome().isNull())
+        {
+        const int home = workspace()->screenDesktops().output( screenHome().id );
+        if( home >= 0 )
+            returnHome( QApplication::desktop()->screenGeometry( home ));
+        }
+    // a window meant for the current desktop: the one shown on its monitor
+    if( desk_of_screen && desk != NET::OnAllDesktops && workspace()->desktopsPerScreen())
+        {
+        const int d = workspace()->currentDesktop( workspace()->clientScreen( this ));
+        if( d != desk )
+            {
+            desk = d;
+            info->setDesktop( desk );
+            }
+        }
+    resetScreen();
 
     XShapeSelectInput( qt_xdisplay(), window(), ShapeNotifyMask );
     is_shape = Shape::hasShape( window());
@@ -469,7 +503,7 @@ bool Client::manage( Window w, bool isMapped )
         // if session saving, force showing new windows (i.e. "save file?" dialogs etc.)
         // also force if activation is allowed
         if( !isOnCurrentDesktop() && !isMapped && !session && ( allow || workspace()->sessionSaving()))
-            workspace()->setCurrentDesktop( desktop());
+            workspace()->setCurrentDesktop( workspace()->clientScreen( this ), desktop());
 
         bool belongs_to_desktop = false;
         for( ClientList::ConstIterator it = group()->members().begin();

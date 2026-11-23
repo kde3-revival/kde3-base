@@ -35,6 +35,8 @@ kde3_add_kdeinit_executable(kwin
     render_xrender.cpp
     shadow.cpp
     compositor.cpp
+    screendesktops.cpp
+    screens.cpp
   MOC
     client.h
     compositing.h
@@ -54,6 +56,11 @@ kde3_add_kdeinit_executable(kwin
     ${LIB_KWIN_OVERVIEW}
     ${LIB_KWIN_GLES}
 )
+# monitor identities (EDID) for the desktops per monitor
+if(X11_Xrandr_FOUND)
+  target_link_libraries(kdeinit_kwin PRIVATE X11::Xrandr)
+  target_compile_definitions(kdeinit_kwin PRIVATE KWIN_HAVE_XRANDR)
+endif()
 if(KWIN_HAVE_GLES)
   target_sources(kdeinit_kwin PRIVATE render_gles.cpp)
 endif()

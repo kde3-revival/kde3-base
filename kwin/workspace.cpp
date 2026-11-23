@@ -69,7 +69,9 @@ Workspace *Workspace::_self = 0;
 Workspace::Workspace( bool restore )
   : DCOPObject        ("KWinInterface"),
     QObject           (0, "workspace"),
-    current_desktop   (0),
+    desktop_set       (false),
+    published_desktop (0),
+    block_screen_follow(0),
     number_of_desktops(0),
     active_popup( NULL ),
     active_popup_client( NULL ),
@@ -323,6 +325,7 @@ void Workspace::init()
         protocols, 5, qt_xscreen() );
 
     loadDesktopSettings();
+    initScreens();
     updateDesktopLayout();
     // extra NETRootInfo instance in Client mode is needed to get the values of the properties
     NETRootInfo client_info( qt_xdisplay(), NET::ActiveWindow | NET::CurrentDesktop );
@@ -336,6 +339,7 @@ void Workspace::init()
         }
     if( !setCurrentDesktop( initial_desktop ))
         setCurrentDesktop( 1 );
+    readScreenDesktops(); // the desktops of the other monitors
 
     // now we know how many desktops we'll, thus, we initialise the positioning object
     initPositioning = new Placement(this);
@@ -401,6 +405,7 @@ void Workspace::init()
         updateStackingOrder( true );
 
         updateClientArea();
+        returnHomes(); // monitors back while KWin was not running
         raiseElectricBorders();
 
     // NETWM spec says we have to set it to (0,0) if we don't support it
@@ -978,6 +983,16 @@ void Workspace::slotReconfigure()
         overview->reconfigure();
     if( effects != NULL )
         effects->reconfigure();
+    if( KConfig* c = KGlobal::config())
+        {
+        QCString groupname;
+        if (screen_number == 0)
+            groupname = "Desktops";
+        else
+            groupname.sprintf("Desktops-screen-%d", screen_number);
+        KConfigGroupSaver saver( c, groupname );
+        setDesktopsPerScreen( c->readBoolEntry( "PerMonitor", true ));
+        }
 
     if( options->topMenuEnabled() && !managingTopMenus())
         {
@@ -1027,6 +1042,8 @@ void Workspace::loadDesktopSettings()
 
     int n = c->readNumEntry("Number", 4);
     number_of_desktops = n;
+    screen_desktops.setDesktopCount( n );
+    screen_desktops.setIndependent( c->readBoolEntry( "PerMonitor", true ));
     delete workarea;
     workarea = new QRect[ n + 1 ];
     delete screenarea;
@@ -1201,23 +1218,43 @@ ObscuringWindows::~ObscuringWindows()
 
 
 /*!
-  Sets the current desktop to \a new_desktop
+  Sets the current desktop to \a new_desktop: of the monitor under the
+  pointer when the desktops switch per monitor (keyboard, DCOP, the
+  _NET_CURRENT_DESKTOP requests of pagers), of all monitors otherwise.
+ */
+bool Workspace::setCurrentDesktop( int new_desktop )
+    {
+    return setCurrentDesktop( desktopsPerScreen() && desktop_set ? pointerScreen() : -1, new_desktop );
+    }
+
+/*!
+  Sets the desktop of monitor \a screen (-1, or classic mode: of all
+  monitors) to \a new_desktop, makes the monitor the active one
 
   Shows/Hides windows according to the stacking order and finally
   propages the new desktop to the world
  */
-bool Workspace::setCurrentDesktop( int new_desktop )
+bool Workspace::setCurrentDesktop( int screen, int new_desktop )
     {
     if (new_desktop < 1 || new_desktop > number_of_desktops )
         return false;
+    if( !desktopsPerScreen() || screen >= screen_desktops.outputCount())
+        screen = -1;
+    // the windows whose visibility may change
+    const bool all = screen < 0;
+#define AFFECTED( c ) ( all || clientScreen( c ) == screen )
 
     closeActivePopup();
     ++block_focus;
 // TODO    Q_ASSERT( block_stacking_updates == 0 ); // make sure stacking_order is up to date
     StackingUpdatesBlocker blocker( this );
 
-    int old_desktop = current_desktop;
-    if (new_desktop != current_desktop) 
+    const bool first = !desktop_set;
+    desktop_set = true;
+    int old_desktop = currentDesktop( screen );
+    if( !all )
+        screen_desktops.setActive( screen );
+    if( screen_desktops.setCurrent( screen, new_desktop ) || first )
         {
         if( overview != NULL )
             overview->abort(); // its windows are going away
@@ -1232,31 +1269,32 @@ bool Workspace::setCurrentDesktop( int new_desktop )
 
         ObscuringWindows obs_wins;
 
-        current_desktop = new_desktop; // change the desktop (so that Client::updateVisibility() works)
-
+        // (the desktop is changed already, so that Client::updateVisibility() works)
         for ( ClientList::ConstIterator it = stacking_order.begin(); it != stacking_order.end(); ++it)
-            if ( !(*it)->isOnDesktop( new_desktop ) && (*it) != movingClient )
+            if ( !(*it)->isOnDesktop( new_desktop ) && (*it) != movingClient && AFFECTED( *it ))
                 {
                 if( (*it)->isShown( true ) && (*it)->isOnDesktop( old_desktop ))
                     obs_wins.create( *it );
                 (*it)->updateVisibility();
                 }
 
-        rootInfo->setCurrentDesktop( current_desktop ); // now propagate the change, after hiding, before showing
+        publishScreenDesktops(); // now propagate the change, after hiding, before showing
 
-        if( movingClient && !movingClient->isOnDesktop( new_desktop ))
+        if( movingClient && !movingClient->isOnDesktop( new_desktop ) && AFFECTED( movingClient ))
             movingClient->setDesktop( new_desktop );
 
         for ( ClientList::ConstIterator it = stacking_order.fromLast(); it != stacking_order.end(); --it)
-            if ( (*it)->isOnDesktop( new_desktop ) )
+            if ( (*it)->isOnDesktop( new_desktop ) && AFFECTED( *it ))
                 (*it)->updateVisibility();
 
         --block_showing_desktop;
         if( showingDesktop()) // do this only after desktop change to avoid flicker
             resetShowingDesktop( false );
         }
+    else
+        publishScreenDesktops(); // (the active monitor)
 
-    // restore the focus on this desktop
+    // restore the focus on this desktop (of this monitor)
     --block_focus;
     Client* c = 0;
 
@@ -1264,18 +1302,18 @@ bool Workspace::setCurrentDesktop( int new_desktop )
         {
         // Search in focus chain
         if ( movingClient != NULL && active_client == movingClient
-            && focus_chain[currentDesktop()].contains( active_client )
+            && focus_chain[new_desktop].contains( active_client )
             && active_client->isShown( true ) && active_client->isOnCurrentDesktop())
             {
             c = active_client; // the requestFocus below will fail, as the client is already active
             }
         if ( !c ) 
             {
-            for( ClientList::ConstIterator it = focus_chain[currentDesktop()].fromLast();
-                 it != focus_chain[currentDesktop()].end();
+            for( ClientList::ConstIterator it = focus_chain[new_desktop].fromLast();
+                 it != focus_chain[new_desktop].end();
                  --it )
                 {
-                if ( (*it)->isShown( false ) && (*it)->isOnCurrentDesktop())
+                if ( (*it)->isShown( false ) && (*it)->isOnCurrentDesktop() && AFFECTED( *it ))
                     {
                     c = *it;
                     break;
@@ -1289,9 +1327,10 @@ bool Workspace::setCurrentDesktop( int new_desktop )
     // conserve focus (thanks to Volker Schatz <V.Schatz at thphys.uni-heidelberg.de>)
     else if( active_client && active_client->isShown( true ) && active_client->isOnCurrentDesktop())
       c = active_client;
+#undef AFFECTED
 
     if( c == NULL && !desktops.isEmpty())
-        c = findDesktop( true, currentDesktop());
+        c = findDesktop( true, new_desktop );
 
     if( c != active_client )
         setActiveClient( NULL, Allowed );
@@ -1304,36 +1343,31 @@ bool Workspace::setCurrentDesktop( int new_desktop )
     updateCurrentTopMenu();
 
     // Update focus chain:
-    //  If input: chain = { 1, 2, 3, 4 } and current_desktop = 3,
+    //  If input: chain = { 1, 2, 3, 4 } and the new desktop = 3,
     //   Output: chain = { 3, 1, 2, 4 }.
-//    kdDebug(1212) << QString("Switching to desktop #%1, at focus_chain[currentDesktop()] index %2\n")
-//      .arg(currentDesktop()).arg(desktop_focus_chain.find( currentDesktop() ));
-    for( int i = desktop_focus_chain.find( currentDesktop() ); i > 0; i-- )
+    for( int i = desktop_focus_chain.find( new_desktop ); i > 0; i-- )
         desktop_focus_chain[i] = desktop_focus_chain[i-1];
-    desktop_focus_chain[0] = currentDesktop();
+    desktop_focus_chain[0] = new_desktop;
 
-//    QString s = "desktop_focus_chain[] = { ";
-//    for( uint i = 0; i < desktop_focus_chain.size(); i++ )
-//        s += QString::number(desktop_focus_chain[i]) + ", ";
-//    kdDebug(1212) << s << "}\n";
-
-    if( old_desktop != 0 )  // not for the very first time
-        popupinfo->showInfo( desktopName(currentDesktop()) );
+    if( !first )  // not for the very first time
+        popupinfo->showInfo( desktopName( new_desktop ));
     return true;
     }
 
 // called only from DCOP
 void Workspace::nextDesktop()
     {
-    int desktop = currentDesktop() + 1;
-    setCurrentDesktop(desktop > numberOfDesktops() ? 1 : desktop);
+    const int screen = switchScreen();
+    int desktop = currentDesktop( screen ) + 1;
+    setCurrentDesktop( screen, desktop > numberOfDesktops() ? 1 : desktop );
     }
 
 // called only from DCOP
 void Workspace::previousDesktop()
     {
-    int desktop = currentDesktop() - 1;
-    setCurrentDesktop(desktop > 0 ? desktop : numberOfDesktops());
+    const int screen = switchScreen();
+    int desktop = currentDesktop( screen ) - 1;
+    setCurrentDesktop( screen, desktop > 0 ? desktop : numberOfDesktops());
     }
 
 int Workspace::desktopToRight( int desktop ) const
@@ -1471,8 +1505,14 @@ void Workspace::setNumberOfDesktops( int n )
     int old_number_of_desktops = number_of_desktops;
     number_of_desktops = n;
 
-    if( currentDesktop() > numberOfDesktops())
-        setCurrentDesktop( numberOfDesktops());
+    if( old_number_of_desktops < number_of_desktops )
+        screen_desktops.setDesktopCount( number_of_desktops );
+    for( int screen = 0;
+         screen < screen_desktops.outputCount();
+         ++screen )
+        if( currentDesktop( screen ) > numberOfDesktops())
+            setCurrentDesktop( screen, numberOfDesktops());
+    screen_desktops.setDesktopCount( number_of_desktops );
 
     // if increasing the number, do the resizing now,
     // otherwise after the moving of windows to still existing desktops
@@ -1529,7 +1569,7 @@ void Workspace::sendClientToDesktop( Client* c, int desk, bool dont_activate )
         return;
     desk = c->desktop(); // Client did range checking
 
-    if ( c->isOnDesktop( currentDesktop() ) )
+    if ( c->isOnCurrentDesktop())
         {
         if ( c->wantsTabFocus() && options->focusPolicyIsReasonable()
             && !was_on_desktop // for stickyness changes
@@ -2247,12 +2287,13 @@ void Workspace::clientMoved(const QPoint &pos, Time now)
             QRect r = QApplication::desktop()->geometry();
             int offset;
 
-            int desk_before = currentDesktop();
+            const int screen = switchScreen();
+            int desk_before = currentDesktop( screen );
             switch(border)
                 {
                 case 1:
                  slotSwitchDesktopLeft();
-                 if (currentDesktop() != desk_before) 
+                 if (currentDesktop( screen ) != desk_before) 
                     {
                     offset = r.width() / 5;
                     QCursor::setPos(r.width() - offset, pos.y());
@@ -2261,7 +2302,7 @@ void Workspace::clientMoved(const QPoint &pos, Time now)
 
                case 2:
                 slotSwitchDesktopRight();
-                if (currentDesktop() != desk_before) 
+                if (currentDesktop( screen ) != desk_before) 
                     {
                     offset = r.width() / 5;
                     QCursor::setPos(offset, pos.y());
@@ -2270,7 +2311,7 @@ void Workspace::clientMoved(const QPoint &pos, Time now)
 
                case 3:
                 slotSwitchDesktopUp();
-                if (currentDesktop() != desk_before) 
+                if (currentDesktop( screen ) != desk_before) 
                     {
                     offset = r.height() / 5;
                     QCursor::setPos(pos.x(), r.height() - offset);
@@ -2279,7 +2320,7 @@ void Workspace::clientMoved(const QPoint &pos, Time now)
 
                case 4:
                 slotSwitchDesktopDown();
-                if (currentDesktop() != desk_before) 
+                if (currentDesktop( screen ) != desk_before) 
                     {
                     offset = r.height() / 5;
                     QCursor::setPos(pos.x(), offset);

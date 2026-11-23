@@ -93,7 +93,7 @@ void TabBox::setMode( Mode mode )
 /*!
   Create list of clients on specified desktop, starting with client c
 */
-void TabBox::createClientList(ClientList &list, int desktop /*-1 = all*/, Client *c, bool chain)
+void TabBox::createClientList(ClientList &list, int desktop /*-1 = all, -2 = shown on their monitors*/, Client *c, bool chain)
     {
     ClientList::size_type idx = 0;
 
@@ -110,7 +110,7 @@ void TabBox::createClientList(ClientList &list, int desktop /*-1 = all*/, Client
 
     while ( c )
         {
-        if ( ((desktop == -1) || c->isOnDesktop(desktop))
+        if ( ((desktop == -1) || ( desktop == -2 ? c->isOnCurrentDesktop() : c->isOnDesktop(desktop)))
              && c->wantsTabFocus() )
             {
             if ( start == c )
@@ -167,7 +167,8 @@ void TabBox::reset()
         setCurrentClient( workspace()->activeClient());
 
         // get all clients to show
-        createClientList(clients, options_traverse_all ? -1 : workspace()->currentDesktop(), current_client, true);
+        // (desktops per monitor: the windows of the desktop each monitor shows)
+        createClientList(clients, options_traverse_all ? -1 : -2, current_client, true);
 
         // calculate maximum caption width
         cw = fontMetrics().width(no_tasks)+20;
@@ -214,7 +215,7 @@ void TabBox::reset()
     else
         { // DesktopListMode
         showMiniIcon = false;
-        desk = workspace()->currentDesktop();
+        desk = workspace()->currentDesktop( workspace()->switchScreen());
 
         for ( int i = 1; i <= workspace()->numberOfDesktops(); i++ )
           {
@@ -418,7 +419,7 @@ void TabBox::drawContents( QPainter * )
                   // generate text to display
                   QString s;
 
-                  if ( !(*it)->isOnDesktop(workspace()->currentDesktop()) )
+                  if ( !(*it)->isOnCurrentDesktop() )
                     s = workspace()->desktopName((*it)->desktop()) + ": ";
 
                   if ( (*it)->isMinimized() )
@@ -482,7 +483,7 @@ void TabBox::drawContents( QPainter * )
 
         // In DesktopMode, start at the current desktop
         // In DesktopListMode, start at desktop #1
-        int iDesktop = (mode() == DesktopMode) ? workspace()->currentDesktop() : 1;
+        int iDesktop = (mode() == DesktopMode) ? workspace()->currentDesktop( workspace()->switchScreen()) : 1;
         for ( int i = 1; i <= workspace()->numberOfDesktops(); i++ )
             {
             // draw highlight background
@@ -714,7 +715,7 @@ void TabBox::handleMouseEvent( XEvent* e )
         }
     else
         {
-        int iDesktop = (mode() == DesktopMode) ? workspace()->currentDesktop() : 1;
+        int iDesktop = (mode() == DesktopMode) ? workspace()->currentDesktop( workspace()->switchScreen()) : 1;
         for( int i = 1;
              i <= workspace()->numberOfDesktops();
              ++i )
@@ -1045,7 +1046,7 @@ void Workspace::CDEWalkThroughWindows( bool forward )
             break;
             }
         } while (nc && nc != c &&
-            (( !options_traverse_all && !nc->isOnDesktop(currentDesktop())) ||
+            (( !options_traverse_all && !nc->isOnCurrentDesktop()) ||
              nc->isMinimized() || !nc->wantsTabFocus() || nc->keepAbove() || nc->keepBelow() ) );
     if (nc)
         {
@@ -1059,8 +1060,8 @@ void Workspace::CDEWalkThroughWindows( bool forward )
             }
         else
             {
-            if( !nc->isOnDesktop( currentDesktop()))
-                setCurrentDesktop( nc->desktop());
+            if( !nc->isOnCurrentDesktop())
+                setCurrentDesktop( clientScreen( nc ), nc->desktop());
             raiseClient( nc );
             }
         }

@@ -114,6 +114,8 @@ void Workspace::storeSession( KConfig* config, SMSavePhase phase )
             config->writeEntry( QString("userNoBorder")+n, c->isUserNoBorder() );
             config->writeEntry( QString("windowType")+n, windowTypeToTxt( c->windowType()));
             config->writeEntry( QString("shortcut")+n, c->shortcut().toStringInternal());
+            // where it goes when its monitor comes back (screendesktops.h)
+            config->writeEntry( QString("screenHome")+n, c->screenHome().toString());
             }
         }
     // TODO store also stacking order
@@ -124,18 +126,24 @@ void Workspace::storeSession( KConfig* config, SMSavePhase phase )
         // which results in different sessionkey and different config file :(
         session_active_client = active_client;
         session_desktop = currentDesktop();
+        session_screens = screen_desktops.save();
+        session_active_screen = screen_desktops.id( activeScreen());
         }
     else if( phase == SMSavePhase2 )
         {
         config->writeEntry( "count", count );
         config->writeEntry( "active", session_active_client );
         config->writeEntry( "desktop", session_desktop );
+        config->writeEntry( "screenDesktops", session_screens );
+        config->writeEntry( "activeScreen", session_active_screen );
         }
     else // SMSavePhase2Full
         {
         config->writeEntry( "count", count );
         config->writeEntry( "active", session_active_client );
         config->writeEntry( "desktop", currentDesktop());
+        config->writeEntry( "screenDesktops", screen_desktops.save());
+        config->writeEntry( "activeScreen", screen_desktops.id( activeScreen()));
         }
     }
 
@@ -179,6 +187,7 @@ void Workspace::loadSessionInfo()
         info->userNoBorder = config->readBoolEntry( QString("userNoBorder")+n, FALSE  );
         info->windowType = txtToWindowType( config->readEntry( QString("windowType")+n ).latin1());
         info->shortcut = config->readEntry( QString("shortcut")+n );
+        info->screenHome = config->readEntry( QString("screenHome")+n );
         info->active = ( active_client == i );
         }
     }

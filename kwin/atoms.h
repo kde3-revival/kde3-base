@@ -46,6 +46,9 @@ class Atoms
         Atom xdnd_position;
         Atom net_frame_extents;
         Atom kde_net_wm_frame_strut;
+        Atom kde_net_screen_desktops; // desktops per monitor (screens.cpp)
+        Atom kde_net_screen_desktop;
+        Atom kde_net_wm_screen_home;
     };
 
 

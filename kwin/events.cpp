@@ -467,6 +467,8 @@ bool Workspace::workspaceEvent( XEvent * e )
         case ClientMessage:
             if( electricBorder( e ))
                 return true;
+            if( screenDesktopMessage( e ))
+                return true;
             break;
         default:
             break;
@@ -901,7 +903,8 @@ void Client::enterNotifyEvent( XCrossingEvent* e )
 
         if ( options->autoRaise && !isDesktop() &&
              !isDock() && !isTopMenu() && workspace()->focusChangeEnabled() &&
-             workspace()->topClientOnDesktop( workspace()->currentDesktop()) != this ) 
+             workspace()->topClientOnDesktop( workspace()->currentDesktop( workspace()->clientScreen( this )),
+                false, true, workspace()->clientScreen( this )) != this ) 
             {
             delete autoRaiseTimer;
             autoRaiseTimer = new QTimer( this );
@@ -1019,7 +1022,8 @@ void Client::updateMouseGrab()
         {
         XUngrabButton( qt_xdisplay(), AnyButton, AnyModifier, wrapperId());
         // keep grab for the simple click without modifiers if needed (see below)
-        bool not_obscured = workspace()->topClientOnDesktop( workspace()->currentDesktop(), true, false ) == this;
+        bool not_obscured = workspace()->topClientOnDesktop( workspace()->currentDesktop( workspace()->clientScreen( this )),
+            true, false, workspace()->clientScreen( this )) == this;
         if( !( !options->clickRaise || not_obscured ))
             grabButton( None );
         return;
@@ -1035,7 +1039,8 @@ void Client::updateMouseGrab()
         // is unobscured or if the user doesn't want click raise
         // (it is unobscured if it the topmost in the unconstrained stacking order, i.e. it is
         // the most recently raised window)
-        bool not_obscured = workspace()->topClientOnDesktop( workspace()->currentDesktop(), true, false ) == this;
+        bool not_obscured = workspace()->topClientOnDesktop( workspace()->currentDesktop( workspace()->clientScreen( this )),
+            true, false, workspace()->clientScreen( this )) == this;
         if( !options->clickRaise || not_obscured )
             ungrabButton( None );
         else

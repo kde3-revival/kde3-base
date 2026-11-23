@@ -233,6 +233,8 @@ void Workspace::setActiveClient( Client* c, allowed_t )
         last_active_client = active_client;
     if ( active_client ) 
         {
+        if( !active_client->isDesktop() && !active_client->isDock())
+            setActiveScreen( clientScreen( active_client ));
         updateFocusChains( active_client, FocusChainMakeFirst );
         active_client->demandAttention( false );
         }
@@ -272,10 +274,10 @@ void Workspace::activateClient( Client* c, bool force )
         return;
         }
     raiseClient( c );
-    if (!c->isOnDesktop(currentDesktop()) )
-        {
+    if (!c->isOnCurrentDesktop() )
+        { // (only the window's monitor when the desktops switch per monitor)
         ++block_focus;
-        setCurrentDesktop( c->desktop() );
+        setCurrentDesktop( clientScreen( c ), c->desktop() );
         --block_focus;
         }
     if( c->isMinimized())
@@ -408,11 +410,14 @@ bool Workspace::activateNextClient( Client* c )
               // if 'c' is transient, transfer focus to the first suitable mainwindow
             Client* get_focus = NULL;
             const ClientList mainwindows = ( c != NULL ? c->mainClients() : ClientList());
+            // (desktops per monitor: a window of the active monitor, the one c was on)
             for( ClientList::ConstIterator it = focus_chain[currentDesktop()].fromLast();
                  it != focus_chain[currentDesktop()].end();
                  --it )
                 {
                 if( !(*it)->isShown( false ) || !(*it)->isOnCurrentDesktop())
+                    continue;
+                if( desktopsPerScreen() && clientScreen( *it ) != activeScreen())
                     continue;
                 if( mainwindows.contains( *it ))
                     {
@@ -857,7 +862,7 @@ void Client::startupIdChanged()
     // If the ASN contains desktop, move it to the desktop, otherwise move it to the current
     // desktop (since the new ASN should make the window act like if it's a new application
     // launched). However don't affect the window's desktop if it's set to be on all desktops.
-    int desktop = workspace()->currentDesktop();
+    int desktop = workspace()->currentDesktop( workspace()->clientScreen( this ));
     if( asn_data.desktop() != 0 )
         desktop = asn_data.desktop();
     if( !isOnAllDesktops())

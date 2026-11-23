@@ -197,8 +197,10 @@ void Workspace::propagateClients( bool propagate_new_clients )
   doesn't accept focus it's excluded.
  */
 // TODO misleading name for this method
-Client* Workspace::topClientOnDesktop( int desktop, bool unconstrained, bool only_normal ) const
+Client* Workspace::topClientOnDesktop( int desktop, bool unconstrained, bool only_normal, int screen ) const
     {
+    if( !desktopsPerScreen())
+        screen = -1;
 // TODO    Q_ASSERT( block_stacking_updates == 0 );
     ClientList::ConstIterator begin, end;
     if( !unconstrained )
@@ -215,7 +217,8 @@ Client* Workspace::topClientOnDesktop( int desktop, bool unconstrained, bool onl
         it != end;
         --it )
         {
-        if( (*it)->isOnDesktop( desktop ) && (*it)->isShown( false ))
+        if( (*it)->isOnDesktop( desktop ) && (*it)->isShown( false )
+            && ( screen < 0 || clientScreen( *it ) == screen ))
             {
             if( !only_normal )
                 return *it;
@@ -259,7 +262,10 @@ void Workspace::raiseOrLowerClient( Client *c)
          most_recently_raised->isShown( true ) && c->isOnCurrentDesktop())
         topmost = most_recently_raised;
     else
-        topmost = topClientOnDesktop( c->isOnAllDesktops() ? currentDesktop() : c->desktop());
+        {
+        const int screen = clientScreen( c );
+        topmost = topClientOnDesktop( c->isOnAllDesktops() ? currentDesktop( screen ) : c->desktop(), false, true, screen );
+        }
 
     if( c == topmost)
         lowerClient(c);
@@ -763,7 +769,7 @@ Layer Client::belongsToLayer() const
     // only raise fullscreen above docks if it's the topmost window in unconstrained stacking order,
     // i.e. the window set to be topmost by the user (also includes transients of the fullscreen window)
     const Client* ac = workspace()->mostRecentlyActivatedClient(); // instead of activeClient() - avoids flicker
-    const Client* top = workspace()->topClientOnDesktop( desktop(), true, false );
+    const Client* top = workspace()->topClientOnDesktop( desktop(), true, false, workspace()->clientScreen( this ));
     if( isFullScreen() && ac != NULL && top != NULL
         && ( ac == this || this->group() == ac->group())
         && ( top == this || this->group() == top->group()))

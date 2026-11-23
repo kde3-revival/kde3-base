@@ -23,6 +23,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "utils.h"
 #include "kdecoration.h"
 #include "sm.h"
+#include "screendesktops.h"
 
 #include <X11/Xlib.h>
 
@@ -156,9 +157,30 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void clientMoved(const QPoint &pos, Time time);
 
         /**
-         * Returns the current virtual desktop of this workspace
+         * Returns the current virtual desktop of this workspace: the one
+         * of the active monitor (activeScreen()) when the desktops switch
+         * per monitor
          */
         int currentDesktop() const;
+        // the desktop a monitor shows (QDesktopWidget numbering; -1: the active one)
+        int currentDesktop( int screen ) const;
+        // "Desktops switch per monitor" ([Desktops] PerMonitor)
+        bool desktopsPerScreen() const;
+        void setDesktopsPerScreen( bool on );
+        // the monitor of the active window, else the one switched last
+        int activeScreen() const;
+        void setActiveScreen( int screen );
+        // the monitor under the pointer
+        int pointerScreen() const;
+        // the monitor the keys switch: the pointer's (-1 in classic mode)
+        int switchScreen() const { return desktopsPerScreen() ? pointerScreen() : -1; }
+        // c's desktop is shown on its monitor (or c is on all desktops)
+        bool isOnShownDesktop( const Client* c ) const;
+        // called after the geometry of c changed (Client::checkScreen())
+        void clientScreenChanged( Client* c, const QString& from );
+        const ScreenDesktops& screenDesktops() const { return screen_desktops; }
+        // not between a monitor change and its handling
+        bool screensSettled() const { return block_screen_follow == 0; }
         /**
          * Returns the number of virtual desktops of this workspace
          */
@@ -184,7 +206,8 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
 
         ClientList ensureStackingOrder( const ClientList& clients ) const;
 
-        Client* topClientOnDesktop( int desktop, bool unconstrained = false, bool only_normal = true ) const;
+        // screen >= 0: only windows of that monitor (when the desktops switch per monitor)
+        Client* topClientOnDesktop( int desktop, bool unconstrained = false, bool only_normal = true, int screen = -1 ) const;
         Client* findDesktop( bool topmost, int desktop ) const;
         void sendClientToDesktop( Client* c, int desktop, bool dont_activate );
         void windowToPreviousDesktop( Client* c );
@@ -229,6 +252,8 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void unclutterDesktop();
         void doNotManage(QString);
         bool setCurrentDesktop( int new_desktop );
+        // switches the monitor \a screen (-1: all; classic mode: all anyway)
+        bool setCurrentDesktop( int screen, int new_desktop );
         void nextDesktop();
         void previousDesktop();
         void circulateDesktopApplications();
@@ -515,7 +540,19 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
 
         SystemTrayWindowList systemTrayWins;
 
-        int current_desktop;
+        // the desktops of the monitors (screens.cpp); currentDesktop() is the active one's
+        ScreenDesktops screen_desktops;
+        bool desktop_set; // setCurrentDesktop() was called once
+        int published_desktop; // _NET_CURRENT_DESKTOP
+        QString published_screens; // _KDE_NET_SCREEN_DESKTOPS
+        int block_screen_follow; // windows moved by KWin don't take the desktop of the new monitor
+        QValueVector< QRect > screen_geometries; // the monitors screen_desktops numbers
+        void initScreens();
+        void updateScreens();
+        QStringList screenIds() const;
+        void publishScreenDesktops();
+        void readScreenDesktops();
+        bool screenDesktopMessage( XEvent* e );
         int number_of_desktops;
         QMemArray<int> desktop_focus_chain;
 
@@ -568,6 +605,9 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         bool session_saving;
         int session_active_client;
         int session_desktop;
+        QString session_screens;
+        QString session_active_screen;
+        void returnHomes(); // windows whose monitor is there again
 
         bool control_grab;
         bool tab_grab;
@@ -740,7 +780,22 @@ inline Client* Workspace::mostRecentlyActivatedClient() const
 
 inline int Workspace::currentDesktop() const
     {
-    return current_desktop;
+    return screen_desktops.activeDesktop();
+    }
+
+inline int Workspace::currentDesktop( int screen ) const
+    {
+    return screen_desktops.current( screen );
+    }
+
+inline bool Workspace::desktopsPerScreen() const
+    {
+    return screen_desktops.independent();
+    }
+
+inline int Workspace::activeScreen() const
+    {
+    return screen_desktops.active();
     }
 
 inline int Workspace::numberOfDesktops() const

@@ -95,6 +95,13 @@ Atoms::Atoms()
     names[n++] = (char*) "_NET_FRAME_EXTENTS";
     atoms[n] = &kde_net_wm_frame_strut;
     names[n++] = (char*) "_KDE_NET_WM_FRAME_STRUT";
+
+    atoms[n] = &kde_net_screen_desktops;
+    names[n++] = (char*) "_KDE_NET_SCREEN_DESKTOPS";
+    atoms[n] = &kde_net_screen_desktop;
+    names[n++] = (char*) "_KDE_NET_SCREEN_DESKTOP";
+    atoms[n] = &kde_net_wm_screen_home;
+    names[n++] = (char*) "_KDE_NET_WM_SCREEN_HOME";
     
     assert( n <= max );
 

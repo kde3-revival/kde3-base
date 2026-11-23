@@ -705,7 +705,8 @@ void Workspace::slotActivateAttentionWindow()
 
 void Workspace::slotSwitchDesktopNext()
     {
-    int d = currentDesktop() + 1;
+    const int screen = switchScreen();
+    int d = currentDesktop( screen ) + 1;
      if ( d > numberOfDesktops() ) 
         {
         if ( options->rollOverDesktops ) 
@@ -717,12 +718,13 @@ void Workspace::slotSwitchDesktopNext()
             return;
             }
         }
-    setCurrentDesktop(d);
+    setCurrentDesktop( screen, d );
     }
 
 void Workspace::slotSwitchDesktopPrevious()
     {
-    int d = currentDesktop() - 1;
+    const int screen = switchScreen();
+    int d = currentDesktop( screen ) - 1;
     if ( d <= 0 ) 
         {
         if ( options->rollOverDesktops )
@@ -730,44 +732,48 @@ void Workspace::slotSwitchDesktopPrevious()
       else
           return;
         }
-    setCurrentDesktop(d);
+    setCurrentDesktop( screen, d );
     }
 
 void Workspace::slotSwitchDesktopRight()
     {
-    int desktop = desktopToRight( currentDesktop());
-    if( desktop == currentDesktop())
+    const int screen = switchScreen();
+    int desktop = desktopToRight( currentDesktop( screen ));
+    if( desktop == currentDesktop( screen ))
         return;
-    setCurrentDesktop( desktop );
+    setCurrentDesktop( screen, desktop );
     }
 
 void Workspace::slotSwitchDesktopLeft()
     {
-    int desktop = desktopToLeft( currentDesktop());
-    if( desktop == currentDesktop())
+    const int screen = switchScreen();
+    int desktop = desktopToLeft( currentDesktop( screen ));
+    if( desktop == currentDesktop( screen ))
         return;
-    setCurrentDesktop( desktop );
+    setCurrentDesktop( screen, desktop );
     }
 
 void Workspace::slotSwitchDesktopUp()
     {
-    int desktop = desktopUp( currentDesktop());
-    if( desktop == currentDesktop())
+    const int screen = switchScreen();
+    int desktop = desktopUp( currentDesktop( screen ));
+    if( desktop == currentDesktop( screen ))
         return;
-    setCurrentDesktop( desktop );
+    setCurrentDesktop( screen, desktop );
     }
 
 void Workspace::slotSwitchDesktopDown()
     {
-    int desktop = desktopDown( currentDesktop());
-    if( desktop == currentDesktop())
+    const int screen = switchScreen();
+    int desktop = desktopDown( currentDesktop( screen ));
+    if( desktop == currentDesktop( screen ))
         return;
-    setCurrentDesktop( desktop );
+    setCurrentDesktop( screen, desktop );
     }
 
 void Workspace::slotSwitchToDesktop( int i )
     {
-    setCurrentDesktop( i );
+    setCurrentDesktop( switchScreen(), i );
     }
 
 
@@ -1029,14 +1035,17 @@ void Workspace::slotWindowToNextDesktop()
     
 void Workspace::windowToNextDesktop( Client* c )
     {
-    int d = currentDesktop() + 1;
+    if( c == NULL )
+        return;
+    const int screen = clientScreen( c );
+    int d = currentDesktop( screen ) + 1;
     if ( d > numberOfDesktops() )
         d = 1;
     if (c && !c->isDesktop()
         && !c->isDock() && !c->isTopMenu())
         {
         setClientIsMoving( c );
-        setCurrentDesktop( d );
+        setCurrentDesktop( screen, d );
         setClientIsMoving( NULL );
         }
     }
@@ -1051,74 +1060,89 @@ void Workspace::slotWindowToPreviousDesktop()
     
 void Workspace::windowToPreviousDesktop( Client* c )
     {
-    int d = currentDesktop() - 1;
+    if( c == NULL )
+        return;
+    const int screen = clientScreen( c );
+    int d = currentDesktop( screen ) - 1;
     if ( d <= 0 )
         d = numberOfDesktops();
     if (c && !c->isDesktop()
         && !c->isDock() && !c->isTopMenu())
         {
         setClientIsMoving( c );
-        setCurrentDesktop( d );
+        setCurrentDesktop( screen, d );
         setClientIsMoving( NULL );
         }
     }
 
 void Workspace::slotWindowToDesktopRight()
     {
-    int d = desktopToRight( currentDesktop());
-    if( d == currentDesktop())
-        return;
     Client* c = active_popup_client ? active_popup_client : active_client;
+    if( c == NULL )
+        return;
+    const int screen = clientScreen( c );
+    int d = desktopToRight( currentDesktop( screen ));
+    if( d == currentDesktop( screen ))
+        return;
     if (c && !c->isDesktop()
         && !c->isDock() && !c->isTopMenu())
         {
         setClientIsMoving( c );
-        setCurrentDesktop( d );
+        setCurrentDesktop( screen, d );
         setClientIsMoving( NULL );
         }
     }
 
 void Workspace::slotWindowToDesktopLeft()
     {
-    int d = desktopToLeft( currentDesktop());
-    if( d == currentDesktop())
-        return;
     Client* c = active_popup_client ? active_popup_client : active_client;
+    if( c == NULL )
+        return;
+    const int screen = clientScreen( c );
+    int d = desktopToLeft( currentDesktop( screen ));
+    if( d == currentDesktop( screen ))
+        return;
     if (c && !c->isDesktop()
         && !c->isDock() && !c->isTopMenu())
         {
         setClientIsMoving( c );
-        setCurrentDesktop( d );
+        setCurrentDesktop( screen, d );
         setClientIsMoving( NULL );
         }
     }
 
 void Workspace::slotWindowToDesktopUp()
     {
-    int d = desktopUp( currentDesktop());
-    if( d == currentDesktop())
-        return;
     Client* c = active_popup_client ? active_popup_client : active_client;
+    if( c == NULL )
+        return;
+    const int screen = clientScreen( c );
+    int d = desktopUp( currentDesktop( screen ));
+    if( d == currentDesktop( screen ))
+        return;
     if (c && !c->isDesktop()
         && !c->isDock() && !c->isTopMenu())
         {
         setClientIsMoving( c );
-        setCurrentDesktop( d );
+        setCurrentDesktop( screen, d );
         setClientIsMoving( NULL );
         }
     }
 
 void Workspace::slotWindowToDesktopDown()
     {
-    int d = desktopDown( currentDesktop());
-    if( d == currentDesktop())
-        return;
     Client* c = active_popup_client ? active_popup_client : active_client;
+    if( c == NULL )
+        return;
+    const int screen = clientScreen( c );
+    int d = desktopDown( currentDesktop( screen ));
+    if( d == currentDesktop( screen ))
+        return;
     if (c && !c->isDesktop()
         && !c->isDock() && !c->isTopMenu())
         {
         setClientIsMoving( c );
-        setCurrentDesktop( d );
+        setCurrentDesktop( screen, d );
         setClientIsMoving( NULL );
         }
     }

@@ -60,6 +60,9 @@ static Options::MoveResizeMode effectiveMoveResizeMode( const WindowRules* rules
 
 void Workspace::desktopResized()
     {
+    // the monitors anew: windows of a monitor gone move, those of one back go home
+    ++block_screen_follow;
+    updateScreens();
     QRect geom = QApplication::desktop()->geometry();
     NETSize desktop_geometry;
     desktop_geometry.width = geom.width();
@@ -67,6 +70,15 @@ void Workspace::desktopResized()
     rootInfo->setDesktopGeometry( -1, desktop_geometry );
 
     updateClientArea();
+    --block_screen_follow;
+    for( ClientList::ConstIterator it = clients.begin();
+         it != clients.end();
+         ++it )
+        { // (no monitor change handling for the moves above)
+        (*it)->resetScreen();
+        (*it)->updateVisibility();
+        }
+    publishScreenDesktops();
     checkElectricBorders( true );
     if( overview != NULL )
         {
@@ -358,7 +370,7 @@ QPoint Workspace::adjustClientPosition( Client* c, QPoint pos )
             QValueList<Client *>::ConstIterator l;
             for (l = clients.begin();l != clients.end();++l )
                 {
-                if ((*l)->isOnDesktop(currentDesktop()) &&
+                if ((*l)->isOnCurrentDesktop() &&
                    !(*l)->isMinimized()
                     && (*l) != c )
                     {
@@ -515,7 +527,7 @@ QRect Workspace::adjustClientSize( Client* c, QRect moveResizeGeom, int mode )
             QValueList<Client *>::ConstIterator l;
             for (l = clients.begin();l != clients.end();++l )
                 {
-                if ((*l)->isOnDesktop(currentDesktop()) &&
+                if ((*l)->isOnCurrentDesktop() &&
                    !(*l)->isMinimized()
                     && (*l) != c )
                     {
@@ -631,7 +643,7 @@ void Workspace::cascadeDesktop()
     QRect area = clientArea( PlacementArea, QPoint( 0, 0 ), currentDesktop());
     for (; it != stackingOrder().end(); ++it)
         {
-        if((!(*it)->isOnDesktop(currentDesktop())) ||
+        if((!(*it)->isOnCurrentDesktop()) ||
            ((*it)->isMinimized())                  ||
            ((*it)->isOnAllDesktops())              ||
            (!(*it)->isMovable()) )
@@ -649,7 +661,7 @@ void Workspace::unclutterDesktop()
     ClientList::Iterator it(clients.fromLast());
     for (; it != clients.end(); --it)
         {
-        if((!(*it)->isOnDesktop(currentDesktop())) ||
+        if((!(*it)->isOnCurrentDesktop()) ||
            ((*it)->isMinimized())                  ||
            ((*it)->isOnAllDesktops())              ||
            (!(*it)->isMovable()) )
@@ -1026,6 +1038,7 @@ bool Client::sendToScreen( int from, int to, bool animate )
         return false;
     if( !canSendToScreen())
         return false;
+    userMovedFromHome();
     const QRect old_area = monitorArea( workspace(), from, desktop());
     const QRect new_area = monitorArea( workspace(), to, desktop());
     const QPoint to_center = dw->screenGeometry( to ).center();
@@ -1151,6 +1164,73 @@ bool Client::sendToScreen( int from, int to, bool animate )
             && dw->screenNumber( (*it)->geometry().center()) == from )
             (*it)->sendToScreen( from, to, animate );
     return true;
+    }
+
+/*!
+  The monitor \a from (identity \a id) went away: the window moves to the
+  monitor \a to keeping its place relative to the monitor (smaller if it
+  doesn't fit), its desktop and its maximize and full screen state (the work
+  area check that follows refits maximized and full screen windows), and
+  remembers its home, unless it has one already (moved by a loss before).
+ */
+void Client::leaveScreen( const QString& id, const QRect& from, const QRect& to )
+    {
+    const QPoint home_origin = -from.topLeft();
+    const QSize full = isShade() ? adjustedSize() : size(); // not the shaded height
+    if( screen_home.isNull())
+        {
+        ScreenHome h;
+        h.id = id;
+        h.geometry = QRect( pos() + home_origin, full );
+        h.restore = geom_restore.isNull() ? geom_restore : QRect( geom_restore.topLeft() + home_origin, geom_restore.size());
+        h.fs_restore = geom_fs_restore.isNull() ? geom_fs_restore
+            : QRect( geom_fs_restore.topLeft() + home_origin, geom_fs_restore.size());
+        h.maximize = maximizeMode();
+        h.fullscreen = isFullScreen();
+        setScreenHome( h );
+        }
+    const QPoint d = to.topLeft() - from.topLeft();
+    QRect g( pos() + d, full );
+    if( !isShade() && isResizable() && ( g.width() > to.width() || g.height() > to.height()))
+        g.setSize( adjustedSize( QSize( QMIN( g.width(), to.width()), QMIN( g.height(), to.height())), SizemodeMax ));
+    if( g.right() > to.right())
+        g.moveRight( to.right());
+    if( g.bottom() > to.bottom())
+        g.moveBottom( to.bottom());
+    if( g.left() < to.left())
+        g.moveLeft( to.left());
+    if( g.top() < to.top())
+        g.moveTop( to.top());
+    if( !geom_restore.isNull())
+        geom_restore.moveBy( d.x(), d.y());
+    if( !geom_fs_restore.isNull())
+        geom_fs_restore.moveBy( d.x(), d.y());
+    if( isShade() || g.size() == full )
+        move( g.topLeft());
+    else
+        setGeometry( g );
+    }
+
+/*!
+  The home monitor (geometry \a monitor) is back: the window goes back
+  where it was, unless the user moved it meanwhile.  It forgets its home.
+ */
+void Client::returnHome( const QRect& monitor )
+    {
+    const ScreenHome h = screen_home;
+    setScreenHome( ScreenHome());
+    if( h.user_moved )
+        return;
+    const QPoint origin = monitor.topLeft();
+    if( !h.restore.isNull())
+        geom_restore = QRect( h.restore.topLeft() + origin, h.restore.size());
+    if( !h.fs_restore.isNull())
+        geom_fs_restore = QRect( h.fs_restore.topLeft() + origin, h.fs_restore.size());
+    const QRect g( h.geometry.topLeft() + origin, h.geometry.size());
+    if( isShade())
+        move( g.topLeft());
+    else
+        setGeometry( g );
     }
 
 /*!
@@ -1922,6 +2002,7 @@ void Client::setGeometry( int x, int y, int w, int h, ForceGeometry_t force )
     sendSyntheticConfigureNotify();
     updateWindowRules();
     checkMaximizeGeometry();
+    checkScreen();
     }
 
 void Client::plainResize( int w, int h, ForceGeometry_t force )
@@ -1975,6 +2056,7 @@ void Client::plainResize( int w, int h, ForceGeometry_t force )
     sendSyntheticConfigureNotify();
     updateWindowRules();
     checkMaximizeGeometry();
+    checkScreen();
     }
 
 /*!
@@ -1995,6 +2077,7 @@ void Client::move( int x, int y, ForceGeometry_t force )
     sendSyntheticConfigureNotify();
     updateWindowRules();
     checkMaximizeGeometry();
+    checkScreen();
     }
 
 
@@ -2523,7 +2606,11 @@ void Client::finishMoveResize( bool cancel )
     if( cancel )
         setGeometry( initialMoveResizeGeom );
     else
+        {
         setGeometry( moveResizeGeom );
+        if( isMove())
+            userMovedFromHome();
+        }
     checkMaximizeGeometry();
 // FRAME    update();
     Notify::raise( isResize() ? Notify::ResizeEnd : Notify::MoveEnd );
