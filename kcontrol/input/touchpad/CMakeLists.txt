@@ -27,7 +27,8 @@ install(FILES
   DESTINATION ${KDE3_SERVICES_INSTALL_DIR}/kded)
 
 # for tests on a real X server: lists the touchpads and their settings,
-# applies touchpadrc; "selftest" checks touchpadrc without X
+# applies touchpadrc; "touchpadtool selftest" checks touchpadrc without X
+# (the project has no CTest: run by hand)
 kde3_add_executable(touchpadtool NO_INSTALL
   SOURCES
     tests/touchpadtool.cpp
@@ -35,4 +36,3 @@ kde3_add_executable(touchpadtool NO_INSTALL
     touchpadsettings
     KDE3::kdecore
 )
-add_test(NAME touchpadsettingstest COMMAND touchpadtool selftest)
