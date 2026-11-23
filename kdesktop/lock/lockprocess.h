@@ -91,6 +91,7 @@ private:
     void setupSignals();
     bool checkPass();
     void stayOnTop();
+    void checkCompositor();
     void lockXF86();
     void unlockXF86();
     void resume( bool force );

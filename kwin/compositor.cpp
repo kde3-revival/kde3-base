@@ -406,6 +406,12 @@ bool Compositor::claimSelection()
         return false;
         }
     connect( selection, SIGNAL( lostOwnership()), SLOT( selectionLost()));
+    // kdesktop_lock asks this window whether KWin still answers (else a hung
+    // KWin would keep showing the desktop over the locker): who owns it
+    XClassHint hint;
+    hint.res_name = const_cast< char* >( "kwin" );
+    hint.res_class = const_cast< char* >( "KWin" );
+    XSetClassHint( dpy, selection->ownerWindow(), &hint );
     return true;
     }
 
