@@ -134,6 +134,7 @@ void Workspace::publishScreenDesktops()
                 .arg( g.height()).arg( currentDesktop( i ));
             }
         }
+    state += '|' + screen_desktops.save(); // (identities may change at the same places)
     if( state == published_screens && !published_screens.isNull())
         return;
     published_screens = state;
@@ -182,6 +183,10 @@ void Workspace::initScreens()
         XRRSelectInput( qt_xdisplay(), root, RRScreenChangeNotifyMask | RRCrtcChangeNotifyMask | RROutputChangeNotifyMask
             | RROutputPropertyNotifyMask ); // (an EDID replaced on the same connector)
         connect( &screen_ids_timer, SIGNAL( timeout()), SLOT( checkScreenIds()));
+        // "xrandr --setmonitor/--delmonitor" send only a ConfigureNotify of the root window
+        XWindowAttributes attr;
+        if( XGetWindowAttributes( qt_xdisplay(), root, &attr ))
+            XSelectInput( qt_xdisplay(), root, attr.your_event_mask | StructureNotifyMask );
         }
     else
         randr_event_base = -1;
@@ -519,7 +524,8 @@ void Workspace::screenIdsEvent( XEvent* e )
     {
 #ifdef KWIN_RANDR_MONITORS
     if( randr_event_base >= 0
-        && ( e->type == randr_event_base + RRScreenChangeNotify || e->type == randr_event_base + RRNotify ))
+        && ( e->type == randr_event_base + RRScreenChangeNotify || e->type == randr_event_base + RRNotify
+            || ( e->type == ConfigureNotify && e->xconfigure.window == root && !e->xconfigure.send_event )))
         screen_ids_timer.start( 300, true );
 #else
     (void) e;
@@ -529,6 +535,9 @@ void Workspace::screenIdsEvent( XEvent* e )
 void Workspace::checkScreenIds()
     {
     const QStringList ids = screenIds();
+    if( getenv( "KWIN_SCREENS_DEBUG" ))
+        fprintf( stderr, "kwin screens: check ids %s (known %s)\n", ids.join( "," ).latin1(),
+            screen_desktops.ids().join( "," ).latin1());
     if( ids.isEmpty() || ids == screen_desktops.ids())
         return;
     QDesktopWidget* dw = QApplication::desktop();
