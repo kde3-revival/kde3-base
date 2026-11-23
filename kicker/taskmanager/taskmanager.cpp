@@ -112,6 +112,7 @@ TaskManager::TaskManager()
 
 TaskManager::~TaskManager()
 {
+    delete m_screenDesktopsWatcher;
     KGlobal::locale()->removeCatalogue("libtaskmanager");
 }
 
