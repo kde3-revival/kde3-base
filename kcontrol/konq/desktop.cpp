@@ -115,6 +115,13 @@ KDesktopConfig::KDesktopConfig(QWidget *parent, const char * /*name*/)
   connect(_wheelOption,SIGNAL(toggled(bool)), SLOT( changed() ));
 
   layout->addWidget(_wheelOption);
+
+  _perMonitorOption = new QCheckBox(i18n("Desktops switch &per monitor"), this);
+  QWhatsThis::add( _perMonitorOption, i18n( "When this is checked, each monitor shows its own virtual desktop: "
+    "switching desktops changes only the monitor under the mouse pointer (the pager of a panel switches the "
+    "panel's monitor). When unchecked, all monitors switch together." ));
+  connect(_perMonitorOption, SIGNAL(toggled(bool)), SLOT( changed() ));
+  layout->addWidget(_perMonitorOption);
   layout->addStretch(1);
 
   load();
@@ -162,6 +169,10 @@ void KDesktopConfig::load( bool useDefaults )
   }
 
   _numInput->setEnabled(!kwinconfig->entryIsImmutable("Number"));
+
+  kwinconfig->setGroup(groupname);
+  _perMonitorOption->setChecked(kwinconfig->readBoolEntry("PerMonitor", true));
+  _perMonitorOption->setEnabled(!kwinconfig->entryIsImmutable("PerMonitor"));
 
   delete kwinconfig;
   kwinconfig = 0;
@@ -221,12 +232,30 @@ void KDesktopConfig::save()
   config->writeEntry("WheelSwitchesWorkspace", _wheelOption->isChecked());
   delete config;
 
+  // KWin: each monitor shows its own desktop
+  QCString groupname;
+  if (konq_screen_number == 0)
+     groupname = "Desktops";
+  else
+     groupname.sprintf("Desktops-screen-%d", konq_screen_number);
+  KConfig *kwinconfig = new KConfig("kwinrc");
+  kwinconfig->setGroup(groupname);
+  kwinconfig->writeEntry("PerMonitor", _perMonitorOption->isChecked());
+  delete kwinconfig;
+
   // Tell kdesktop about the new config file
   if ( !kapp->dcopClient()->isAttached() )
      kapp->dcopClient()->attach();
   QByteArray data;
 
   kapp->dcopClient()->send( appname, "KDesktopIface", "configure()", data );
+
+  QCString kwinname;
+  if (konq_screen_number == 0)
+      kwinname = "kwin";
+  else
+      kwinname.sprintf("kwin-screen-%d", konq_screen_number);
+  kapp->dcopClient()->send( kwinname, "KWinInterface", "reconfigure()", data );
 
   emit changed(false);
 }

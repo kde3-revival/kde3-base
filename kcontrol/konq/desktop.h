@@ -51,6 +51,7 @@ class KDesktopConfig : public KCModule
   KLineEdit    *_nameInput[maxDesktops];
   QCheckBox    *_wheelOption;
   bool         _wheelOptionImmutable;
+  QCheckBox    *_perMonitorOption;
   bool         _labelImmutable[maxDesktops];
 };
 
