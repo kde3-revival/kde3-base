@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+Name=Touchpad
+Comment=Applies the touchpad settings at login and to touchpads connected later
+ServiceTypes=KDEDModule
+X-KDE-ModuleType=Library
+X-KDE-Library=touchpad
+X-KDE-FactoryName=touchpad
+X-KDE-Kded-autoload=true
+X-KDE-Kded-load-on-demand=false
+X-KDE-Kded-phase=0

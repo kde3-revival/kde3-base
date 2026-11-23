@@ -8,6 +8,35 @@ include_directories(
   "${CMAKE_CURRENT_SOURCE_DIR}/${_themepage}"
 )
 
+# the Touchpad tab (libinput X driver's touchpads), with XInput 2: its
+# header and the calls it needs (libXi and XInput.h alone may be XI 1)
+set(_touchpad_xi2 OFF)
+if(X11_Xi_FOUND)
+  include(CheckSymbolExists)
+  include(CMakePushCheckState)
+  cmake_push_check_state(RESET)
+  set(CMAKE_REQUIRED_INCLUDES ${X11_Xi_INCLUDE_PATH} ${X11_X11_INCLUDE_PATH})
+  set(CMAKE_REQUIRED_LIBRARIES ${X11_Xi_LIB} ${X11_X11_LIB})
+  check_symbol_exists(XISelectEvents "X11/Xlib.h;X11/extensions/XInput2.h" KCM_INPUT_HAVE_XISELECTEVENTS)
+  check_symbol_exists(XIGetProperty "X11/Xlib.h;X11/extensions/XInput2.h" KCM_INPUT_HAVE_XIGETPROPERTY)
+  cmake_pop_check_state()
+  if(KCM_INPUT_HAVE_XISELECTEVENTS AND KCM_INPUT_HAVE_XIGETPROPERTY)
+    set(_touchpad_xi2 ON)
+  endif()
+endif()
+
+set(_touchpad_sources)
+set(_touchpad_moc)
+set(_touchpad_link)
+if(_touchpad_xi2)
+  add_subdirectory(touchpad)
+  set(_touchpad_sources touchpadpage.cpp)
+  set(_touchpad_moc touchpadpage.h)
+  set(_touchpad_link touchpadsettings)
+else()
+  message(STATUS "kcm_input: no XInput 2 (libXi, XInput2.h): no Touchpad tab, no kded_touchpad")
+endif()
+
 kde3_add_module(kcm_input
   SOURCES
     mouse.cpp
@@ -15,11 +44,14 @@ kde3_add_module(kcm_input
     main.cpp
     logitechmouse.cpp
     logitechmouse_base.ui
+    ${_touchpad_sources}
   MOC
     logitechmouse.h
     mouse.h
+    ${_touchpad_moc}
   LINK
     themepage
+    ${_touchpad_link}
     ${LIB_XTEST}
     KDE3::kio
     ${LIB_XCURSOR}
@@ -59,6 +91,11 @@ if(MKFONTDIR_EXECUTABLE)
     \"\$ENV{DESTDIR}${_overridedir}\" RESULT_VARIABLE _r)")
 else()
   install(CODE "message(STATUS \"mkfontdir not found: no fonts.dir in ${_overridedir}\")")
+endif()
+
+if(_touchpad_xi2)
+  target_compile_definitions(kcm_input PRIVATE KCM_INPUT_TOUCHPAD)
+  target_include_directories(kcm_input PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/touchpad")
 endif()
 
 add_subdirectory(${_themepage})

@@ -67,6 +67,9 @@
 #include <config.h>
 
 #include "mouse.h"
+#ifdef KCM_INPUT_TOUCHPAD
+#include "touchpadpage.h"
+#endif
 
 #include <X11/X.h>
 #include <X11/Xlib.h>
@@ -178,6 +181,15 @@ MouseConfig::MouseConfig (QWidget * parent, const char *name)
     themetab = new ThemePage(this);
     connect(themetab, SIGNAL(changed(bool)), SLOT(changed()));
     tabwidget->addTab(themetab, i18n("&Cursor Theme"));
+
+    // Touchpad tab
+#ifdef KCM_INPUT_TOUCHPAD
+    touchpadtab = new TouchpadPage(this);
+    connect(touchpadtab, SIGNAL(changed()), SLOT(changed()));
+    tabwidget->addTab(touchpadtab, i18n("&Touchpad"));
+#else
+    touchpadtab = 0;
+#endif
 
     // Advanced tab
     tab2 = new QWidget(0, "Advanced Tab");
@@ -546,6 +558,9 @@ void MouseConfig::load( bool useDefaults )
   mk_curve->setValue(ac.readNumEntry("MKCurve", 0));
 
   themetab->load();
+#ifdef KCM_INPUT_TOUCHPAD
+  touchpadtab->load( useDefaults );
+#endif
 
   checkAccess();
   changed( useDefaults );
@@ -590,6 +605,9 @@ void MouseConfig::save()
   ac.sync();
 
   themetab->save();
+#ifdef KCM_INPUT_TOUCHPAD
+  touchpadtab->save();
+#endif
   // the KIPC message of settings->save() came before the cursor theme
   // was written: the XSETTINGS manager reads it again
   DCOPRef( "kded", "xsettings" ).send( "reconfigure" );

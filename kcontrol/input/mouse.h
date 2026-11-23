@@ -58,6 +58,7 @@
 class QCheckBox;
 class QSlider;
 class QTabWidget;
+class TouchpadPage;
 
 class MouseSettings
 {
@@ -143,6 +144,7 @@ private:
   QWidget *tab2;
   KMouseDlg* tab1;
   ThemePage* themetab;
+  TouchpadPage* touchpadtab;
   MouseSettings *settings;
 
  QCheckBox *mouseKeys;
