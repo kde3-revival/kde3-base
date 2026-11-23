@@ -110,6 +110,7 @@ TouchpadPage::TouchpadPage( QWidget *parent, const char *name )
     QVGroupBox *pointer = new QVGroupBox( i18n( "Pointer" ), settings );
     grid->addWidget( pointer, 1, 0 );
     m_accelSpeed = new KDoubleNumInput( -1.0, 1.0, 0.0, 0.05, 2, pointer );
+    m_accelSpeed->setRange( -1.0, 1.0, 0.05, true );
     m_accelSpeed->setLabel( i18n( "&Speed:" ), AlignLeft | AlignVCenter );
     QWhatsThis::add( m_accelSpeed, i18n( "How fast the pointer moves with the touchpad, from -1 (slowest) "
 					 "to 1 (fastest); the mouse has its own setting." ) );
