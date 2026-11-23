@@ -78,6 +78,8 @@ void Workspace::desktopResized()
         (*it)->resetScreen();
         (*it)->updateVisibility();
         }
+    if( active_client != NULL && !active_client->isDesktop() && !active_client->isDock())
+        setActiveScreen( clientScreen( active_client )); // it may have gone home
     publishScreenDesktops();
     checkElectricBorders( true );
     if( overview != NULL )
@@ -185,7 +187,7 @@ void Workspace::updateClientArea( bool force )
 
     bool changed = force;
 
-    if (! screenarea)
+    if (! screenarea || screenarea_screens != nscreens)
         changed = true;
 
     for( int i = 1;
@@ -208,6 +210,7 @@ void Workspace::updateClientArea( bool force )
         new_wareas = NULL;
         delete[] screenarea;
         screenarea = new_sareas;
+        screenarea_screens = nscreens;
         new_sareas = NULL;
         NETRect r;
         for( int i = 1; i <= numberOfDesktops(); i++)
@@ -255,7 +258,9 @@ QRect Workspace::clientArea( clientAreaOption opt, const QPoint& p, int desktop 
     int screen = desktopwidget->isVirtualDesktop() ? desktopwidget->screenNumber( p ) : desktopwidget->primaryScreen();
     if( screen < 0 )
         screen = desktopwidget->primaryScreen();
-    QRect sarea = screenarea // may be NULL during KWin initialization
+    // may be NULL during KWin initialization; the monitors may have changed
+    // before it is rebuilt (Workspace::desktopResized() moves windows first)
+    QRect sarea = screenarea && screen < screenarea_screens
         ? screenarea[ desktop ][ screen ]
         : desktopwidget->screenGeometry( screen );
     QRect warea = workarea[ desktop ].isNull()
@@ -1190,22 +1195,53 @@ void Client::leaveScreen( const QString& id, const QRect& from, const QRect& to 
         setScreenHome( h );
         }
     const QPoint d = to.topLeft() - from.topLeft();
-    QRect g( pos() + d, full );
-    if( !isShade() && isResizable() && ( g.width() > to.width() || g.height() > to.height()))
-        g.setSize( adjustedSize( QSize( QMIN( g.width(), to.width()), QMIN( g.height(), to.height())), SizemodeMax ));
-    if( g.right() > to.right())
-        g.moveRight( to.right());
-    if( g.bottom() > to.bottom())
-        g.moveBottom( to.bottom());
-    if( g.left() < to.left())
-        g.moveLeft( to.left());
-    if( g.top() < to.top())
-        g.moveTop( to.top());
     if( !geom_restore.isNull())
         geom_restore.moveBy( d.x(), d.y());
     if( !geom_fs_restore.isNull())
         geom_fs_restore.moveBy( d.x(), d.y());
-    if( isShade() || g.size() == full )
+    placeOnScreen( QRect( pos() + d, full ), to, maximizeMode(), isFullScreen());
+    }
+
+/*!
+  Sets the frame geometry \a g on the monitor \a monitor, kept inside it
+  (smaller if it doesn't fit); a maximized (\a maximize) or full screen window
+  gets the maximized or full screen geometry of that monitor, so that it stays
+  so (setGeometry() checks the maximize state against the geometry).  The work
+  area check that follows the monitor change refits it to the struts.
+ */
+void Client::placeOnScreen( QRect g, const QRect& monitor, int maximize, bool fullscreen )
+    {
+    const QPoint center = monitor.center();
+    if( fullscreen && isFullScreen())
+        {
+        setGeometry( workspace()->clientArea( FullScreenArea, center, desktop()));
+        return;
+        }
+    if( !isShade() && maximize != MaximizeRestore && maximizeMode() == MaximizeMode( maximize ))
+        {
+        const QRect area = workspace()->clientArea( MaximizeArea, center, desktop()).intersect( monitor );
+        if( maximize & MaximizeVertical )
+            {
+            g.setTop( area.top());
+            g.setHeight( area.height());
+            }
+        if( maximize & MaximizeHorizontal )
+            {
+            g.setLeft( area.left());
+            g.setWidth( area.width());
+            }
+        }
+    if( !isShade() && isResizable() && ( g.width() > monitor.width() || g.height() > monitor.height()))
+        g.setSize( adjustedSize( QSize( QMIN( g.width(), monitor.width()), QMIN( g.height(), monitor.height())), SizemodeMax ));
+    if( g.right() > monitor.right())
+        g.moveRight( monitor.right());
+    if( g.bottom() > monitor.bottom())
+        g.moveBottom( monitor.bottom());
+    if( g.left() < monitor.left())
+        g.moveLeft( monitor.left());
+    if( g.top() < monitor.top())
+        g.moveTop( monitor.top());
+    if( isShade() || g.size() == ( isShade() ? adjustedSize() : size()))
         move( g.topLeft());
     else
         setGeometry( g );
@@ -1213,7 +1249,9 @@ void Client::leaveScreen( const QString& id, const QRect& from, const QRect& to 
 
 /*!
   The home monitor (geometry \a monitor) is back: the window goes back
-  where it was, unless the user moved it meanwhile.  It forgets its home.
+  where it was (inside the monitor, which may have another size now; still
+  maximized or full screen there if it was and is), unless the user moved it
+  meanwhile.  It forgets its home.
  */
 void Client::returnHome( const QRect& monitor )
     {
@@ -1226,11 +1264,7 @@ void Client::returnHome( const QRect& monitor )
         geom_restore = QRect( h.restore.topLeft() + origin, h.restore.size());
     if( !h.fs_restore.isNull())
         geom_fs_restore = QRect( h.fs_restore.topLeft() + origin, h.fs_restore.size());
-    const QRect g( h.geometry.topLeft() + origin, h.geometry.size());
-    if( isShade())
-        move( g.topLeft());
-    else
-        setGeometry( g );
+    placeOnScreen( QRect( h.geometry.topLeft() + origin, h.geometry.size()), monitor, h.maximize, h.fullscreen );
     }
 
 /*!

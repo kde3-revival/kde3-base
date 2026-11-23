@@ -109,6 +109,14 @@ int main()
     CHECK( h2.fs_restore.isNull() && h2.maximize == 3 && h2.fullscreen && !h2.user_moved );
     CHECK( ScreenHome::fromString( "garbage" ).isNull());
     CHECK( ScreenHome().toString().isNull());
+    // malformed or stale homes are refused (no home at all)
+    CHECK( ScreenHome::fromString( "x,0,10,10|0,0,0,0|0,0,0,0|0|0|0|id" ).isNull());
+    CHECK( ScreenHome::fromString( "0,0,0,10|0,0,0,0|0,0,0,0|0|0|0|id" ).isNull()); // empty frame
+    CHECK( ScreenHome::fromString( "0,0,10,10|0,0,0,0|0,0,0,0|7|0|0|id" ).isNull()); // maximize mode
+    CHECK( ScreenHome::fromString( "0,0,10,10|0,0,0,0|0,0,0,0|0|2|0|id" ).isNull());
+    CHECK( ScreenHome::fromString( "0,0,99999,10|0,0,0,0|0,0,0,0|0|0|0|id" ).isNull());
+    CHECK( ScreenHome::fromString( "0,0,10,10|1,2|0,0,0,0|0|0|0|id" ).isNull());
+    CHECK( !ScreenHome::fromString( "5,6,10,10|0,0,0,0|0,0,0,0|1|0|1|id" ).isNull());
     printf( "%s (%d failures)\n", failures == 0 ? "PASS" : "FAIL", failures );
     return failures == 0 ? 0 : 1;
     }

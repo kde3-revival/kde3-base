@@ -432,6 +432,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void clientPopupActivated( int );
         void configureWM();
         void desktopResized();
+        void checkScreenIds(); // screens.cpp: monitors replaced at the same place
         void slotUpdateToolWindows();
         void lostTopMenuSelection();
         void lostTopMenuOwner();
@@ -546,6 +547,9 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         int published_desktop; // _NET_CURRENT_DESKTOP
         QString published_screens; // _KDE_NET_SCREEN_DESKTOPS
         QString restart_state; // the previous KWin's (initScreens() -> readScreenDesktops())
+        int randr_event_base; // -1: no RandR
+        QTimer screen_ids_timer;
+        void screenIdsEvent( XEvent* e );
         int block_screen_follow; // windows moved by KWin don't take the desktop of the new monitor
         QValueVector< QRect > screen_geometries; // the monitors screen_desktops numbers
         void initScreens();
@@ -691,6 +695,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
 
         QRect* workarea; //  array of workareas for virtual desktops
         QRect** screenarea; // array of workareas per xinerama screen for all virtual desktops
+        int screenarea_screens; // the monitors screenarea has (they may change before it is rebuilt)
 
         bool managing_topmenus;
         KSelectionOwner* topmenu_selection;

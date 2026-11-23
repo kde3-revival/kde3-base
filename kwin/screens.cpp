@@ -146,8 +146,14 @@ void Workspace::publishScreenDesktops()
         }
     else
         XDeleteProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops_state );
+    // also on the _NET_SUPPORTING_WM_CHECK window: pagers believe the root property only
+    // while this KWin runs (another window manager leaves a stale root property)
+    const Window support = supportWindow->winId();
     if( data.isEmpty())
+        {
         XDeleteProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops );
+        XDeleteProperty( qt_xdisplay(), support, atoms->kde_net_screen_desktops );
+        }
     else
         {
         QMemArray< long > values( data.count());
@@ -156,6 +162,8 @@ void Workspace::publishScreenDesktops()
              it != data.end();
              ++it )
             values[ i++ ] = *it;
+        XChangeProperty( qt_xdisplay(), support, atoms->kde_net_screen_desktops, XA_CARDINAL, 32,
+            PropModeReplace, reinterpret_cast< unsigned char* >( values.data()), values.size());
         XChangeProperty( qt_xdisplay(), root, atoms->kde_net_screen_desktops, XA_CARDINAL, 32,
             PropModeReplace, reinterpret_cast< unsigned char* >( values.data()), values.size());
         }
@@ -166,6 +174,17 @@ void Workspace::publishScreenDesktops()
 */
 void Workspace::initScreens()
     {
+#ifdef KWIN_RANDR_MONITORS
+    int error_base, major = 0, minor = 0;
+    if( XRRQueryExtension( qt_xdisplay(), &randr_event_base, &error_base )
+        && XRRQueryVersion( qt_xdisplay(), &major, &minor ) && ( major > 1 || minor >= 5 ))
+        { // (the same mask as the overview's: one selection per client; Qt needs the screen changes)
+        XRRSelectInput( qt_xdisplay(), root, RRScreenChangeNotifyMask | RRCrtcChangeNotifyMask | RROutputChangeNotifyMask );
+        connect( &screen_ids_timer, SIGNAL( timeout()), SLOT( checkScreenIds()));
+        }
+    else
+        randr_event_base = -1;
+#endif
     QDesktopWidget* dw = QApplication::desktop();
     screen_geometries.clear();
     for( int i = 0;
@@ -308,18 +327,29 @@ QStringList Workspace::screenIds() const
                     && edid != NULL && format == 8 && items >= 128 )
                     {
                     id = "edid:";
+                    bool serial_known = false;
                     for( int b = 8; // manufacturer, product, serial number
                          b < 16;
                          ++b )
+                        {
                         id += QString().sprintf( "%02x", edid[ b ] );
+                        if( b >= 12 && edid[ b ] != 0 )
+                            serial_known = true;
+                        }
                     for( int d = 54; // the serial string descriptor
                          d <= 108;
                          d += 18 )
                         if( edid[ d ] == 0 && edid[ d + 1 ] == 0 && edid[ d + 2 ] == 0 && edid[ d + 3 ] == 0xff )
                             {
                             QCString serial( reinterpret_cast< const char* >( edid + d + 5 ), 14 );
-                            id += ':' + QString::fromLatin1( serial ).stripWhiteSpace();
+                            const QString text = QString::fromLatin1( serial ).stripWhiteSpace();
+                            id += ':' + text;
+                            if( !text.isEmpty())
+                                serial_known = true;
                             }
+                    // no serial: the connector always (the same whichever monitors are connected)
+                    if( !serial_known && !connector.isEmpty())
+                        id += '@' + connector;
                     }
                 if( edid != NULL )
                     XFree( edid );
@@ -345,7 +375,7 @@ QStringList Workspace::screenIds() const
             XRRFreeMonitors( mon );
         }
 #endif
-    // the same monitor model twice without serials: the connector tells them
+    // the same monitor (EDID, serial) twice: the connector tells them
     for( int i = 0;
          i < screens;
          ++i )
@@ -407,7 +437,8 @@ void Workspace::updateScreens()
     screen_desktops.setOutputs( ids, &lost, &added );
     screen_geometries = geometries;
     ++block_screen_follow;
-    if( !lost.isEmpty())
+    // (classic mode: the windows stay as before these monitor homes existed)
+    if( !lost.isEmpty() && desktopsPerScreen())
         {
         const QRect target = geometries[ 0 ]; // the primary monitor (else the first)
         for( ClientList::ConstIterator it = clients.begin();
@@ -433,6 +464,8 @@ void Workspace::updateScreens()
 */
 void Workspace::returnHomes()
     {
+    if( !desktopsPerScreen())
+        return;
     ++block_screen_follow;
     for( ClientList::ConstIterator it = clients.begin();
          it != clients.end();
@@ -445,6 +478,9 @@ void Workspace::returnHomes()
         if( screen < 0 || screen >= int( screen_geometries.count()))
             continue;
         (*it)->returnHome( screen_geometries[ screen ] );
+        // shown or hidden by the desktop of its monitor (also at the start, after manage())
+        (*it)->resetScreen();
+        (*it)->updateVisibility();
         }
     --block_screen_follow;
     }
@@ -471,6 +507,33 @@ void Workspace::clientScreenChanged( Client* c, const QString& from_id )
         c->setDesktop( currentDesktop( to )); // (updates the visibility)
     else
         c->updateVisibility();
+    }
+
+/*
+ RandR events: a monitor replaced by another at the same place changes no
+ geometry, so Qt doesn't tell (desktopResized()); compare the identities
+ once the burst is over.
+*/
+void Workspace::screenIdsEvent( XEvent* e )
+    {
+#ifdef KWIN_RANDR_MONITORS
+    if( randr_event_base >= 0
+        && ( e->type == randr_event_base + RRScreenChangeNotify || e->type == randr_event_base + RRNotify ))
+        screen_ids_timer.start( 300, true );
+#else
+    (void) e;
+#endif
+    }
+
+void Workspace::checkScreenIds()
+    {
+    const QStringList ids = screenIds();
+    if( ids.isEmpty() || ids == screen_desktops.ids())
+        return;
+    QDesktopWidget* dw = QApplication::desktop();
+    if( dw->numScreens() != int( screen_geometries.count()))
+        return; // (Qt tells about this one)
+    desktopResized(); // the same handling as for a geometry change
     }
 
 bool Workspace::screenDesktopMessage( XEvent* e )

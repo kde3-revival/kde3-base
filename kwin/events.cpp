@@ -199,6 +199,7 @@ void RootInfo::changeShowingDesktop( bool showing )
  */
 bool Workspace::workspaceEvent( XEvent * e )
     {
+    screenIdsEvent( e ); // (not eaten: Qt and the overview need them too)
     if( Compositing::dispatchPresentEvent( e ))
         return true; // the compositor's, the overview's and the animations' frames
     if( compositor_ != NULL && compositor_->x11Event( e ))

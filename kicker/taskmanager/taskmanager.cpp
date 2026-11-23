@@ -404,9 +404,10 @@ void TaskManager::windowChanged(WId w, unsigned int dirty)
     }
 
     // check if any state we are interested in is marked dirty
+    // (desktops per monitor: the geometry tells the window's monitor, hence its visibility)
     if (!(dirty & (NET::WMVisibleName | NET::WMName | NET::WMIcon |
                   NET::WMState | NET::XAWMState | NET::WMDesktop) ||
-          (m_trackGeometry && dirty & NET::WMGeometry)))
+          ((m_trackGeometry || perScreenDesktops()) && dirty & NET::WMGeometry)))
     {
         return;
     }
@@ -434,13 +435,15 @@ void TaskManager::windowChanged(WId w, unsigned int dirty)
         dirty ^= NET::WMIcon;
     }
 
+    const bool wasShown = t->isOnCurrentDesktop();
     if (dirty)
     {
         // only refresh this stuff if we have other changes besides icons
         t->refresh(dirty);
     }
 
-    if (dirty & (NET::WMDesktop | NET::WMState | NET::XAWMState))
+    if (dirty & (NET::WMDesktop | NET::WMState | NET::XAWMState)
+        || (perScreenDesktops() && wasShown != t->isOnCurrentDesktop()))
     {
         // moved to different desktop or is on all or change in iconification/withdrawnnes
         emit windowChanged(t);
@@ -1537,8 +1540,9 @@ ScreenDesktopsWatcher::ScreenDesktopsWatcher(TaskManager* manager)
 
 bool ScreenDesktopsWatcher::x11Event(XEvent* e)
 {
+    static Atom wmCheck = XInternAtom(qt_xdisplay(), "_NET_SUPPORTING_WM_CHECK", False);
     if (e->type == PropertyNotify && e->xproperty.window == qt_xrootwin()
-        && e->xproperty.atom == screenDesktopsAtom())
+        && (e->xproperty.atom == screenDesktopsAtom() || e->xproperty.atom == wmCheck))
     {
         m_manager->readScreenDesktops();
     }
@@ -1547,24 +1551,53 @@ bool ScreenDesktopsWatcher::x11Event(XEvent* e)
 
 void TaskManager::readScreenDesktops()
 {
+    // KWin sets it on its _NET_SUPPORTING_WM_CHECK window too: believe it only from the
+    // running window manager (another one leaves the root property behind)
     QValueList< QPair< QRect, int > > screens;
     Atom type;
     int format;
     unsigned long count, after;
     unsigned char* data = 0;
-    if (XGetWindowProperty(qt_xdisplay(), qt_xrootwin(), screenDesktopsAtom(), 0, 5 * 64, False,
-                           XA_CARDINAL, &type, &format, &count, &after, &data) == Success
-        && data && type == XA_CARDINAL && format == 32)
+    Window wm = None;
+    static Atom wmCheck = XInternAtom(qt_xdisplay(), "_NET_SUPPORTING_WM_CHECK", False);
+    if (XGetWindowProperty(qt_xdisplay(), qt_xrootwin(), wmCheck, 0, 1, False, XA_WINDOW,
+                           &type, &format, &count, &after, &data) == Success
+        && data && type == XA_WINDOW && format == 32 && count == 1)
+    {
+        wm = *reinterpret_cast<Window*>(data);
+    }
+    if (data)
+    {
+        XFree(data);
+        data = 0;
+    }
+    KXErrorHandler handler; // (the window may be gone)
+    bool valid = wm != None
+        && XGetWindowProperty(qt_xdisplay(), wm, screenDesktopsAtom(), 0, 5 * 64, False,
+                              XA_CARDINAL, &type, &format, &count, &after, &data) == Success
+        && data && type == XA_CARDINAL && format == 32 && after == 0 && count > 0 && count % 5 == 0;
+    if (valid)
     {
         const long* l = reinterpret_cast<long*>(data);
-        for (unsigned long i = 0; i + 4 < count; i += 5)
+        const int desktops = numberOfDesktops();
+        for (unsigned long i = 0; i + 4 < count && valid; i += 5)
         {
-            screens.append(qMakePair(QRect(l[i], l[i + 1], l[i + 2], l[i + 3]), int(l[i + 4])));
+            QRect r(l[i], l[i + 1], l[i + 2], l[i + 3]);
+            if (l[i + 2] <= 0 || l[i + 3] <= 0 || l[i + 2] > 65535 || l[i + 3] > 65535
+                || l[i + 4] < 1 || l[i + 4] > desktops)
+            {
+                valid = false; // malformed: classic mode
+            }
+            screens.append(qMakePair(r, int(l[i + 4])));
         }
     }
     if (data)
     {
         XFree(data);
+    }
+    if (handler.error(true) || !valid)
+    {
+        screens.clear();
     }
     if (screens == m_screenDesktops)
     {

@@ -126,6 +126,7 @@ class Client : public QObject, public KDecorationDefines
         void userMovedFromHome();
         void leaveScreen( const QString& id, const QRect& from, const QRect& to );
         void returnHome( const QRect& monitor );
+        void placeOnScreen( QRect g, const QRect& monitor, int maximize, bool fullscreen );
         bool isOnAllDesktops() const;
         void setOnAllDesktops( bool set );
 

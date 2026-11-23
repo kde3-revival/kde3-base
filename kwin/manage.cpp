@@ -333,7 +333,7 @@ bool Client::manage( Window w, bool isMapped )
         setScreenHome( ScreenHome::fromString( session->screenHome ));
     else if( isMapped )
         readScreenHome();
-    if( session && !screenHome().isNull())
+    if( session && !screenHome().isNull() && workspace()->desktopsPerScreen())
         {
         const int home = workspace()->screenDesktops().output( screenHome().id );
         if( home >= 0 )

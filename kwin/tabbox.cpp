@@ -121,7 +121,10 @@ void TabBox::createClientList(ClientList &list, int desktop /*-1 = all, -2 = sho
             else
                 { // don't add windows that have modal dialogs
                 Client* modal = c->findModal();
-                if( modal == NULL || modal == c )
+                if( modal != NULL && desktop == -2 && !modal->isOnCurrentDesktop()
+                    && !list.contains( c ))
+                    list += c; // (its modal is hidden on its monitor: activating c shows it)
+                else if( modal == NULL || modal == c )
                     list += c;
                 else if( !list.contains( modal ))
                     list += modal;

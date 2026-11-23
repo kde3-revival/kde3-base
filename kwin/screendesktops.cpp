@@ -176,12 +176,31 @@ static QString rectString( const QRect& r )
     return QString( "%1,%2,%3,%4" ).arg( r.x()).arg( r.y()).arg( r.width()).arg( r.height());
     }
 
-static QRect stringRect( const QString& s )
+// an empty field: a null rectangle; *ok false for anything malformed
+static QRect stringRect( const QString& s, bool* ok )
     {
     QStringList l = QStringList::split( ',', s, true );
     if( l.count() != 4 )
+        {
+        *ok = false;
         return QRect();
-    return QRect( l[ 0 ].toInt(), l[ 1 ].toInt(), l[ 2 ].toInt(), l[ 3 ].toInt());
+        }
+    int v[ 4 ];
+    for( int i = 0;
+         i < 4;
+         ++i )
+        {
+        bool num;
+        v[ i ] = l[ i ].toInt( &num );
+        if( !num || v[ i ] < -32768 || v[ i ] > 32767 )
+            {
+            *ok = false;
+            return QRect();
+            }
+        }
+    if( v[ 2 ] < 0 || v[ 3 ] < 0 )
+        *ok = false;
+    return QRect( v[ 0 ], v[ 1 ], v[ 2 ], v[ 3 ] );
     }
 
 // one line: fields separated by '|', the identity last (it may hold anything but a newline)
@@ -200,20 +219,25 @@ ScreenHome ScreenHome::fromString( const QString& s )
     QStringList l = QStringList::split( '|', s, true );
     if( l.count() < 7 )
         return h;
-    h.geometry = stringRect( l[ 0 ] );
-    h.restore = stringRect( l[ 1 ] );
-    h.fs_restore = stringRect( l[ 2 ] );
-    h.maximize = l[ 3 ].toInt() & 3;
-    h.fullscreen = l[ 4 ].toInt() != 0;
-    h.user_moved = l[ 5 ].toInt() != 0;
+    bool ok = true;
+    h.geometry = stringRect( l[ 0 ], &ok );
+    h.restore = stringRect( l[ 1 ], &ok );
+    h.fs_restore = stringRect( l[ 2 ], &ok );
+    bool n1, n2, n3;
+    h.maximize = l[ 3 ].toInt( &n1 );
+    const int fullscreen = l[ 4 ].toInt( &n2 );
+    const int user_moved = l[ 5 ].toInt( &n3 );
+    if( !ok || !n1 || !n2 || !n3 || h.maximize < 0 || h.maximize > 3 || fullscreen < 0 || fullscreen > 1
+        || user_moved < 0 || user_moved > 1 || h.geometry.width() < 1 || h.geometry.height() < 1 )
+        return ScreenHome(); // malformed: no home
+    h.fullscreen = fullscreen != 0;
+    h.user_moved = user_moved != 0;
     QStringList rest = l;
     for( int i = 0;
          i < 6;
          ++i )
         rest.remove( rest.begin());
     h.id = rest.join( "|" );
-    if( !h.geometry.isValid())
-        h.id = QString::null;
     return h;
     }
 

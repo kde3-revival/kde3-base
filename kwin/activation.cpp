@@ -335,6 +335,12 @@ void Workspace::takeActivity( Client* c, int flags, bool handled )
                 if( modal->desktop() != c->desktop()) // forced desktop
                     activateClient( modal );
                 }
+            if( !modal->isOnCurrentDesktop())
+                { // desktops per monitor: the modal on another monitor, showing another desktop
+                ++block_focus;
+                setCurrentDesktop( clientScreen( modal ), modal->desktop());
+                --block_focus;
+                }
             // if the click was inside the window (i.e. handled is set),
             // but it has a modal, there's no need to use handled mode, because
             // the modal doesn't get the click anyway
