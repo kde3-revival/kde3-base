@@ -37,6 +37,7 @@ kde3_add_kdeinit_executable(kwin
     compositor.cpp
     screendesktops.cpp
     screens.cpp
+    grabproof.cpp
   MOC
     client.h
     compositing.h

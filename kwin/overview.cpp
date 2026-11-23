@@ -3998,7 +3998,7 @@ void Overview::endDrag( bool drop, const QPoint& p )
     }
 
 //****************************************
-// XInput 2: the Super key, the barriers
+// XInput 2: the Super key, the barriers, the grab-proof shortcuts
 //****************************************
 
 /*
@@ -4027,6 +4027,9 @@ void Overview::selectXI2()
         XISetMask( bits, XI_RawKeyRelease );
         XISetMask( bits, XI_RawButtonPress );
         }
+    // the screenshot keys while a menu is open (grabproof.h)
+    if( ws->hasGrabProofShortcuts())
+        XISetMask( bits, XI_RawKeyPress );
     if( have_barriers && !barrier_lines.isEmpty())
         XISetMask( bits, XI_BarrierHit );
     mask.deviceid = XIAllMasterDevices;
@@ -4058,6 +4061,8 @@ bool Overview::handleXI2( XEvent* e )
     if( !XGetEventData( dpy, cookie ))
         return true;
     bool tap = false;
+    int grab_proof_key = 0;
+    Time grab_proof_time = CurrentTime;
     switch( cookie->evtype )
         {
         case XI_RawKeyPress:
@@ -4065,6 +4070,8 @@ bool Overview::handleXI2( XEvent* e )
             XIRawEvent* ev = (XIRawEvent*) cookie->data;
             if( ev->flags & XIKeyRepeat )
                 break;
+            grab_proof_key = ev->detail;
+            grab_proof_time = ev->time;
             KeySym sym = XkbKeycodeToKeysym( dpy, ev->detail, 0, 0 );
             // (a release lost under a grab of kwin's own must not spoil the
             // next tap: every press is a new one, modifiers don't repeat)
@@ -4118,6 +4125,8 @@ bool Overview::handleXI2( XEvent* e )
             break;
         }
     XFreeEventData( dpy, cookie );
+    if( grab_proof_key != 0 )
+        ws->grabProofKeyPressed( grab_proof_key, grab_proof_time );
     if( tap && options->overviewSuperKey )
         toggle();
 #else

@@ -202,6 +202,11 @@ unsigned long Options::updateSettings()
     overviewHotCornerRipple = config->readBoolEntry( "HotCornerRipple", true );
     overviewShowMinimized = config->readBoolEntry( "ShowMinimized", true );
 
+    config->setGroup( "Shortcuts" );
+    QStringList under_grab;
+    under_grab << "Region Screenshot" << "Desktop Screenshot" << "Window Screenshot";
+    grabProofShortcuts = config->hasKey( "UnderGrab" ) ? config->readListEntry( "UnderGrab" ) : under_grab;
+
     // the window animations; the old minimize animation's keys when not set
     config->setGroup( "Effects" );
     effectsEnabled = config->readBoolEntry( "Enabled", true );

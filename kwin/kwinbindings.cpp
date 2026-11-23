@@ -1,4 +1,12 @@
-#ifndef NOSLOTS
+#if defined( IN_KWIN ) && !defined( NOSLOTS )
+// (the slots also for the shortcuts that work while a menu is open)
+# define DEF2( name, descr, key3, key4, fnSlot ) \
+   ( keys->insert( name, i18n(descr), QString::null, key3, key4, this, SLOT(fnSlot) ), \
+     grab_proof->addAction( name, this, SLOT(fnSlot) ))
+# define DEF( name, key3, key4, fnSlot ) \
+   ( keys->insert( name, i18n(name), QString::null, key3, key4, this, SLOT(fnSlot) ), \
+     grab_proof->addAction( name, this, SLOT(fnSlot) ))
+#elif !defined( NOSLOTS )
 # define DEF2( name, descr, key3, key4, fnSlot ) \
    keys->insert( name, i18n(descr), QString::null, key3, key4, this, SLOT(fnSlot) )
 # define DEF( name, key3, key4, fnSlot ) \
