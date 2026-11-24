@@ -386,7 +386,8 @@ class EffectAnim
               style( 1 ), p( 0 ), p_from( 0 ), p_to( 0 ), seg_start( 0 ), seg_duration( 0 ), linear( false ),
               defer( false ), wait( false ), damage( None ), wait_start( 0 ), damage_first( 0 ),
               damage_last( 0 ), ready( true ), fade( 0 ), fade_start( 0 ), grow( false ), moved( false ), opacity( 1.0 ), max_wait( MaxWait ), on_top( false ), use_below( false ), below( None ),
-              done( false ), fresh( true ), started( 0 ), live_shape_read( false ), live_shaped( false )
+              done( false ), fresh( true ), started( 0 ), live_shape_read( false ), live_shaped( false ),
+              fade_only( false )
             {}
         Kind kind;
         Client* client; // NULL when gone
@@ -433,6 +434,7 @@ class EffectAnim
         bool live_shaped;
         QValueVector< XRectangle > live_shape;
         CompositorShadow shadow;
+        bool fade_only; // Open/Close: no growing or shrinking (notifications)
     };
 
 /*
@@ -1100,9 +1102,11 @@ void Effects::morphEnd( Client* c, bool moving )
     }
 
 // a new window: shown when it has painted, growing a little and fading in
+// (a notification only fades in)
 void Effects::windowOpening( Client* c )
     {
-    if( !open_close_anim || !( c->isNormalWindow() || c->isDialog()) || c->isSpecialWindow()
+    const bool fade_only = c->isNotification();
+    if( !open_close_anim || ( !fade_only && ( !( c->isNormalWindow() || c->isDialog()) || c->isSpecialWindow()))
         || c->isMinimized() || !canAnimate( c, false ) || findAnim( c ) != NULL )
         return;
     // the new frame is still on top of everything (KWin restacks it later):
@@ -1112,6 +1116,7 @@ void Effects::windowOpening( Client* c )
     wc.stack_mode = Below;
     XConfigureWindow( dpy, c->frameId(), CWSibling | CWStackMode, &wc );
     EffectAnim* anim = newAnim( EffectAnim::Open, c );
+    anim->fade_only = fade_only;
     anim->p = anim->p_from = 0;
     anim->p_to = 1;
     anim->seg_duration = duration( 0.8 );
@@ -1133,16 +1138,19 @@ void Effects::windowOpening( Client* c )
     }
 
 // a closed window: its last contents shrink a little and fade out where it was
+// (a notification only fades out)
 void Effects::windowClosing( Client* c )
     {
     EffectAnim* anim = findAnim( c );
     if( anim != NULL )
         freeAnim( anim );
     dropRetained( c );
-    if( !open_close_anim || !( c->isNormalWindow() || c->isDialog()) || c->isSpecialWindow()
+    const bool fade_only = c->isNotification();
+    if( !open_close_anim || ( !fade_only && ( !( c->isNormalWindow() || c->isDialog()) || c->isSpecialWindow()))
         || !canAnimate( c ))
         return;
     anim = newAnim( EffectAnim::Close, c );
+    anim->fade_only = fade_only;
     Pixmap p;
     QRect geom;
     int depth;
@@ -2108,7 +2116,8 @@ void Effects::drawAnim( EffectAnim* anim )
                 shape = &anim->live_shape;
                 shaped = anim->live_shaped;
                 }
-            const double s = anim->kind == EffectAnim::Open ? 0.9 + 0.1 * anim->p : 0.85 + 0.15 * anim->p;
+            const double s = anim->fade_only ? 1.0
+                : anim->kind == EffectAnim::Open ? 0.9 + 0.1 * anim->p : 0.85 + 0.15 * anim->p;
             RectF g( anim->geom );
             RectF rect( g.cx() - g.w * s / 2, g.cy() - g.h * s / 2, g.w * s, g.h * s );
             if( anim->p >= 1 )
