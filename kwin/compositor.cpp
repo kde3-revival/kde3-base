@@ -950,7 +950,7 @@ void Compositor::updateShadow( SceneWindow* w )
         if( c != NULL )
             {
             if( !( c->isDesktop() || c->isDock() || c->isSplash() || c->isTopMenu() || c->isFullScreen()
-                || c->maximizeMode() == Client::MaximizeFull ))
+                || c->maximizeMode() == Client::MaximizeFull))
                 w->shadow = c->isActive() ? ShadowActive : ShadowInactive;
             }
         else if( w->override_redirect && !w->locker )
@@ -2054,12 +2054,9 @@ void Compositor::paint( Render::Texture* target, const QRegion& region )
                 QRegion clip = ( w->clip & QRegion( outer )) - w->shapeOnScreen();
                 if( !clip.isEmpty())
                     {
-                    const ShadowTiles* tiles = shadows->tiles( w->shadow_radius, w->shape, w->geom.size());
-                    if( tiles != NULL )
-                        {
-                        rend->setClip( clip );
-                        rend->drawNineSlice( tiles->tile, outer, Qt::black, w->shadow_alpha );
-                        }
+                    rend->setClip( clip );
+                    shadows->draw( rend, w->shadow_radius, w->shape, w->geom.size(), RectF( outer ), 1.0, 1.0,
+                        Qt::black, w->shadow_alpha );
                     }
                 }
             if( !w->isOpaque())
@@ -2181,15 +2178,12 @@ void Compositor::drawShadow( Render::Renderer* r, const CompositorShadow& s, con
     {
     if( !s.valid || s.size.isEmpty() || alpha <= 1.0 / 512 || shadows == NULL )
         return;
-    const ShadowTiles* tiles = shadows->tiles( s.radius, s.shape, s.size );
-    if( tiles == NULL )
-        return;
     const double sx = rect.w / s.size.width();
     const double sy = rect.h / s.size.height();
     const RectF outer( rect.x + ( s.dx - s.radius ) * sx, rect.y + ( s.dy - s.radius ) * sy,
         rect.w + 2 * s.radius * sx, rect.h + 2 * s.radius * sy );
     r->setClip( clip );
-    r->drawNineSlice( tiles->tile, outer, sx, sy, Qt::black, s.alpha * alpha );
+    shadows->draw( r, s.radius, s.shape, s.size, outer, sx, sy, Qt::black, s.alpha * alpha );
     }
 
 Window Compositor::windowBelow( Window id, const QRect& area, bool* covered ) const
