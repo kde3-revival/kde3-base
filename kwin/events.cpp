@@ -1425,14 +1425,16 @@ void Client::focusInEvent( XFocusInEvent* e )
     if( !isShown( false ) || !isOnCurrentDesktop()) // we unmapped it, but it got focus meanwhile ->
         return;            // activateNextClient() already transferred focus elsewhere
     // check if this client is in should_get_focus list or if activation is allowed
-    bool activate =  workspace()->allowClientActivation( this, -1U, true );
+    // (a notification never: it took the focus itself, it goes back)
+    bool activate = !isNotification() && workspace()->allowClientActivation( this, -1U, true );
     workspace()->gotFocusIn( this ); // remove from should_get_focus list
     if( activate )
         setActive( TRUE );
     else
         {
         workspace()->restoreFocus();
-        demandAttention();
+        if( !isNotification())
+            demandAttention();
         }
     }
 
