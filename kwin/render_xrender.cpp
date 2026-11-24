@@ -221,9 +221,18 @@ Texture* XRenderRenderer::textureFromImage( const QImage& image )
     return new XRTexture( dpy, w, h, alpha, false, pix, true, pic );
     }
 
+// a sane limit for pixmaps made from memory (the protocol allows 32767;
+// a shadow or a mask never needs more)
+static const int MaxXRenderTexture = 8192;
+
+int XRenderRenderer::maxTextureSize() const
+    {
+    return MaxXRenderTexture;
+    }
+
 Texture* XRenderRenderer::textureFromAlpha( const unsigned char* data, int w, int h, int stride )
     {
-    if( w <= 0 || h <= 0 )
+    if( w <= 0 || h <= 0 || w > MaxXRenderTexture || h > MaxXRenderTexture || stride < w )
         return NULL;
     const int line = ( w + 3 ) & ~3;
     char* copy = (char*) malloc( line * h );
@@ -480,6 +489,7 @@ QString XRenderRenderer::description() const { return QString::null; }
 Texture* XRenderRenderer::textureFromPixmap( Pixmap, int, int, int, Visual* ) { return NULL; }
 Texture* XRenderRenderer::textureFromImage( const QImage& ) { return NULL; }
 Texture* XRenderRenderer::textureFromAlpha( const unsigned char*, int, int, int ) { return NULL; }
+int XRenderRenderer::maxTextureSize() const { return 0; }
 Texture* XRenderRenderer::createOffscreen( int, int, bool ) { return NULL; }
 Texture* XRenderRenderer::createPresentBuffer( Window, int, int, Pixmap* ) { return NULL; }
 void XRenderRenderer::acquireClientBuffers() {}

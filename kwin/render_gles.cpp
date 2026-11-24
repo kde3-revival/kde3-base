@@ -154,6 +154,7 @@ class GlesPrivate
         bool lost;
         QString renderer;
         QString version;
+        int max_texture; // GL_MAX_TEXTURE_SIZE
         PFNEGLCREATEIMAGEKHRPROC createImage;
         PFNEGLDESTROYIMAGEKHRPROC destroyImage;
         PFNGLEGLIMAGETARGETTEXTURE2DOESPROC imageTargetTexture;
@@ -201,7 +202,7 @@ class GlesPrivate
 
 GlesPrivate::GlesPrivate( Display* d )
     : dpy( d ), xcb( NULL ), dri3_major( 0 ), dri3_minor( 0 ), drm_fd( -1 ), gbm( NULL ), egl( EGL_NO_DISPLAY ),
-      ctx( EGL_NO_CONTEXT ), modifiers( false ), robust( false ), lost( false ), createImage( NULL ),
+      ctx( EGL_NO_CONTEXT ), modifiers( false ), robust( false ), lost( false ), max_texture( 0 ), createImage( NULL ),
       destroyImage( NULL ), imageTargetTexture( NULL ), resetStatus( NULL ), queryModifiers( NULL ),
       program( 0 ), vao( 0 ), vbo( 0 ), shm_fence( NULL ), x_fence( 0 ), use_fence( true ), target( NULL ),
       clipped( false )
@@ -552,6 +553,9 @@ bool GlesRenderer::init( QString* error )
         }
     d->renderer = QString::fromLatin1( (const char*) glGetString( GL_RENDERER ));
     d->version = QString::fromLatin1( (const char*) glGetString( GL_VERSION ));
+    GLint max_texture = 0;
+    glGetIntegerv( GL_MAX_TEXTURE_SIZE, &max_texture );
+    d->max_texture = max_texture > 0 ? max_texture : 2048; // (2048: the GLES 3.0 minimum)
     // the shader program
     GLuint vs = compileShader( GL_VERTEX_SHADER, vertex_source, error );
     GLuint fs = vs != 0 ? compileShader( GL_FRAGMENT_SHADER, fragment_source, error ) : 0;
@@ -784,17 +788,30 @@ Texture* GlesRenderer::textureFromImage( const QImage& image )
     return t;
     }
 
+int GlesRenderer::maxTextureSize() const
+    {
+    return d->max_texture;
+    }
+
 Texture* GlesRenderer::textureFromAlpha( const unsigned char* data, int w, int h, int stride )
     {
-    if( w <= 0 || h <= 0 || d->lost )
+    if( w <= 0 || h <= 0 || w > d->max_texture || h > d->max_texture || stride < w || d->lost )
         return NULL;
     GLTexture* t = new GLTexture( d, w, h, true, true );
     glBindTexture( GL_TEXTURE_2D, t->tex );
     glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
     glPixelStorei( GL_UNPACK_ROW_LENGTH, stride );
+    while( glGetError() != GL_NO_ERROR )
+        ; // (earlier errors are not this upload's)
     glTexImage2D( GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, data );
+    const bool failed = glGetError() != GL_NO_ERROR; // (e.g. GL_OUT_OF_MEMORY)
     glPixelStorei( GL_UNPACK_ROW_LENGTH, 0 );
     glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
+    if( failed )
+        {
+        delete t;
+        return NULL;
+        }
     // ( 0, 0, 0, value ): premultiplied black, like an A8 picture
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_ZERO );
     glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_ZERO );

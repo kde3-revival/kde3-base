@@ -143,8 +143,11 @@ class Renderer
         virtual Texture* textureFromDmaBuf( const DmaBuf& buf, bool alpha );
         // a copy of a 32 bit QImage (Qt's non-premultiplied ARGB; hasAlphaBuffer())
         virtual Texture* textureFromImage( const QImage& image ) = 0;
-        // an alpha-only texture from 8 bit values (stride bytes per row)
+        // an alpha-only texture from 8 bit values (stride bytes per row);
+        // NULL when it can't be made (e.g. larger than maxTextureSize())
         virtual Texture* textureFromAlpha( const unsigned char* data, int w, int h, int stride ) = 0;
+        // the largest width and height of a texture made from memory
+        virtual int maxTextureSize() const = 0;
         // a texture that can be drawn into (cleared to transparent black)
         virtual Texture* createOffscreen( int w, int h, bool alpha ) = 0;
         // a buffer for presenting into window with Present: drawn into as a

@@ -326,15 +326,29 @@ const ShadowTiles* ShadowCache::tiles( int radius, int c, const QValueVector< un
 */
 ShapeShadow* ShadowCache::makeShape( int radius, const QRegion& shape, const QSize& size )
     {
-    const int cw = size.width() + 2 * radius;
-    const int ch = size.height() + 2 * radius;
-    int f = 1;
-    while( (( cw + f - 1 ) / f ) * (( ch + f - 1 ) / f ) > MaxShapeArea && radius / ( 2 * f ) >= 1 )
+    ShapeShadow* s = new ShapeShadow;
+    s->radius = radius;
+    s->size = size;
+    s->shape = shape;
+    // (64 bits: a window up to 32767 x 32767, any radius)
+    const long long cw = (long long) size.width() + 2LL * radius;
+    const long long ch = (long long) size.height() + 2LL * radius;
+    const long long max_side = renderer->maxTextureSize();
+    long long f = 1;
+    while(((( cw + f - 1 ) / f ) * (( ch + f - 1 ) / f ) > MaxShapeArea && radius / ( 2 * f ) >= 1 )
+        || ( cw + f - 1 ) / f > max_side || ( ch + f - 1 ) / f > max_side )
+        {
+        if( f >= 1024 )
+            return s; // (no texture: no shadow, and not tried again)
         f *= 2;
-    const int tw = ( cw + f - 1 ) / f;
-    const int th = ( ch + f - 1 ) / f;
-    if( tw * th > 4 * MaxShapeArea )
-        return NULL; // (a huge window with a tiny radius)
+        }
+    const long long tw_l = ( cw + f - 1 ) / f;
+    const long long th_l = ( ch + f - 1 ) / f;
+    if( tw_l * th_l > 4LL * MaxShapeArea || cw * ch > 16LL * 1024 * 1024 )
+        return s; // (a huge window with a tiny radius; or more pixels to visit than sane)
+    s->scale = (int) f;
+    const int tw = (int) tw_l;
+    const int th = (int) th_l;
     QValueVector< int > sum( tw * th, 0 );
     QMemArray< QRect > rects = ( shape & QRegion( 0, 0, size.width(), size.height())).rects();
     for( unsigned int i = 0;
@@ -346,8 +360,8 @@ ShapeShadow* ShadowCache::makeShape( int radius, const QRegion& shape, const QSi
              y <= r.bottom() + radius;
              ++y )
             {
-            int* row = &sum[ ( y / f ) * tw ];
-            if( f == 1 )
+            int* row = &sum[ ( y / s->scale ) * tw ];
+            if( s->scale == 1 )
                 {
                 for( int x = r.left() + radius;
                      x <= r.right() + radius;
@@ -358,29 +372,20 @@ ShapeShadow* ShadowCache::makeShape( int radius, const QRegion& shape, const QSi
                 for( int x = r.left() + radius;
                      x <= r.right() + radius;
                      ++x )
-                    ++row[ x / f ];
+                    ++row[ x / s->scale ];
             }
         }
     QValueVector< unsigned char > canvas( tw * th );
     for( int i = 0;
          i < tw * th;
          ++i )
-        canvas[ i ] = (unsigned char) (( sum[ i ] * 255 + f * f / 2 ) / ( f * f ));
+        canvas[ i ] = (unsigned char) (( sum[ i ] * 255LL + f * f / 2 ) / ( f * f ));
     // (the canvas has the room for the blur: its middle part is the result)
-    const int rr = radius / f;
-    QValueVector< unsigned char > blurred = blur( canvas, tw, th, rr, radius / 2.5 / f );
+    const int rr = radius / s->scale;
+    QValueVector< unsigned char > blurred = blur( canvas, tw, th, rr, radius / 2.5 / s->scale );
     const int bw = tw + 2 * rr;
-    ShapeShadow* s = new ShapeShadow;
+    // (NULL when the upload failed: kept so, no shadow)
     s->texture = renderer->textureFromAlpha( &blurred[ rr * bw + rr ], tw, th, bw );
-    if( s->texture == NULL )
-        {
-        delete s;
-        return NULL;
-        }
-    s->radius = radius;
-    s->scale = f;
-    s->size = size;
-    s->shape = shape;
     return s;
     }
 
@@ -429,7 +434,7 @@ bool ShadowCache::draw( Render::Renderer* r, int radius, const QRegion& shape, c
         return true;
         }
     const ShapeShadow* s = shapeShadow( radius, shape, size );
-    if( s == NULL )
+    if( s == NULL || s->texture == NULL )
         return false;
     const double f = s->scale;
     r->fillMasked( outer, c, alpha, s->texture,

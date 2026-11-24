@@ -42,6 +42,7 @@ class XRenderRenderer : public Renderer
         virtual Texture* textureFromPixmap( Pixmap pixmap, int w, int h, int depth, Visual* visual );
         virtual Texture* textureFromImage( const QImage& image );
         virtual Texture* textureFromAlpha( const unsigned char* data, int w, int h, int stride );
+        virtual int maxTextureSize() const;
         virtual Texture* createOffscreen( int w, int h, bool alpha );
         virtual Texture* createPresentBuffer( Window window, int w, int h, Pixmap* pixmap );
         virtual void acquireClientBuffers();
