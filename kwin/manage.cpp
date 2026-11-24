@@ -195,7 +195,8 @@ bool Client::manage( Window w, bool isMapped )
         desk = workspace()->currentDesktop();
         desk_of_screen = true;
         }
-    if( rules()->checkDesktop( desk, !isMapped ) != desk )
+    // (a rule may also force the desktop asked for: 0 is no desktop a rule gives)
+    if( rules()->checkDesktop( desk, !isMapped ) != desk || rules()->checkDesktop( 0, !isMapped ) != 0 )
         desk_of_screen = false;
     desk = rules()->checkDesktop( desk, !isMapped );
     if( desk != NET::OnAllDesktops ) // do range check
