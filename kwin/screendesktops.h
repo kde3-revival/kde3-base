@@ -78,6 +78,40 @@ class ScreenDesktops
     };
 
 /*
+ What the monitors showed when a launch (startup notification) was
+ announced.  Launchers (KRun, kinit) put the current desktop of the time in
+ every launch, whichever monitor they were used on; such a launch means "the
+ current desktop": the one its window's monitor showed then.
+*/
+class LaunchDesktops
+    {
+    public:
+        // the first announcement with a desktop: noted once per launch
+        void announce( const QString& launch, const ScreenDesktops& desktops );
+        void remove( const QString& launch );
+        bool contains( const QString& launch ) const { return launches_.contains( launch ); }
+        int count() const { return launches_.count(); }
+        /*
+         The desktop for a window of \a launch that asks for \a asked (the
+         desktop in the startup notification, not range checked), on \a monitor:
+         the one that monitor showed at the launch if \a asked was the current
+         desktop then; a monitor that came since: \a fallback.  An unknown
+         launch or another desktop: \a asked.
+        */
+        int desktop( const QString& launch, int asked, const QString& monitor, int fallback ) const;
+        // a monitor's identity changed (ScreenDesktops::rename())
+        void rename( const QString& from, const QString& to );
+    private:
+        struct Launch
+            {
+            Launch() : current( 0 ) {}
+            int current; // the current (active monitor's) desktop
+            QMap< QString, int > shown; // monitor identity -> its desktop
+            };
+        QMap< QString, Launch > launches_;
+    };
+
+/*
  Where a window lived before its monitor went away (variant A of the design:
  the window waits on another monitor with the same desktop number and goes
  back when its monitor returns, unless the user moved it meanwhile).

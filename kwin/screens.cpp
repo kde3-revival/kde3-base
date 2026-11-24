@@ -418,6 +418,7 @@ QStringList Workspace::screenIds()
          ++it )
         { // its desktop and the homes of its windows go with it
         screen_desktops.rename( it.key(), it.data());
+        launch_desktops.rename( it.key(), it.data()); // (launches still to map)
         for( ClientList::ConstIterator c = clients.begin();
              c != clients.end();
              ++c )
@@ -603,12 +604,9 @@ void Workspace::checkScreenIds()
 */
 void Workspace::launchAnnounced( const KStartupInfoId& id, const KStartupInfoData& data )
     {
-    if( data.desktop() == 0 || id.none() || launch_desktops.contains( id.id()))
+    if( data.desktop() == 0 || id.none())
         return;
-    LaunchDesktops& l = launch_desktops[ id.id() ];
-    l.current = published_desktop != 0 ? published_desktop : currentDesktop();
-    for( int i = 0; i < screen_desktops.outputCount(); ++i )
-        l.shown[ screen_desktops.id( i ) ] = currentDesktop( i );
+    launch_desktops.announce( id.id(), screen_desktops );
     }
 
 void Workspace::launchGone( const KStartupInfoId& id, const KStartupInfoData& )
@@ -620,13 +618,8 @@ int Workspace::launchDesktop( const KStartupInfoId& id, int desktop, int screen 
     {
     if( !desktopsPerScreen() || desktop == NET::OnAllDesktops )
         return desktop;
-    QMap< QString, LaunchDesktops >::ConstIterator it = launch_desktops.find( id.id());
-    if( it == launch_desktops.end() || (*it).current != desktop )
-        return desktop; // not seen announced, or another desktop asked for
-    QMap< QString, int >::ConstIterator shown = (*it).shown.find( screen_desktops.id( screen ));
-    if( shown == (*it).shown.end())
-        return currentDesktop( screen ); // a monitor that came since
-    return *shown;
+    return launch_desktops.desktop( id.id(), desktop, screen_desktops.id( screen ),
+        currentDesktop( screen ));
     }
 
 bool Workspace::screenDesktopMessage( XEvent* e )

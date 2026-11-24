@@ -134,6 +134,38 @@ int main()
     CHECK( ScreenHome::fromString( "0,0,99999,10|0,0,0,0|0,0,0,0|0|0|0|id" ).isNull());
     CHECK( ScreenHome::fromString( "0,0,10,10|1,2|0,0,0,0|0|0|0|id" ).isNull());
     CHECK( !ScreenHome::fromString( "5,6,10,10|0,0,0,0|0,0,0,0|1|0|1|id" ).isNull());
+    // launches: what the monitors showed when announced
+    {
+    ScreenDesktops ls;
+    ls.setDesktopCount( 4 );
+    QStringList lids;
+    lids << "edid:E" << "edid:G";
+    ls.setOutputs( lids, NULL, NULL );
+    ls.setCurrent( 0, 1 );
+    ls.setCurrent( 1, 4 );
+    ls.setActive( 1 ); // the right one is active: the current desktop is 4
+    LaunchDesktops ld;
+    ld.announce( "l1", ls );
+    CHECK( ld.contains( "l1" ) && ld.count() == 1 );
+    ls.setCurrent( 0, 2 ); // switched after the announcement
+    ld.announce( "l1", ls ); // (announced again: the first one counts)
+    CHECK( ld.desktop( "l1", 4, "edid:E", 9 ) == 1 ); // the current one: the monitor's then
+    CHECK( ld.desktop( "l1", 4, "edid:G", 9 ) == 4 );
+    CHECK( ld.desktop( "l1", 3, "edid:E", 9 ) == 3 ); // another desktop: as asked
+    CHECK( ld.desktop( "l2", 4, "edid:E", 9 ) == 4 ); // not seen announced
+    CHECK( ld.desktop( "l1", 4, "edid:new", 9 ) == 9 ); // a monitor that came since
+    CHECK( ld.desktop( "l1", 4, QString::null, 9 ) == 9 );
+    ls.setDesktopCount( 3 ); // fewer desktops: the announced desktop (4) still tells
+    CHECK( ld.desktop( "l1", 4, "edid:E", 9 ) == 1 );
+    // the same monitor twice: the one known as E is E@DP-1 now
+    ld.rename( "edid:E", "edid:E@DP-1" );
+    CHECK( ld.desktop( "l1", 4, "edid:E@DP-1", 9 ) == 1 );
+    CHECK( ld.desktop( "l1", 4, "edid:E", 9 ) == 9 );
+    ld.rename( "edid:G", "edid:G" );
+    CHECK( ld.desktop( "l1", 4, "edid:G", 9 ) == 4 );
+    ld.remove( "l1" );
+    CHECK( !ld.contains( "l1" ) && ld.desktop( "l1", 4, "edid:E@DP-1", 9 ) == 4 );
+    }
     printf( "%s (%d failures)\n", failures == 0 ? "PASS" : "FAIL", failures );
     return failures == 0 ? 0 : 1;
     }

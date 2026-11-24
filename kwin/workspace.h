@@ -579,13 +579,8 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void publishScreenDesktops();
         void readScreenDesktops();
         bool screenDesktopMessage( XEvent* e );
-        struct LaunchDesktops
-            {
-            int current; // _NET_CURRENT_DESKTOP
-            QMap< QString, int > shown; // monitor identity -> its desktop
-            };
         // by startup notification id, from the first announcement with a desktop to its end
-        QMap< QString, LaunchDesktops > launch_desktops;
+        LaunchDesktops launch_desktops;
         int number_of_desktops;
         QMemArray<int> desktop_focus_chain;
 
