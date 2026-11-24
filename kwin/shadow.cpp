@@ -27,7 +27,7 @@ static const unsigned int CacheSize = 32;
 // every frame); a new shape beyond the hard limit gets no shadow
 static const long long ShapeCacheBudget = 16LL * 1024 * 1024;
 static const long long ShapeCacheLimit = 64LL * 1024 * 1024;
-static const unsigned int KeepFrames = 4; // (several outputs: a paint each)
+static const unsigned int KeepFrames = 4; // (scene paints: one per frame for all outputs)
 // and at most this many not drawn lately (each is compared when looked up)
 static const unsigned int ShapeCacheEntries = 64;
 // the largest blurred shape texture (pixels); larger windows are blurred
@@ -419,6 +419,9 @@ const ShapeShadow* ShadowCache::shapeShadow( int radius, const QRegion& shape, c
             it.current()->frame = frame;
             return it.current();
             }
+    // (eviction first: shapes no longer drawn make room before a new one is
+    // refused at the hard limit)
+    evictShapes();
     if( shape_bytes >= ShapeCacheLimit )
         return NULL; // (everything kept is in use)
     ShapeShadow* s = makeShape( radius, shape, size );
@@ -431,6 +434,12 @@ const ShapeShadow* ShadowCache::shapeShadow( int radius, const QRegion& shape, c
     s->bytes = s->texture != NULL ? (long long) s->texture->width() * s->texture->height() : 4096;
     shape_bytes += s->bytes;
     shape_cache.append( s );
+    evictShapes();
+    return s;
+    }
+
+void ShadowCache::evictShapes()
+    {
     while( shape_bytes > ShapeCacheBudget || shape_cache.count() > ShapeCacheEntries )
         { // the least recently used one not drawn lately goes
         ShapeShadow* oldest = NULL;
@@ -444,7 +453,6 @@ const ShapeShadow* ShadowCache::shapeShadow( int radius, const QRegion& shape, c
         shape_bytes -= oldest->bytes;
         shape_cache.removeRef( oldest );
         }
-    return s;
     }
 
 bool ShadowCache::draw( Render::Renderer* r, int radius, const QRegion& shape, const QSize& size,

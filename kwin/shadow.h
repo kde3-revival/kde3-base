@@ -115,6 +115,7 @@ class ShadowCache
         ShadowTiles* make( int radius, int corner, const QValueVector< unsigned char >& pattern );
         const ShadowTiles* tiles( int radius, int corner, const QValueVector< unsigned char >& pattern );
         const ShapeShadow* shapeShadow( int radius, const QRegion& shape, const QSize& size );
+        void evictShapes();
         ShapeShadow* makeShape( int radius, const QRegion& shape, const QSize& size );
         Render::Renderer* renderer;
         QPtrList< ShadowTiles > cache;
