@@ -123,7 +123,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void takeActivity( Client* c, int flags, bool handled ); // flags are ActivityFlags
         void handleTakeActivity( Client* c, Time timestamp, int flags ); // flags are ActivityFlags
         bool allowClientActivation( const Client* c, Time time = -1U, bool focus_in = false );
-        void restoreFocus();
+        bool restoreFocus(); // false: no window to give it to
         void gotFocusIn( const Client* );
         void setShouldGetFocus( Client* );
         bool fakeRequestedActivity( Client* c );

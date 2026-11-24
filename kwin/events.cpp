@@ -1432,7 +1432,11 @@ void Client::focusInEvent( XFocusInEvent* e )
         setActive( TRUE );
     else
         {
-        workspace()->restoreFocus();
+        if( !workspace()->restoreFocus() && isNotification())
+            { // (no window had it: none has it, the notification keeps it not)
+            updateXTime(); // (focusToNull() uses qt_x_time, old now: FocusIn has no timestamp)
+            workspace()->focusToNull();
+            }
         if( !isNotification())
             demandAttention();
         }
