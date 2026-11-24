@@ -439,6 +439,8 @@ bool ShadowCache::draw( Render::Renderer* r, int radius, const QRegion& shape, c
         r->drawNineSlice( t->tile, outer, sx, sy, c, alpha );
         return true;
         }
+    if( shape.isEmpty())
+        return false; // (an empty bounding shape: nothing shows)
     const ShapeShadow* s = shapeShadow( radius, shape, size );
     if( s == NULL || s->texture == NULL )
         return false;

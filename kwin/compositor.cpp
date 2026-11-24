@@ -858,9 +858,16 @@ void Compositor::fetchShape( SceneWindow* w )
     {
     w->shape = QRegion();
     int count = 0, ordering;
+    int bounding = 0, clip = 0, xb, yb, xc, yc;
+    unsigned int wb, hb, wc, hc;
     trap();
+    // (an empty bounding shape comes as no rectangles: not "unshaped")
+    const bool shaped = XShapeQueryExtents( dpy, w->id, &bounding, &xb, &yb, &wb, &hb, &clip, &xc, &yc, &wc, &hc )
+        && bounding;
     XRectangle* rects = XShapeGetRectangles( dpy, w->id, ShapeBounding, &count, &ordering );
-    untrap();
+    const int errors = untrap();
+    if( errors == 0 && shaped && count == 0 )
+        w->shape = QRegion( 0, 0, 1, 1 ) - QRegion( 0, 0, 1, 1 ); // (empty, not null)
     if( rects == NULL )
         return;
     QRegion r;
