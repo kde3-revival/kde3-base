@@ -89,7 +89,9 @@ namespace KWinInternal
  XInput 2.1; else only a release and a press with the same time are seen
  as one): a press of a key that a keyboard holds is a repeat unless it is
  one of the last raw presses (several, of every keyboard, may be read
- before KWin gets the first core press).
+ before KWin gets the first core press), or, for the keys of those
+ shortcuts, the last raw press of that key on some keyboard that no core
+ press has matched yet (kept however many other keys come meanwhile).
 */
 class GrabProofShortcuts : public QObject
     {
@@ -99,8 +101,9 @@ class GrabProofShortcuts : public QObject
         ~GrabProofShortcuts();
         // every action of the KWin shortcuts with its slot (kwinbindings.cpp)
         void addAction( const QString& name, QObject* receiver, const char* slot );
-        // the actions named, with their current shortcuts
-        void reconfigure( KGlobalAccel* keys, const QStringList& names );
+        // the actions named, with their current shortcuts; once: the
+        // actions that look at repeatedPress()
+        void reconfigure( KGlobalAccel* keys, const QStringList& names, const QStringList& once );
         bool isEmpty() const;
         // the connection on which the raw key events come (selected
         // already), NULL: none (Overview::selectXI2())
@@ -171,6 +174,10 @@ class GrabProofShortcuts : public QObject
         unsigned int raw_press_code[ RawPresses ];
         Time raw_press_time[ RawPresses ];
         int raw_press_next;
+        // the keys of the shortcuts in once, and their raw presses not yet
+        // matched by a core press: ( device << 8 | keycode ) -> time
+        QValueList< KKey > once_keys;
+        QMap< int, Time > pending;
         unsigned int release_code; // KWin's last key release
         Time release_time;
         bool repeated;

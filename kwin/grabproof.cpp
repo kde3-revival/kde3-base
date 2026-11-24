@@ -82,8 +82,37 @@ void GrabProofShortcuts::addAction( const QString& name, QObject* receiver, cons
     actions[ name ] = s;
     }
 
-void GrabProofShortcuts::reconfigure( KGlobalAccel* keys, const QStringList& names )
+// the keycode and the modifiers of a shortcut's key, as
+// KGlobalAccelPrivate::grabKey() grabs it (now: the keyboard map may change)
+static void nativeKey( const KKey& key, uint* code, uint* mod )
     {
+    KKeyNative native( key );
+    *code = native.code();
+    *mod = native.mod() & KKeyNative::accelModMaskX();
+    // Alt+Print with the Xorg default keycodes
+    if( native.sym() == XK_Sys_Req && XkbKeycodeToKeysym( qt_xdisplay(), 111, 0, 0 ) == XK_Print )
+        {
+        *code = 111;
+        *mod |= KKeyNative::modX( KKey::ALT );
+        }
+    }
+
+void GrabProofShortcuts::reconfigure( KGlobalAccel* keys, const QStringList& names,
+    const QStringList& once )
+    {
+    once_keys.clear();
+    for( QStringList::ConstIterator it = once.begin();
+         it != once.end();
+         ++it )
+        {
+        const KShortcut& cut = keys->shortcut( *it );
+        for( uint i = 0;
+             i < cut.count();
+             ++i )
+            if( cut.seq( i ).count() == 1 )
+                once_keys.append( cut.seq( i ).key( 0 ));
+        }
+    pending.clear();
     grab_keys.clear();
     for( QStringList::ConstIterator it = names.begin();
          it != names.end();
@@ -186,6 +215,21 @@ void GrabProofShortcuts::rawKeyEvent( int device, int keycode, Time time, bool p
         raw_press_code[ raw_press_next ] = keycode;
         raw_press_time[ raw_press_next ] = time;
         raw_press_next = ( raw_press_next + 1 ) % RawPresses;
+        // the key of a shortcut that fires once: kept until its core press
+        // comes, whatever other keys are pressed meanwhile (one per key and
+        // keyboard, the next press of it replaces it)
+        for( QValueList< KKey >::ConstIterator it = once_keys.begin();
+             it != once_keys.end();
+             ++it )
+            {
+            uint code, mod;
+            nativeKey( *it, &code, &mod );
+            if( code == (uint) keycode )
+                {
+                pending[ ( device << 8 ) | ( keycode & 255 ) ] = time;
+                break;
+                }
+            }
         }
     }
 
@@ -246,15 +290,8 @@ void GrabProofShortcuts::keyPressed( int keycode, Time time )
          it != grab_keys.end();
          ++it )
         {
-        KKeyNative native( (*it).key );
-        uint code = native.code();
-        uint key_mod = native.mod() & KKeyNative::accelModMaskX();
-        // Alt+Print with the Xorg default keycodes
-        if( native.sym() == XK_Sys_Req && XkbKeycodeToKeysym( qt_xdisplay(), 111, 0, 0 ) == XK_Print )
-            {
-            code = 111;
-            key_mod |= KKeyNative::modX( KKey::ALT );
-            }
+        uint code, key_mod;
+        nativeKey( (*it).key, &code, &key_mod );
         if( code != (uint) keycode )
             continue;
         if( !ours )
@@ -308,6 +345,15 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
                  ++i )
                 if( raw_press_code[ i ] == code && raw_press_time[ i ] == e->xkey.time )
                     raw_press = true;
+            for( QMap< int, Time >::Iterator it = pending.begin();
+                 it != pending.end();
+                 ++it )
+                if( ( it.key() & 255 ) == (int) code && it.data() == e->xkey.time )
+                    {
+                    raw_press = true;
+                    pending.remove( it ); // (matched: done)
+                    break;
+                    }
             repeated = ( code == release_code && e->xkey.time == release_time )
                 || ( raw_dpy != NULL && isDown( code ) && !raw_press );
             setDown( UnknownDevice, code, true );

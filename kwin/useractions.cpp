@@ -340,7 +340,10 @@ void Workspace::readShortcuts()
     cutWalkThroughWindowsReverse = keys->shortcut("Walk Through Windows (Reverse)");
     if( overview != NULL )
         overview->setShortcut( keys->shortcut( "Show Window Overview" ));
-    grab_proof->reconfigure( keys, options->grabProofShortcuts );
+    // the shortcuts that fire once while their key is held (shortcutKeyRepeated())
+    QStringList once;
+    once << "Region Screenshot" << "Desktop Screenshot" << "Window Screenshot";
+    grab_proof->reconfigure( keys, options->grabProofShortcuts, once );
     if( overview != NULL ) // it watches the keys with XInput 2
         overview->selectXI2();
 
