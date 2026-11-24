@@ -29,6 +29,7 @@
 #include <qbitmap.h>
 #include <kconfig.h>
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
 
 #define KDE_STARTUP_ICON "kmenu"
 
@@ -189,6 +190,12 @@ void StartupId::start_startupid( const QString& icon_P )
         XSetWindowAttributes attr;
         attr.save_under = True; // useful saveunder if possible to avoid redrawing
         XChangeWindowAttributes( qt_xdisplay(), startup_widget->winId(), CWSaveUnder, &attr );
+        // the icon belongs to the pointer, like a dragged one: compositors
+        // draw no shadow around it (KWin's would be a dark halo around the
+        // icon's 1-bit mask)
+        Atom type = XInternAtom( qt_xdisplay(), "_NET_WM_WINDOW_TYPE_DND", False );
+        XChangeProperty( qt_xdisplay(), startup_widget->winId(), XInternAtom( qt_xdisplay(), "_NET_WM_WINDOW_TYPE", False ),
+            XA_ATOM, 32, PropModeReplace, (unsigned char*) &type, 1 );
         }
     startup_widget->resize( icon_pixmap.width(), icon_pixmap.height());
     if( blinking )

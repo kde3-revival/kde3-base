@@ -860,7 +860,17 @@ void Compositor::fetchShape( SceneWindow* w )
     int count = 0, ordering;
     trap();
     XRectangle* rects = XShapeGetRectangles( dpy, w->id, ShapeBounding, &count, &ordering );
-    untrap();
+    bool empty = false;
+    if( count == 0 )
+        { // (an empty bounding shape comes as no rectangles, like an error: not "unshaped")
+        int bounding = 0, clip = 0, xb, yb, xc, yc;
+        unsigned int wb, hb, wc, hc;
+        empty = XShapeQueryExtents( dpy, w->id, &bounding, &xb, &yb, &wb, &hb, &clip, &xc, &yc, &wc, &hc )
+            && bounding;
+        }
+    const int errors = untrap();
+    if( errors == 0 && empty )
+        w->shape = QRegion( 0, 0, 1, 1 ) - QRegion( 0, 0, 1, 1 ); // (empty, not null)
     if( rects == NULL )
         return;
     QRegion r;
@@ -938,7 +948,23 @@ void Compositor::fetchType( SceneWindow* w )
     untrap();
     }
 
-// the shadow class of w and its size
+/*
+ The shadow class of w and its size.
+
+ Who draws a shadow of its own gets none: an ARGB window can make its
+ edges anything, so the compositor can't know where they are.
+ - Override-redirect ARGB windows: none.  They are popups of toolkits
+   that draw them translucent (Chrome/Electron and Firefox menus and
+   tooltips: rounded, within transparent margins, often with their own
+   shadow; GTK menus); a rectangle around the margins is wrong for all of
+   them (mutter: no shadow either).  Qt 3 / KDE 3 popups are never ARGB.
+ - Managed windows: none for an undecorated ARGB window that tells it has
+   margins for its own shadow (_GTK_FRAME_EXTENTS, GTK client-side
+   decorations).  Undecorated ARGB windows without it (Firefox and GTK 4
+   CSD windows here, since KWin does not announce _GTK_FRAME_EXTENTS)
+   fill their rectangle and get no shadow of their own: they keep ours.
+ Shaped windows get a shadow of their shape (shadow.cpp).
+*/
 void Compositor::updateShadow( SceneWindow* w )
     {
     const int old = w->shadow;
@@ -950,10 +976,10 @@ void Compositor::updateShadow( SceneWindow* w )
         if( c != NULL )
             {
             if( !( c->isDesktop() || c->isDock() || c->isSplash() || c->isTopMenu() || c->isFullScreen()
-                || c->maximizeMode() == Client::MaximizeFull ))
+                || c->maximizeMode() == Client::MaximizeFull || ( w->argb && c->noBorder() && c->hasOwnShadow())))
                 w->shadow = c->isActive() ? ShadowActive : ShadowInactive;
             }
-        else if( w->override_redirect && !w->locker )
+        else if( w->override_redirect && !w->locker && !w->argb )
             {
             // (nothing covering a whole monitor: lock screens, splash screens)
             bool covers = false;
@@ -1983,6 +2009,7 @@ void Compositor::paint( Render::Texture* target, const QRegion& region )
 #ifdef COMPOSITOR_BUILD
     if( !rend->setTarget( target ))
         return;
+    shadows->newFrame();
     Overview* ov = ws->windowOverview();
     if( ov != NULL && ov->replacesScene())
         { // its frames instead of the scene
@@ -2054,12 +2081,9 @@ void Compositor::paint( Render::Texture* target, const QRegion& region )
                 QRegion clip = ( w->clip & QRegion( outer )) - w->shapeOnScreen();
                 if( !clip.isEmpty())
                     {
-                    const ShadowTiles* tiles = shadows->tiles( w->shadow_radius, w->shape, w->geom.size());
-                    if( tiles != NULL )
-                        {
-                        rend->setClip( clip );
-                        rend->drawNineSlice( tiles->tile, outer, Qt::black, w->shadow_alpha );
-                        }
+                    rend->setClip( clip );
+                    shadows->draw( rend, w->shadow_radius, w->shape, w->geom.size(), RectF( outer ), 1.0, 1.0,
+                        Qt::black, w->shadow_alpha );
                     }
                 }
             if( !w->isOpaque())
@@ -2181,15 +2205,12 @@ void Compositor::drawShadow( Render::Renderer* r, const CompositorShadow& s, con
     {
     if( !s.valid || s.size.isEmpty() || alpha <= 1.0 / 512 || shadows == NULL )
         return;
-    const ShadowTiles* tiles = shadows->tiles( s.radius, s.shape, s.size );
-    if( tiles == NULL )
-        return;
     const double sx = rect.w / s.size.width();
     const double sy = rect.h / s.size.height();
     const RectF outer( rect.x + ( s.dx - s.radius ) * sx, rect.y + ( s.dy - s.radius ) * sy,
         rect.w + 2 * s.radius * sx, rect.h + 2 * s.radius * sy );
     r->setClip( clip );
-    r->drawNineSlice( tiles->tile, outer, sx, sy, Qt::black, s.alpha * alpha );
+    shadows->draw( r, s.radius, s.shape, s.size, outer, sx, sy, Qt::black, s.alpha * alpha );
     }
 
 Window Compositor::windowBelow( Window id, const QRect& area, bool* covered ) const

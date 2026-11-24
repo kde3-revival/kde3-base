@@ -158,6 +158,8 @@ class Client : public QObject, public KDecorationDefines
         void setUserNoBorder( bool set );
         bool userCanSetNoBorder() const;
         bool noBorder() const;
+        // the window has margins for a shadow of its own (_GTK_FRAME_EXTENTS)
+        bool hasOwnShadow() const;
 
         bool skipTaskbar( bool from_outside = false ) const;
         void setSkipTaskbar( bool set, bool from_outside );
@@ -382,6 +384,7 @@ class Client : public QObject, public KDecorationDefines
         void updateFullScreenHack( const QRect& geom );
         void getWmNormalHints();
         void getMotifHints();
+        void getGtkFrameExtents();
         void getIcons();
         void getWmClientLeader();
         void getWmClientMachine();
@@ -491,6 +494,7 @@ class Client : public QObject, public KDecorationDefines
         uint input :1; // does the window want input in its wm_hints
         uint skip_pager : 1;
         uint motif_noborder : 1;
+        uint own_shadow : 1; // _GTK_FRAME_EXTENTS not all 0
         uint motif_may_resize : 1;
         uint motif_may_move :1;
         uint motif_may_close : 1;

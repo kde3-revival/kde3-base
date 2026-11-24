@@ -21,6 +21,18 @@ namespace KWinInternal
 static const int MaxCorner = 16;
 // how many shadow tile sets are kept
 static const unsigned int CacheSize = 32;
+// the memory kept for blurred shapes (bytes): beyond it, the least
+// recently used ones go, but never those drawn in the last KeepFrames
+// frames (a scene with many shaped windows would blur them all again
+// every frame); a new shape beyond the hard limit gets no shadow
+static const long long ShapeCacheBudget = 16LL * 1024 * 1024;
+static const long long ShapeCacheLimit = 64LL * 1024 * 1024;
+static const unsigned int KeepFrames = 4; // (scene paints: one per frame for all outputs)
+// and at most this many not drawn lately (each is compared when looked up)
+static const unsigned int ShapeCacheEntries = 64;
+// the largest blurred shape texture (pixels); larger windows are blurred
+// at a half, a quarter... of their size
+static const int MaxShapeArea = 256 * 1024;
 
 ShadowTiles::ShadowTiles()
     : radius( 0 ), corner( 0 ), used( 0 )
@@ -39,10 +51,21 @@ ShadowTiles::~ShadowTiles()
         delete tile[ i ];
     }
 
+ShapeShadow::ShapeShadow()
+    : texture( NULL ), radius( 0 ), scale( 1 ), used( 0 ), frame( 0 ), bytes( 0 )
+    {
+    }
+
+ShapeShadow::~ShapeShadow()
+    {
+    delete texture;
+    }
+
 ShadowCache::ShadowCache( Render::Renderer* r )
-    : renderer( r ), stamp( 0 )
+    : renderer( r ), stamp( 0 ), frame( KeepFrames ), builds( 0 ), shape_bytes( 0 )
     {
     cache.setAutoDelete( true );
+    shape_cache.setAutoDelete( true );
     }
 
 ShadowCache::~ShadowCache()
@@ -53,6 +76,13 @@ ShadowCache::~ShadowCache()
 void ShadowCache::clear()
     {
     cache.clear();
+    shape_cache.clear();
+    shape_bytes = 0;
+    }
+
+void ShadowCache::newFrame()
+    {
+    ++frame;
     }
 
 QRect ShadowCache::outerRect( const QRect& geometry, int radius, int dx, int dy )
@@ -61,12 +91,20 @@ QRect ShadowCache::outerRect( const QRect& geometry, int radius, int dx, int dy 
         geometry.width() + 2 * radius, geometry.height() + 2 * radius );
     }
 
-// the corner size C and the ( 2C + 1 ) x ( 2C + 1 ) template of the shape
+// the corner size C and the ( 2C + 1 ) x ( 2C + 1 ) template of the shape;
+// -1 (and the pattern of a rectangle) when it is not a rectangle with cut
+// corners
 int ShadowCache::cornerPattern( const QRegion& shape, const QSize& size, QValueVector< unsigned char >* pattern )
     {
     const int w = size.width();
     const int h = size.height();
     int c = 0;
+    if( !shape.isNull() && ( w <= 2 || h <= 2 ) && shape != QRegion( 0, 0, w, h ))
+        { // (too thin for corners: blurred as a whole)
+        pattern->resize( 1 );
+        (*pattern)[ 0 ] = 255;
+        return -1;
+        }
     if( !shape.isNull() && w > 2 && h > 2 )
         {
         const int limit = QMIN( MaxCorner, QMIN( w, h ) / 2 - 1 );
@@ -90,11 +128,10 @@ int ShadowCache::cornerPattern( const QRegion& shape, const QSize& size, QValueV
             else if( right && bottom && r.left() >= w - limit && r.top() >= h - limit )
                 extent = QMAX( w - r.left(), h - r.top());
             if( extent < 0 )
-                { // not a frame with cut corners: the bounding rectangle
-                c = 0;
+                { // not a frame with cut corners
                 pattern->resize( 1 );
                 (*pattern)[ 0 ] = 255;
-                return 0;
+                return -1;
                 }
             c = QMAX( c, extent );
             }
@@ -118,7 +155,8 @@ int ShadowCache::cornerPattern( const QRegion& shape, const QSize& size, QValueV
     }
 
 // a separable Gaussian blur, the result radius larger on each side
-QValueVector< unsigned char > ShadowCache::blur( const QValueVector< unsigned char >& src, int w, int h, int radius )
+QValueVector< unsigned char > ShadowCache::blur( const QValueVector< unsigned char >& src, int w, int h, int radius,
+    double sigma )
     {
     const int ow = w + 2 * radius;
     const int oh = h + 2 * radius;
@@ -132,7 +170,8 @@ QValueVector< unsigned char > ShadowCache::blur( const QValueVector< unsigned ch
         return out;
         }
     // most of the Gaussian inside the radius: sigma = radius / 2.5
-    const double sigma = radius / 2.5;
+    if( sigma <= 0 )
+        sigma = radius / 2.5;
     QValueVector< double > kernel( 2 * radius + 1 );
     double sum = 0;
     for( int i = -radius;
@@ -264,6 +303,11 @@ const ShadowTiles* ShadowCache::tiles( int radius, const QRegion& shape, const Q
         return NULL;
     QValueVector< unsigned char > pattern;
     const int c = cornerPattern( shape, size, &pattern );
+    return tiles( radius, QMAX( c, 0 ), pattern );
+    }
+
+const ShadowTiles* ShadowCache::tiles( int radius, int c, const QValueVector< unsigned char >& pattern )
+    {
     ++stamp;
     for( QPtrListIterator< ShadowTiles > it( cache );
          it.current() != NULL;
@@ -290,6 +334,152 @@ const ShadowTiles* ShadowCache::tiles( int radius, const QRegion& shape, const Q
         }
     cache.append( t );
     return t;
+    }
+
+/*
+ The blurred shape: the window's coverage on a canvas grown by R on each
+ side (at 1 / scale of the size: the average of scale x scale pixels),
+ blurred like the tiles (the same Gaussian, so that straight edges get
+ the same profile as those of the nine slices).
+*/
+ShapeShadow* ShadowCache::makeShape( int radius, const QRegion& shape, const QSize& size )
+    {
+    ShapeShadow* s = new ShapeShadow;
+    s->radius = radius;
+    s->size = size;
+    s->shape = shape;
+    // (64 bits: a window up to 32767 x 32767, any radius)
+    const long long cw = (long long) size.width() + 2LL * radius;
+    const long long ch = (long long) size.height() + 2LL * radius;
+    const long long max_side = renderer->maxTextureSize();
+    long long f = 1;
+    while(((( cw + f - 1 ) / f ) * (( ch + f - 1 ) / f ) > MaxShapeArea && radius / ( 2 * f ) >= 1 )
+        || ( cw + f - 1 ) / f > max_side || ( ch + f - 1 ) / f > max_side )
+        {
+        if( f >= 1024 )
+            return s; // (no texture: no shadow, and not tried again)
+        f *= 2;
+        }
+    const long long tw_l = ( cw + f - 1 ) / f;
+    const long long th_l = ( ch + f - 1 ) / f;
+    if( tw_l * th_l > 4LL * MaxShapeArea || cw * ch > 16LL * 1024 * 1024 )
+        return s; // (a huge window with a tiny radius; or more pixels to visit than sane)
+    s->scale = (int) f;
+    const int tw = (int) tw_l;
+    const int th = (int) th_l;
+    QValueVector< int > sum( tw * th, 0 );
+    QMemArray< QRect > rects = ( shape & QRegion( 0, 0, size.width(), size.height())).rects();
+    for( unsigned int i = 0;
+         i < rects.size();
+         ++i )
+        {
+        const QRect& r = rects[ i ];
+        for( int y = r.top() + radius;
+             y <= r.bottom() + radius;
+             ++y )
+            {
+            int* row = &sum[ ( y / s->scale ) * tw ];
+            if( s->scale == 1 )
+                {
+                for( int x = r.left() + radius;
+                     x <= r.right() + radius;
+                     ++x )
+                    row[ x ] = 1;
+                }
+            else
+                for( int x = r.left() + radius;
+                     x <= r.right() + radius;
+                     ++x )
+                    ++row[ x / s->scale ];
+            }
+        }
+    QValueVector< unsigned char > canvas( tw * th );
+    for( int i = 0;
+         i < tw * th;
+         ++i )
+        canvas[ i ] = (unsigned char) (( sum[ i ] * 255LL + f * f / 2 ) / ( f * f ));
+    // (the canvas has the room for the blur: its middle part is the result)
+    const int rr = radius / s->scale;
+    QValueVector< unsigned char > blurred = blur( canvas, tw, th, rr, radius / 2.5 / s->scale );
+    const int bw = tw + 2 * rr;
+    // (NULL when the upload failed: kept so, no shadow)
+    s->texture = renderer->textureFromAlpha( &blurred[ rr * bw + rr ], tw, th, bw );
+    return s;
+    }
+
+const ShapeShadow* ShadowCache::shapeShadow( int radius, const QRegion& shape, const QSize& size )
+    {
+    ++stamp;
+    for( QPtrListIterator< ShapeShadow > it( shape_cache );
+         it.current() != NULL;
+         ++it )
+        if( it.current()->radius == radius && it.current()->size == size && it.current()->shape == shape )
+            {
+            it.current()->used = stamp;
+            it.current()->frame = frame;
+            return it.current();
+            }
+    // (eviction first: shapes no longer drawn make room before a new one is
+    // refused at the hard limit)
+    evictShapes();
+    if( shape_bytes >= ShapeCacheLimit )
+        return NULL; // (everything kept is in use)
+    ShapeShadow* s = makeShape( radius, shape, size );
+    if( s == NULL )
+        return NULL;
+    ++builds;
+    s->used = stamp;
+    s->frame = frame;
+    // (one without a texture counts a little: failed ones don't pile up)
+    s->bytes = s->texture != NULL ? (long long) s->texture->width() * s->texture->height() : 4096;
+    shape_bytes += s->bytes;
+    shape_cache.append( s );
+    evictShapes();
+    return s;
+    }
+
+void ShadowCache::evictShapes()
+    {
+    while( shape_bytes > ShapeCacheBudget || shape_cache.count() > ShapeCacheEntries )
+        { // the least recently used one not drawn lately goes
+        ShapeShadow* oldest = NULL;
+        for( QPtrListIterator< ShapeShadow > it( shape_cache );
+             it.current() != NULL;
+             ++it )
+            if( frame - it.current()->frame >= KeepFrames && ( oldest == NULL || it.current()->used < oldest->used ))
+                oldest = it.current();
+        if( oldest == NULL )
+            break;
+        shape_bytes -= oldest->bytes;
+        shape_cache.removeRef( oldest );
+        }
+    }
+
+bool ShadowCache::draw( Render::Renderer* r, int radius, const QRegion& shape, const QSize& size,
+    const Compositing::RectF& outer, double sx, double sy, const QColor& c, double alpha )
+    {
+    if( radius <= 0 || size.isEmpty())
+        return false;
+    QValueVector< unsigned char > pattern;
+    const int corner = cornerPattern( shape, size, &pattern );
+    if( corner >= 0 )
+        {
+        const ShadowTiles* t = tiles( radius, corner, pattern );
+        if( t == NULL )
+            return false;
+        r->drawNineSlice( t->tile, outer, sx, sy, c, alpha );
+        return true;
+        }
+    if( shape.isEmpty())
+        return false; // (an empty bounding shape: nothing shows)
+    const ShapeShadow* s = shapeShadow( radius, shape, size );
+    if( s == NULL || s->texture == NULL )
+        return false;
+    const double f = s->scale;
+    r->fillMasked( outer, c, alpha, s->texture,
+        Compositing::RectF( 0, 0, ( size.width() + 2 * radius ) / f, ( size.height() + 2 * radius ) / f ),
+        ( f > 1 || sx != 1 || sy != 1 ) ? Render::BilinearFilter : Render::NearestFilter );
+    return true;
     }
 
 } // namespace

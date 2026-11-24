@@ -880,6 +880,8 @@ void Client::propertyNotifyEvent( XPropertyEvent* e )
                 window_role = staticWindowRole( window());
             else if( e->atom == atoms->motif_wm_hints )
                 getMotifHints();
+            else if( e->atom == atoms->gtk_frame_extents )
+                getGtkFrameExtents();
             break;
         }
     }
