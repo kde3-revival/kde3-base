@@ -1967,9 +1967,31 @@ void Effects::drawShadow( EffectAnim* anim, bool live, const RectF& rect, double
         s = anim->shadow;
     if( !s.valid )
         return;
-    // (outside the window: below a translucent one it would show)
-    QRegion clip = clip_base - ( anim->shaped && !live ? scaledShapeRegion( anim->shape, s.size, rect )
-        : QRegion( rect.bounds()));
+    // (outside the window: below a translucent one it would show; live:
+    // outside its shape now, scaled with it)
+    QRegion inside;
+    if( live && !s.shape.isNull())
+        {
+        QValueVector< XRectangle > shape;
+        QMemArray< QRect > rects = s.shape.rects();
+        for( unsigned int i = 0;
+             i < rects.size();
+             ++i )
+            {
+            XRectangle xr;
+            xr.x = rects[ i ].x();
+            xr.y = rects[ i ].y();
+            xr.width = rects[ i ].width();
+            xr.height = rects[ i ].height();
+            shape.append( xr );
+            }
+        inside = scaledShapeRegion( shape, s.size, rect );
+        }
+    else if( anim->shaped && !live )
+        inside = scaledShapeRegion( anim->shape, s.size, rect );
+    else
+        inside = QRegion( rect.bounds());
+    QRegion clip = clip_base - inside;
     clip.translate( -ox, -oy );
     if( clip.isEmpty())
         return;
