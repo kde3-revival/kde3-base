@@ -87,6 +87,12 @@ int ShadowCache::cornerPattern( const QRegion& shape, const QSize& size, QValueV
     const int w = size.width();
     const int h = size.height();
     int c = 0;
+    if( !shape.isNull() && ( w <= 2 || h <= 2 ) && shape != QRegion( 0, 0, w, h ))
+        { // (too thin for corners: blurred as a whole)
+        pattern->resize( 1 );
+        (*pattern)[ 0 ] = 255;
+        return -1;
+        }
     if( !shape.isNull() && w > 2 && h > 2 )
         {
         const int limit = QMIN( MaxCorner, QMIN( w, h ) / 2 - 1 );
