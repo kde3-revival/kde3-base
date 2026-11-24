@@ -1400,7 +1400,8 @@ void Client::getGtkFrameExtents()
     unsigned long n, left;
     unsigned char* data = NULL;
     if( XGetWindowProperty( qt_xdisplay(), window(), atoms->gtk_frame_extents, 0, 4, False, XA_CARDINAL, &type,
-            &format, &n, &left, &data ) == Success && data != NULL && format == 32 && n == 4 )
+            &format, &n, &left, &data ) == Success && data != NULL && type == XA_CARDINAL && format == 32 && n == 4
+        && left == 0 ) // (exactly four values)
         {
         const long* extents = (const long*) data;
         for( int i = 0;
