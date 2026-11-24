@@ -2006,6 +2006,7 @@ void Compositor::paint( Render::Texture* target, const QRegion& region )
 #ifdef COMPOSITOR_BUILD
     if( !rend->setTarget( target ))
         return;
+    shadows->newFrame();
     Overview* ov = ws->windowOverview();
     if( ov != NULL && ov->replacesScene())
         { // its frames instead of the scene

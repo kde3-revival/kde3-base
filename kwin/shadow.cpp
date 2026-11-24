@@ -21,9 +21,15 @@ namespace KWinInternal
 static const int MaxCorner = 16;
 // how many shadow tile sets are kept
 static const unsigned int CacheSize = 32;
-// how many blurred shapes are kept (e.g. the five masks of the bouncing
-// launch feedback icon, a balloon)
-static const unsigned int ShapeCacheSize = 16;
+// the memory kept for blurred shapes (bytes): beyond it, the least
+// recently used ones go, but never those drawn in the last KeepFrames
+// frames (a scene with many shaped windows would blur them all again
+// every frame); a new shape beyond the hard limit gets no shadow
+static const long long ShapeCacheBudget = 16LL * 1024 * 1024;
+static const long long ShapeCacheLimit = 64LL * 1024 * 1024;
+static const unsigned int KeepFrames = 4; // (several outputs: a paint each)
+// and at most this many not drawn lately (each is compared when looked up)
+static const unsigned int ShapeCacheEntries = 64;
 // the largest blurred shape texture (pixels); larger windows are blurred
 // at a half, a quarter... of their size
 static const int MaxShapeArea = 256 * 1024;
@@ -46,7 +52,7 @@ ShadowTiles::~ShadowTiles()
     }
 
 ShapeShadow::ShapeShadow()
-    : texture( NULL ), radius( 0 ), scale( 1 ), used( 0 )
+    : texture( NULL ), radius( 0 ), scale( 1 ), used( 0 ), frame( 0 ), bytes( 0 )
     {
     }
 
@@ -56,7 +62,7 @@ ShapeShadow::~ShapeShadow()
     }
 
 ShadowCache::ShadowCache( Render::Renderer* r )
-    : renderer( r ), stamp( 0 )
+    : renderer( r ), stamp( 0 ), frame( KeepFrames ), builds( 0 ), shape_bytes( 0 )
     {
     cache.setAutoDelete( true );
     shape_cache.setAutoDelete( true );
@@ -71,6 +77,12 @@ void ShadowCache::clear()
     {
     cache.clear();
     shape_cache.clear();
+    shape_bytes = 0;
+    }
+
+void ShadowCache::newFrame()
+    {
+    ++frame;
     }
 
 QRect ShadowCache::outerRect( const QRect& geometry, int radius, int dx, int dy )
@@ -404,23 +416,34 @@ const ShapeShadow* ShadowCache::shapeShadow( int radius, const QRegion& shape, c
         if( it.current()->radius == radius && it.current()->size == size && it.current()->shape == shape )
             {
             it.current()->used = stamp;
+            it.current()->frame = frame;
             return it.current();
             }
+    if( shape_bytes >= ShapeCacheLimit )
+        return NULL; // (everything kept is in use)
     ShapeShadow* s = makeShape( radius, shape, size );
     if( s == NULL )
         return NULL;
+    ++builds;
     s->used = stamp;
-    if( shape_cache.count() >= ShapeCacheSize )
-        {
+    s->frame = frame;
+    // (one without a texture counts a little: failed ones don't pile up)
+    s->bytes = s->texture != NULL ? (long long) s->texture->width() * s->texture->height() : 4096;
+    shape_bytes += s->bytes;
+    shape_cache.append( s );
+    while( shape_bytes > ShapeCacheBudget || shape_cache.count() > ShapeCacheEntries )
+        { // the least recently used one not drawn lately goes
         ShapeShadow* oldest = NULL;
         for( QPtrListIterator< ShapeShadow > it( shape_cache );
              it.current() != NULL;
              ++it )
-            if( oldest == NULL || it.current()->used < oldest->used )
+            if( frame - it.current()->frame >= KeepFrames && ( oldest == NULL || it.current()->used < oldest->used ))
                 oldest = it.current();
+        if( oldest == NULL )
+            break;
+        shape_bytes -= oldest->bytes;
         shape_cache.removeRef( oldest );
         }
-    shape_cache.append( s );
     return s;
     }
 

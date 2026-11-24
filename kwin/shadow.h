@@ -73,6 +73,8 @@ class ShapeShadow
         QSize size;
         QRegion shape; // (cache key)
         unsigned int used; // LRU stamp
+        unsigned int frame; // the frame it was last drawn in
+        long long bytes; // what it holds (the texture)
     private:
         friend class ShadowCache;
         ShapeShadow();
@@ -99,6 +101,11 @@ class ShadowCache
         // where the nine slices go for a window at geometry
         static QRect outerRect( const QRect& geometry, int radius, int dx, int dy );
         void clear();
+        // a frame begins (the blurred shapes drawn in the last frames are
+        // kept whatever the memory budget)
+        void newFrame();
+        // how many shapes were blurred so far (for the tests)
+        unsigned int shapeBuilds() const { return builds; }
         // the blurred coverage of a template (exposed for the tests), the
         // result radius larger on each side; sigma 0: radius / 2.5
         static QValueVector< unsigned char > blur( const QValueVector< unsigned char >& src, int w, int h, int radius,
@@ -113,6 +120,9 @@ class ShadowCache
         QPtrList< ShadowTiles > cache;
         QPtrList< ShapeShadow > shape_cache;
         unsigned int stamp;
+        unsigned int frame;
+        unsigned int builds;
+        long long shape_bytes; // held by shape_cache
     };
 
 } // namespace
