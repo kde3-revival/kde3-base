@@ -288,7 +288,9 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
             setDown( e->xkey.keycode, false );
             break;
         case CreateNotify:
-            if( watching && e->xcreatewindow.parent == qt_xrootwin() && e->xcreatewindow.override_redirect )
+            // (also when created without override-redirect: Qt sets it on a
+            // popup right after creating it, watch() looks at it now)
+            if( watching && e->xcreatewindow.parent == qt_xrootwin())
                 watch( e->xcreatewindow.window );
             break;
         case MapNotify:

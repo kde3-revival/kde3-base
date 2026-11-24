@@ -56,9 +56,13 @@ namespace KWinInternal
   - the keyboard grab is on a shown override-redirect window smaller than
     the screen (a menu): it got the grab's FocusIn (NotifyGrab; KWin
     selects FocusChange on override-redirect windows when they are
-    created).  A menu created, mapped and grabbed at once (most context
-    menus) is mapped before KWin can select that: then the grab that
-    begins (FocusOut NotifyGrab on a window of KWin's, the focus) right
+    created, or made override-redirect at once: Qt creates a popup
+    without it and sets it right after, e.g. a panel applet's popup that
+    is filled before it is shown).  A menu created, mapped and grabbed
+    at once (most context menus) is mapped before KWin can select that:
+    then the grab that begins (FocusOut NotifyGrab on a window KWin
+    selects it on, the focus: a managed window, the root window or
+    KWin's window for no focus, see Workspace::focusToNull()) right
     after its map is taken as its grab: when KWin handles that FocusOut
     less than MenuGrabTime after the end of KWin's last wait (with
     everything read) before the map (see aboutToBlock()).  Another focus change of the

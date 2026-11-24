@@ -249,8 +249,11 @@ void Workspace::init()
 
     XSetWindowAttributes attr;
     attr.override_redirect = 1;
+    // (FocusChange: the FocusOut of a grab that begins while nothing has
+    // the focus, for the grab-proof shortcuts, see grabproof.h)
+    attr.event_mask = FocusChangeMask;
     null_focus_window = XCreateWindow( qt_xdisplay(), qt_xrootwin(), -1,-1, 1, 1, 0, CopyFromParent,
-        InputOnly, CopyFromParent, CWOverrideRedirect, &attr );
+        InputOnly, CopyFromParent, CWOverrideRedirect | CWEventMask, &attr );
     XMapWindow(qt_xdisplay(), null_focus_window);
 
     unsigned long protocols[ 5 ] =
