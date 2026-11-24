@@ -4189,13 +4189,15 @@ void Overview::handleXI2( XEvent* e )
             {
             // through the barrier when the corner doesn't apply: a window
             // (or anything else) being dragged, a full screen window there
-            // (while the overview is shown, its grab keeps these events
-            // away: the corner stays, to close it again)
+            // (the barriers belong to the XInput 2 connection, so the
+            // overview's own pointer grab, on KWin's connection, is another
+            // client's grab too: while the overview is shown the corner
+            // stays, to close it again)
             XIBarrierEvent* ev = (XIBarrierEvent*) cookie->data;
             QPoint p( int( ev->root_x ), int( ev->root_y ));
             // and after the corner has fired, until the pointer leaves it:
             // pushing on goes through to the other monitor
-            bool release = ( ev->flags & XIBarrierDeviceIsGrabbed ) || !corner_armed
+            bool release = (( ev->flags & XIBarrierDeviceIsGrabbed ) && !grabbed ) || !corner_armed
                 || !cornerAllowed( p, 0 );
             if( debug )
                 kdWarning( 1212 ) << "overview: barrier hit " << p.x() << "," << p.y() << " flags " << ev->flags
