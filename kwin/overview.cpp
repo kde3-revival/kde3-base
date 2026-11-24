@@ -549,6 +549,7 @@ Overview::Overview( Workspace* w )
       own_overlay( false ),
       cursor( None ),
       grabbed( false ),
+      grab_pointer( -1 ),
       keep_redirected( false ),
       temp_redirected( false ),
       r( NULL ),
@@ -1274,6 +1275,20 @@ bool Overview::grabInput()
         return false;
         }
     grabbed = true;
+    grab_pointer = -1;
+#ifdef OVERVIEW_XI2
+    // which master pointer that is (KWin's client pointer, asked on the
+    // XInput 2 connection by a window of KWin's): only its barrier hits
+    // are the overview's own (see handleXI2())
+    if( xi_dpy != NULL )
+        {
+        int id;
+        if( XIGetClientPointer( xi_dpy, ws->supportWindowId(), &id ))
+            grab_pointer = id;
+        // (events read with the reply: the socket notifier won't fire for them)
+        QTimer::singleShot( 0, this, SLOT( readXI2()));
+        }
+#endif
     return true;
     }
 
@@ -4192,12 +4207,14 @@ void Overview::handleXI2( XEvent* e )
             // (the barriers belong to the XInput 2 connection, so the
             // overview's own pointer grab, on KWin's connection, is another
             // client's grab too: while the overview is shown the corner
-            // stays, to close it again)
+            // stays for the pointer it grabbed, to close it again; another
+            // master pointer grabbed by someone else passes)
             XIBarrierEvent* ev = (XIBarrierEvent*) cookie->data;
             QPoint p( int( ev->root_x ), int( ev->root_y ));
             // and after the corner has fired, until the pointer leaves it:
             // pushing on goes through to the other monitor
-            bool release = (( ev->flags & XIBarrierDeviceIsGrabbed ) && !grabbed ) || !corner_armed
+            bool own_grab = grabbed && grab_pointer >= 0 && ev->deviceid == grab_pointer;
+            bool release = (( ev->flags & XIBarrierDeviceIsGrabbed ) && !own_grab ) || !corner_armed
                 || !cornerAllowed( p, 0 );
             if( debug )
                 kdWarning( 1212 ) << "overview: barrier hit " << p.x() << "," << p.y() << " flags " << ev->flags

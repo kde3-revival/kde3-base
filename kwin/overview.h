@@ -269,6 +269,7 @@ class Overview : public QObject
         bool own_overlay; // created by us (no Composite)
         Cursor cursor;
         bool grabbed;
+        int grab_pointer; // the master pointer of the grab (XInput 2), -1: unknown
         // the top-level windows are redirected all the time (KeepRedirected),
         // or only while the overview is shown
         bool keep_redirected;
