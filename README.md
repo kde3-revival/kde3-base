@@ -223,6 +223,8 @@ Contributions are accepted under the same terms.
   KOrganizer, Kontact
 - [kde3-apps](https://github.com/kde3-revival/kde3-apps): applications
   (KSnapshot, Ark, KCalc, KPDF, ...)
+- [kde3-webpart](https://github.com/kde3-revival/kde3-webpart): the WPE WebKit part
+  (KWPEPart) that Konqueror and KMail use to show web pages
 - [kde3-remote](https://github.com/kde3-revival/kde3-remote): remote
   desktop for KWin (in progress)
 - [kde3-packaging](https://github.com/kde3-revival/kde3-packaging): Fedora
