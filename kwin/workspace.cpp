@@ -236,6 +236,8 @@ void Workspace::init()
     // after the electric borders, the hot corners are above them
     overview = new Overview( this );
     overview->setShortcut( keys->shortcut( "Show Window Overview" ));
+    // the raw key events come before KWin's own key events are looked at
+    connect( grab_proof, SIGNAL( readRaw()), overview, SLOT( readXI2()));
     effects = new Effects( this );
 
 // not used yet
@@ -247,8 +249,11 @@ void Workspace::init()
 
     XSetWindowAttributes attr;
     attr.override_redirect = 1;
+    // (FocusChange: the FocusOut of a grab that begins while nothing has
+    // the focus, for the grab-proof shortcuts, see grabproof.h)
+    attr.event_mask = FocusChangeMask;
     null_focus_window = XCreateWindow( qt_xdisplay(), qt_xrootwin(), -1,-1, 1, 1, 0, CopyFromParent,
-        InputOnly, CopyFromParent, CWOverrideRedirect, &attr );
+        InputOnly, CopyFromParent, CWOverrideRedirect | CWEventMask, &attr );
     XMapWindow(qt_xdisplay(), null_focus_window);
 
     unsigned long protocols[ 5 ] =
@@ -2795,19 +2800,26 @@ bool Workspace::hasGrabProofShortcuts() const
     return grab_proof != NULL && !grab_proof->isEmpty();
     }
 
-// the overview's XInput 2 selection has the raw key events or not
-void Workspace::grabProofRawKeysSelected( bool selected )
+// the overview's XInput 2 connection with the raw key events, or NULL
+void Workspace::grabProofRawConnection( Display* raw )
     {
     if( grab_proof != NULL )
-        grab_proof->setRawKeysSelected( selected );
+        grab_proof->setRawConnection( raw );
+    }
+
+// another event than XInput's of that connection (the XKB state)
+void Workspace::grabProofRawConnectionEvent( const XEvent* e )
+    {
+    if( grab_proof != NULL )
+        grab_proof->rawConnectionEvent( e );
     }
 
 // a raw key event (XInput 2) seen by the overview
-void Workspace::grabProofRawKey( int keycode, Time time, bool press, bool repeat )
+void Workspace::grabProofRawKey( int device, int keycode, Time time, bool press, bool repeat )
     {
     if( grab_proof == NULL )
         return;
-    grab_proof->rawKeyEvent( keycode, time, press, repeat );
+    grab_proof->rawKeyEvent( device, keycode, time, press, repeat );
     if( !press || repeat || globalShortcutsDisabled() || client_keys_dialog != NULL || !keys->isEnabled())
         return;
     grab_proof->keyPressed( keycode, time );

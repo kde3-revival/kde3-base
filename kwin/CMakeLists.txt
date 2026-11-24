@@ -44,6 +44,7 @@ kde3_add_kdeinit_executable(kwin
     compositor.h
     effects.h
     geometrytip.h
+    grabproof.h
     main.h
     overview.h
     popupinfo.h
