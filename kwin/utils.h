@@ -23,7 +23,7 @@ namespace KWinInternal
 
 const int SUPPORTED_WINDOW_TYPES_MASK = NET::NormalMask | NET::DesktopMask | NET::DockMask
     | NET::ToolbarMask | NET::MenuMask | NET::DialogMask /*| NET::OverrideMask*/ | NET::TopMenuMask
-    | NET::UtilityMask | NET::SplashMask;
+    | NET::UtilityMask | NET::SplashMask | NET::NotificationMask;
 
 const long ClientWinMask = KeyPressMask | KeyReleaseMask |
                           ButtonPressMask | ButtonReleaseMask |
@@ -59,6 +59,7 @@ enum Layer
     NormalLayer,
     DockLayer,
     AboveLayer,
+    NotificationLayer, // notification balloons and popups
     ActiveLayer, // active fullscreen, or active dialog
     NumLayers // number of layers, must be last
     };

@@ -372,6 +372,7 @@ void Client::detectNoBorder()
         case NET::Dock :
         case NET::TopMenu :
         case NET::Splash :
+        case NET::Notification :
             noborder = true;
           break;
         case NET::Unknown :
@@ -402,6 +403,7 @@ void Client::detectShapable()
         case NET::Dock :
         case NET::TopMenu :
         case NET::Splash :
+        case NET::Notification :
           break;
         case NET::Unknown :
         case NET::Normal :
@@ -1660,6 +1662,14 @@ bool Client::isUtility() const
     return windowType() == NET::Utility;
     }
 
+// _NET_WM_WINDOW_TYPE_NOTIFICATION: a notification balloon or popup; above
+// the panels, never focused, on all desktops, where it asks to be, left
+// alone by "show desktop", the overview, the taskbar, the pager and Alt+Tab
+bool Client::isNotification() const
+    {
+    return windowType() == NET::Notification;
+    }
+
 bool Client::isDialog() const
     {
     return windowType() == NET::Dialog;
@@ -1672,7 +1682,7 @@ bool Client::isNormalWindow() const
 
 bool Client::isSpecialWindow() const
     {
-    return isDesktop() || isDock() || isSplash() || isTopMenu()
+    return isDesktop() || isDock() || isSplash() || isTopMenu() || isNotification()
         || isToolbar(); // TODO
     }
 

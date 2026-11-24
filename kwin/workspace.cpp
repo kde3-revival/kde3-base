@@ -294,6 +294,7 @@ void Workspace::init()
         NET::TopMenuMask |
         NET::UtilityMask |
         NET::SplashMask |
+        NET::NotificationMask |
         0
         ,
         NET::Modal |

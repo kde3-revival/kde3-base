@@ -192,6 +192,7 @@ class Client : public QObject, public KDecorationDefines
         bool isDialog() const;
         bool isSplash() const;
         bool isUtility() const;
+        bool isNotification() const;
     // returns true for "special" windows and false for windows which are "normal"
     // (normal=window which has a border, can be moved by the user, can be closed, etc.)
     // true for Desktop, Dock, Splash, Override and TopMenu (and Toolbar??? - for now)

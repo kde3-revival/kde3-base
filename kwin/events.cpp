@@ -1035,6 +1035,11 @@ void Client::ungrabButton( int modifier )
  */
 void Client::updateMouseGrab()
     {
+    if( info != NULL && isNotification())
+        { // its clicks are its own: never activated, raised or moved by them
+        XUngrabButton( qt_xdisplay(), AnyButton, AnyModifier, wrapperId());
+        return;
+        }
     if( workspace()->globalShortcutsDisabled())
         {
         XUngrabButton( qt_xdisplay(), AnyButton, AnyModifier, wrapperId());

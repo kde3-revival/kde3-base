@@ -977,7 +977,8 @@ void Compositor::updateShadow( SceneWindow* w )
             {
             if( !( c->isDesktop() || c->isDock() || c->isSplash() || c->isTopMenu() || c->isFullScreen()
                 || c->maximizeMode() == Client::MaximizeFull || ( w->argb && c->noBorder() && c->hasOwnShadow())))
-                w->shadow = c->isActive() ? ShadowActive : ShadowInactive;
+                w->shadow = c->isNotification() ? ShadowMenu // (a popup: never active)
+                    : c->isActive() ? ShadowActive : ShadowInactive;
             }
         else if( w->override_redirect && !w->locker && !w->argb )
             {

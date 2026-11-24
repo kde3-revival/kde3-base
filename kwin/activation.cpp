@@ -354,6 +354,8 @@ void Workspace::takeActivity( Client* c, int flags, bool handled )
         }
     if ( !( flags & ActivityFocusForce ) && ( c->isTopMenu() || c->isDock() || c->isSplash()) )
         flags &= ~ActivityFocus; // toplevel menus and dock windows don't take focus if not forced
+    if( c->isNotification())
+        flags &= ~( ActivityFocus | ActivityFocusForce ); // never, not even forced
     if( c->isShade())
         {
         if( c->wantsInput() && ( flags & ActivityFocus ))
@@ -717,6 +719,7 @@ KWIN_COMPARE_PREDICATE( SameApplicationActiveHackPredicate, const Client*,
     // ignore already existing splashes, toolbars, utilities, menus and topmenus,
     // as the app may show those before the main window
     !cl->isSplash() && !cl->isToolbar() && !cl->isTopMenu() && !cl->isUtility() && !cl->isMenu()
+    && !cl->isNotification()
     && Client::belongToSameApplication( cl, value, true ) && cl != value);
 
 Time Client::readUserTimeMapTimestamp( const KStartupInfoId* asn_id, const KStartupInfoData* asn_data,

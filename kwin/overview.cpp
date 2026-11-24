@@ -2065,7 +2065,8 @@ void Overview::buildItems( bool initial )
                 item = createItem( w, attr );
                 if( item->client != NULL && item->client->isDesktop())
                     item->kind = OverviewItem::Desktop;
-                else if( item->client != NULL && ( item->client->isDock() || item->client->isTopMenu()))
+                else if( item->client != NULL && ( item->client->isDock() || item->client->isTopMenu()
+                    || item->client->isNotification())) // (stay where they are)
                     item->kind = OverviewItem::Dock;
                 else if( initial && item->client != NULL && inOverview( item->client ))
                     item->kind = OverviewItem::Managed;
