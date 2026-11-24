@@ -151,6 +151,8 @@ bool Client::manage( Window w, bool isMapped )
 
     // initial desktop placement
     bool desk_of_screen = false; // desktops per monitor: the one shown where it's placed
+    bool desk_of_launch = false; // the one shown there at the launch (launchDesktop())
+    int launch_desk = 0; // the launch's desktop as announced (not range checked)
     if ( session ) 
         {
         desk = session->desktop;
@@ -189,15 +191,19 @@ bool Client::manage( Window w, bool isMapped )
         if ( info->desktop() )
             desk = info->desktop(); // window had the initial desktop property, force it
         if( desktop() == 0 && asn_valid && asn_data.desktop() != 0 )
-            desk = asn_data.desktop();
+            {
+            desk = launch_desk = asn_data.desktop();
+            desk_of_launch = true;
+            }
         }
     if ( desk == 0 ) // assume window wants to be visible on the current desktop
         {
         desk = workspace()->currentDesktop();
         desk_of_screen = true;
         }
-    if( rules()->checkDesktop( desk, !isMapped ) != desk )
-        desk_of_screen = false;
+    // (a rule may also force the desktop asked for: 0 is no desktop a rule gives)
+    if( rules()->checkDesktop( desk, !isMapped ) != desk || rules()->checkDesktop( 0, !isMapped ) != 0 )
+        desk_of_screen = desk_of_launch = false;
     desk = rules()->checkDesktop( desk, !isMapped );
     if( desk != NET::OnAllDesktops ) // do range check
         desk = KMAX( 1, KMIN( workspace()->numberOfDesktops(), desk ));
@@ -338,6 +344,19 @@ bool Client::manage( Window w, bool isMapped )
     if( desk_of_screen && desk != NET::OnAllDesktops && workspace()->desktopsPerScreen())
         {
         const int d = workspace()->currentDesktop( workspace()->clientScreen( this ));
+        if( d != desk )
+            {
+            desk = d;
+            info->setDesktop( desk );
+            }
+        }
+    // a launch on the current desktop of the time (launchers on any monitor
+    // put the active monitor's there): the one its monitor showed then
+    // (the desktop as announced: the number of desktops may have dropped since)
+    else if( desk_of_launch && desk != NET::OnAllDesktops && workspace()->desktopsPerScreen())
+        {
+        const int d = KMAX( 1, KMIN( workspace()->numberOfDesktops(),
+            workspace()->launchDesktop( asn_id, launch_desk, workspace()->clientScreen( this ))));
         if( d != desk )
             {
             desk = d;

@@ -258,4 +258,48 @@ ScreenHome ScreenHome::fromString( const QString& s )
     return h;
     }
 
+void LaunchDesktops::announce( const QString& launch, const ScreenDesktops& desktops )
+    {
+    if( launch.isEmpty() || launches_.contains( launch ))
+        return;
+    Launch& l = launches_[ launch ];
+    l.current = desktops.activeDesktop();
+    for( int i = 0; i < desktops.outputCount(); ++i )
+        l.shown[ desktops.id( i ) ] = desktops.current( i );
+    }
+
+void LaunchDesktops::remove( const QString& launch )
+    {
+    launches_.remove( launch );
+    }
+
+int LaunchDesktops::desktop( const QString& launch, int asked, const QString& monitor, int fallback ) const
+    {
+    QMap< QString, Launch >::ConstIterator it = launches_.find( launch );
+    if( it == launches_.end() || (*it).current != asked )
+        return asked; // not seen announced, or another desktop asked for
+    QMap< QString, int >::ConstIterator shown = (*it).shown.find( monitor );
+    if( monitor.isEmpty() || shown == (*it).shown.end())
+        return fallback; // a monitor that came since
+    return *shown;
+    }
+
+void LaunchDesktops::rename( const QString& from, const QString& to )
+    {
+    if( from == to || to.isEmpty())
+        return;
+    for( QMap< QString, Launch >::Iterator it = launches_.begin();
+         it != launches_.end();
+         ++it )
+        {
+        QMap< QString, int >::Iterator m = (*it).shown.find( from );
+        if( m == (*it).shown.end())
+            continue;
+        const int desktop = *m;
+        (*it).shown.remove( m );
+        if( !(*it).shown.contains( to ))
+            (*it).shown[ to ] = desktop;
+        }
+    }
+
 } // namespace

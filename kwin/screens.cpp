@@ -41,6 +41,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <kapplication.h>
 #include <kconfig.h>
 #include <kglobal.h>
+#include <kstartupinfo.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -417,6 +418,7 @@ QStringList Workspace::screenIds()
          ++it )
         { // its desktop and the homes of its windows go with it
         screen_desktops.rename( it.key(), it.data());
+        launch_desktops.rename( it.key(), it.data()); // (launches still to map)
         for( ClientList::ConstIterator c = clients.begin();
              c != clients.end();
              ++c )
@@ -588,6 +590,58 @@ void Workspace::checkScreenIds()
     if( dw->numScreens() != int( screen_geometries.count()))
         return; // (Qt tells about this one)
     desktopResized(); // the same handling as for a geometry change
+    }
+
+/*
+ A launch from a panel, the desktop, minicli or an application carries the
+ desktop it was started on in its startup notification: KRun and kinit put
+ _NET_CURRENT_DESKTOP there, which is the desktop of the ACTIVE monitor, not
+ of the monitor the launcher was used on.  So KWin notes, when a launch is
+ first announced with a desktop, what every monitor showed then; a window of
+ that launch which asks for that very desktop gets the desktop its monitor
+ showed (Client::manage()).  Without per monitor desktops this changes
+ nothing: all monitors showed the asked one.
+*/
+void Workspace::launchAnnounced( const KStartupInfoId& id, const KStartupInfoData& data )
+    {
+    if( data.desktop() == 0 || id.none())
+        return;
+    // announced again after it had ended (its record not forgotten yet):
+    // a new launch, noted afresh
+    if( launches_gone.remove( id.id()) > 0 )
+        launch_desktops.remove( id.id());
+    launch_desktops.announce( id.id(), screen_desktops );
+    }
+
+/*
+ KStartupInfo also ends a launch when it matches a window by its PID or
+ WM_CLASS, inside checkStartup() of Client::manage(), before manage() asks
+ launchDesktop(): forget it only after this event.
+*/
+void Workspace::launchGone( const KStartupInfoId& id, const KStartupInfoData& )
+    {
+    if( !launch_desktops.contains( id.id()) || launches_gone.contains( id.id()))
+        return;
+    launches_gone.append( id.id());
+    if( launches_gone.count() == 1 )
+        QTimer::singleShot( 0, this, SLOT( forgetLaunches()));
+    }
+
+void Workspace::forgetLaunches()
+    {
+    for( QStringList::ConstIterator it = launches_gone.begin();
+         it != launches_gone.end();
+         ++it )
+        launch_desktops.remove( *it );
+    launches_gone.clear();
+    }
+
+int Workspace::launchDesktop( const KStartupInfoId& id, int desktop, int screen ) const
+    {
+    if( !desktopsPerScreen() || desktop == NET::OnAllDesktops )
+        return desktop;
+    return launch_desktops.desktop( id.id(), desktop, screen_desktops.id( screen ),
+        currentDesktop( screen ));
     }
 
 bool Workspace::screenDesktopMessage( XEvent* e )
