@@ -7,6 +7,7 @@ terminal, Control Center, session manager and login manager.
 
 It is built on [kde3-libs](https://github.com/kde3-revival/kde3-libs) and
 [kde3-qt](https://github.com/kde3-revival/kde3-qt); the applications in
+[kde3-pim](https://github.com/kde3-revival/kde3-pim) (KMail, Kontact, ...) and
 [kde3-apps](https://github.com/kde3-revival/kde3-apps) run on top of it.
 
 The first commit of this repository is the pristine kdebase 3.5.10 release;
@@ -218,6 +219,8 @@ Contributions are accepted under the same terms.
   of everything
 - [kde3-libs](https://github.com/kde3-revival/kde3-libs): the KDE core
   libraries
+- [kde3-pim](https://github.com/kde3-revival/kde3-pim): KMail, KAddressBook,
+  KOrganizer, Kontact
 - [kde3-apps](https://github.com/kde3-revival/kde3-apps): applications
   (KSnapshot, Ark, KCalc, KPDF, ...)
 - [kde3-remote](https://github.com/kde3-revival/kde3-remote): remote
