@@ -410,7 +410,7 @@ class Client : public QObject, public KDecorationDefines
         void checkUnrestrictedMoveResize();
         void handleMoveResize( int x, int y, int x_root, int y_root );
         void positionGeometryTip();
-        void grabButton( int mod );
+        void grabButton( int mod, bool wheel = true );
         void ungrabButton( int mod );
         void resetMaximize();
         void resizeDecoration( const QSize& s );

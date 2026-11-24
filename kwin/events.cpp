@@ -981,7 +981,14 @@ void Client::leaveNotifyEvent( XCrossingEvent* e )
 #define XCapL KKeyNative::modXLock()
 #define XNumL KKeyNative::modXNumLock()
 #define XScrL KKeyNative::modXScrollLock()
-void Client::grabButton( int modifier )
+/*
+ With wheel false only buttons 1 to 3 are grabbed.  A passive grab of the
+ wheel buttons breaks XI 2.1 smooth scrolling of the window: every emulated
+ wheel press activates the grab, the client gets a Leave (Grab) and an Enter
+ (Ungrab) and Chrome resets its scroll valuators on each such Enter (most of
+ the scroll is lost, touchpad scrolling stops completely).
+*/
+void Client::grabButton( int modifier, bool wheel )
     {
     unsigned int mods[ 8 ] = 
         {
@@ -989,13 +996,17 @@ void Client::grabButton( int modifier )
         XScrL, XScrL | XCapL,
         XScrL | XNumL, XScrL | XNumL | XCapL
         };
-    for( int i = 0;
-         i < 8;
-         ++i )
-        XGrabButton( qt_xdisplay(), AnyButton,
-            modifier | mods[ i ],
-            wrapperId(),  FALSE, ButtonPressMask,
-            GrabModeSync, GrabModeAsync, None, None );
+    const unsigned int buttons[ 3 ] = { Button1, Button2, Button3 };
+    for( int b = 0;
+         b < ( wheel ? 1 : 3 );
+         ++b )
+        for( int i = 0;
+             i < 8;
+             ++i )
+            XGrabButton( qt_xdisplay(), wheel ? (unsigned int) AnyButton : buttons[ b ],
+                modifier | mods[ i ],
+                wrapperId(),  FALSE, ButtonPressMask,
+                GrabModeSync, GrabModeAsync, None, None );
     }
 
 void Client::ungrabButton( int modifier )
@@ -1031,7 +1042,7 @@ void Client::updateMouseGrab()
         bool not_obscured = workspace()->topClientOnDesktop( workspace()->currentDesktop( workspace()->clientScreen( this )),
             true, false, workspace()->clientScreen( this )) == this;
         if( !( !options->clickRaise || not_obscured ))
-            grabButton( None );
+            grabButton( None, !isActive()); // (the wheel only activates an inactive window)
         return;
         }
     if( isActive() && !workspace()->forcedGlobalMouseGrab()) // see Workspace::establishTabBoxGrab()
@@ -1047,10 +1058,11 @@ void Client::updateMouseGrab()
         // the most recently raised window)
         bool not_obscured = workspace()->topClientOnDesktop( workspace()->currentDesktop( workspace()->clientScreen( this )),
             true, false, workspace()->clientScreen( this )) == this;
-        if( !options->clickRaise || not_obscured )
-            ungrabButton( None );
-        else
-            grabButton( None );
+        ungrabButton( None );
+        // the click raises it, the wheel of the active window does nothing in KWin
+        // (buttonPressEvent() replays it): not grabbed, see grabButton()
+        if( options->clickRaise && !not_obscured )
+            grabButton( None, false );
         ungrabButton( ShiftMask );
         ungrabButton( ControlMask );
         ungrabButton( ControlMask | ShiftMask );
