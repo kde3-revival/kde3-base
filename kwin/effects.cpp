@@ -1978,7 +1978,24 @@ void Effects::drawShadow( EffectAnim* anim, bool live, const RectF& rect, double
     // (outside the window: below a translucent one it would show; live:
     // outside its shape now, scaled with it)
     QRegion inside;
-    if( live && !s.shape.isNull())
+    if( !s.alpha_mask.isEmpty())
+        { // made from the alpha channel: below the transparent parts too
+        QValueVector< XRectangle > opaque;
+        QMemArray< QRect > rects = s.opaque.rects();
+        for( unsigned int i = 0;
+             i < rects.size();
+             ++i )
+            {
+            XRectangle xr;
+            xr.x = rects[ i ].x();
+            xr.y = rects[ i ].y();
+            xr.width = rects[ i ].width();
+            xr.height = rects[ i ].height();
+            opaque.append( xr );
+            }
+        inside = scaledShapeRegion( opaque, s.size, rect );
+        }
+    else if( live && !s.shape.isNull())
         {
         QValueVector< XRectangle > shape;
         QMemArray< QRect > rects = s.shape.rects();

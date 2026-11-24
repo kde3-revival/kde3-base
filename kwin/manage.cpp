@@ -119,6 +119,7 @@ bool Client::manage( Window w, bool isMapped )
     getWmNormalHints(); // get xSizeHint
     getMotifHints();
     getGtkFrameExtents();
+    getShadowFromAlpha();
 
     // TODO try to obey all state information from info->state()
 

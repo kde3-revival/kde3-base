@@ -46,6 +46,11 @@ class Texture;
  smooth: drawn scaled up with bilinear filtering it looks the same).
  Never the bounding rectangle's shadow: inside it, outside the shape, that
  is the dark middle of the shadow (a hard dark band around the shape).
+
+ An ARGB window that asks for it (_KDE_NET_WM_SHADOW_FROM_ALPHA) has the
+ shadow of its alpha channel: blurred like a shape, its coverage from the
+ alpha of each pixel (anti-aliased edges, rounded corners, a tail),
+ cached by the alpha values (drawAlpha()).
 */
 class ShadowTiles
     {
@@ -72,6 +77,7 @@ class ShapeShadow
         int scale; // texture pixels per scale x scale window pixels
         QSize size;
         QRegion shape; // (cache key)
+        QValueVector< unsigned char > alpha; // (cache key) a window's alpha channel; empty: shape
         unsigned int used; // LRU stamp
         unsigned int frame; // the frame it was last drawn in
         long long bytes; // what it holds (the texture)
@@ -98,6 +104,11 @@ class ShadowCache
         // when the textures can't be made
         bool draw( Render::Renderer* r, int radius, const QRegion& shape, const QSize& size,
             const Compositing::RectF& outer, double sx, double sy, const QColor& c, double alpha );
+        // the same for the shadow of a window's alpha channel (size w x h
+        // values, row by row) instead of a shape
+        bool drawAlpha( Render::Renderer* r, int radius, const QValueVector< unsigned char >& coverage,
+            const QSize& size, const Compositing::RectF& outer, double sx, double sy, const QColor& c,
+            double alpha );
         // where the nine slices go for a window at geometry
         static QRect outerRect( const QRect& geometry, int radius, int dx, int dy );
         void clear();
@@ -114,9 +125,13 @@ class ShadowCache
         static int cornerPattern( const QRegion& shape, const QSize& size, QValueVector< unsigned char >* pattern );
         ShadowTiles* make( int radius, int corner, const QValueVector< unsigned char >& pattern );
         const ShadowTiles* tiles( int radius, int corner, const QValueVector< unsigned char >& pattern );
-        const ShapeShadow* shapeShadow( int radius, const QRegion& shape, const QSize& size );
+        const ShapeShadow* shapeShadow( int radius, const QRegion& shape, const QSize& size,
+            const QValueVector< unsigned char >& coverage );
         void evictShapes();
-        ShapeShadow* makeShape( int radius, const QRegion& shape, const QSize& size );
+        ShapeShadow* makeShape( int radius, const QRegion& shape, const QSize& size,
+            const QValueVector< unsigned char >& coverage );
+        bool drawShape( Render::Renderer* r, const ShapeShadow* s, int radius, const QSize& size,
+            const Compositing::RectF& outer, double sx, double sy, const QColor& c, double alpha );
         Render::Renderer* renderer;
         QPtrList< ShadowTiles > cache;
         QPtrList< ShapeShadow > shape_cache;

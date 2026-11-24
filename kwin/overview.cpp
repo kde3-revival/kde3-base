@@ -3222,6 +3222,22 @@ void Overview::drawItem( OverviewItem* item )
                     shape |= QRegion( x1, y1, (int) floor( rect.x + ( sr.x + sr.width ) * fx + 0.5 ) - x1,
                         (int) floor( rect.y + ( sr.y + sr.height ) * fy + 0.5 ) - y1 );
                     }
+            else if( !s.alpha_mask.isEmpty())
+                { // from the alpha channel: below its transparent parts too
+                QMemArray< QRect > rects = s.opaque.rects();
+                for( unsigned int i = 0;
+                     i < rects.size();
+                     ++i )
+                    {
+                    const QRect& sr = rects[ i ];
+                    const int x1 = (int) ceil( rect.x + sr.x() * fx );
+                    const int y1 = (int) ceil( rect.y + sr.y() * fy );
+                    const int x2 = (int) floor( rect.x + ( sr.x() + sr.width()) * fx );
+                    const int y2 = (int) floor( rect.y + ( sr.y() + sr.height()) * fy );
+                    if( x2 > x1 && y2 > y1 )
+                        shape |= QRegion( x1, y1, x2 - x1, y2 - y1 );
+                    }
+                }
             else
                 shape = QRegion( rect.bounds());
             QRegion clip = ( frame_clip.isNull() ? QRegion( 0, 0, r->width, r->height ) : frame_clip ) - shape;

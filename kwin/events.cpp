@@ -882,6 +882,8 @@ void Client::propertyNotifyEvent( XPropertyEvent* e )
                 getMotifHints();
             else if( e->atom == atoms->gtk_frame_extents )
                 getGtkFrameExtents();
+            else if( e->atom == atoms->kde_net_wm_shadow_from_alpha )
+                getShadowFromAlpha();
             break;
         }
     }

@@ -97,6 +97,10 @@ enum UnmanagedType { TypeNone, TypeMenu, TypeTooltip, TypeNotification, TypeDnd,
 // longer when it was drawn directly shortly before (flicker)
 static const double UnredirectDelay = 250;
 static const double UnredirectAgainDelay = 1000;
+// the alpha channel of a window with a shadow made from it is read again
+// at most this often (ms), and only up to this size (pixels)
+static const double AlphaInterval = 100;
+static const long long MaxAlphaPixels = 4LL * 1024 * 1024;
 
 /*
  A child of the root window.
@@ -132,6 +136,13 @@ class SceneWindow
         // the shadow's blur radius, offset and opacity
         int shadow_radius, shadow_dx, shadow_dy;
         double shadow_alpha;
+        // _KDE_NET_WM_SHADOW_FROM_ALPHA on an ARGB window: the shadow of its
+        // alpha channel (read again when damaged, at most every AlphaInterval)
+        bool alpha_shadow;
+        QValueVector< unsigned char > alpha_mask; // geom.size(), row by row (empty: not read)
+        QRegion alpha_opaque; // where the alpha is 255 (window relative)
+        bool alpha_dirty;
+        double alpha_time; // when it was read
         // set while painting: what the opaque windows above leave, drawn by
         // the scene, drawn by an animation
         QRegion clip;
@@ -163,7 +174,8 @@ SceneWindow::SceneWindow( Window w )
       bind_failed( false ), opacity( 1.0 ), type( TypeNone ), locker( false ), unredirected( false ),
       own_redirect( false ),
       candidate_since( 0 ), redirected_at( 0 ), shadow( NoShadow ), shadow_radius( 0 ), shadow_dx( 0 ),
-      shadow_dy( 0 ), shadow_alpha( 0 ), drawn( false ), replaced( false )
+      shadow_dy( 0 ), shadow_alpha( 0 ), alpha_shadow( false ), alpha_dirty( true ), alpha_time( 0 ),
+      drawn( false ), replaced( false )
     {
     }
 
@@ -267,16 +279,18 @@ Compositor::Compositor( Workspace* w )
     connect( &repaint_timer, SIGNAL( timeout()), SLOT( performRepaint()));
     connect( &unredirect_timer, SIGNAL( timeout()), SLOT( checkUnredirect()));
     connect( &retry_timer, SIGNAL( timeout()), SLOT( retry()));
+    connect( &alpha_timer, SIGNAL( timeout()), SLOT( alphaTimeout()));
     const char* names[] =
         {
         "_NET_WM_WINDOW_OPACITY", "_NET_WM_WINDOW_TYPE", "_XROOTPMAP_ID", "ESETROOT_PMAP_ID",
         "_NET_WM_WINDOW_TYPE_POPUP_MENU", "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU", "_NET_WM_WINDOW_TYPE_MENU",
         "_NET_WM_WINDOW_TYPE_COMBO", "_NET_WM_WINDOW_TYPE_TOOLTIP", "_NET_WM_WINDOW_TYPE_NOTIFICATION",
         "_NET_WM_WINDOW_TYPE_DND", "_NET_WM_WINDOW_TYPE_DESKTOP", "_NET_WM_WINDOW_TYPE_DOCK",
-        "_NET_WM_WINDOW_TYPE_SPLASH", "_NET_WM_WINDOW_TYPE_UTILITY", "_KDE_NET_WM_WINDOW_TYPE_OVERRIDE"
+        "_NET_WM_WINDOW_TYPE_SPLASH", "_NET_WM_WINDOW_TYPE_UTILITY", "_KDE_NET_WM_WINDOW_TYPE_OVERRIDE",
+        "_KDE_NET_WM_SHADOW_FROM_ALPHA"
         };
-    Atom atoms[ 16 ];
-    XInternAtoms( dpy, const_cast< char** >( names ), 16, False, atoms );
+    Atom atoms[ 17 ];
+    XInternAtoms( dpy, const_cast< char** >( names ), 17, False, atoms );
     atom_opacity = atoms[ 0 ];
     atom_type = atoms[ 1 ];
     atom_rootpmap = atoms[ 2 ];
@@ -285,6 +299,7 @@ Compositor::Compositor( Workspace* w )
          i < 12;
          ++i )
         atom_types[ i ] = atoms[ 4 + i ];
+    atom_shadow_from_alpha = atoms[ 16 ];
     }
 
 Compositor::~Compositor()
@@ -818,6 +833,8 @@ void Compositor::windowMapped( SceneWindow* w )
     fetchShape( w );
     fetchOpacity( w );
     fetchType( w );
+    fetchShadowHint( w );
+    w->alpha_dirty = true;
     updateShadow( w );
     w->bind_failed = false;
     bindContents( w ); // (now: the round trips not in a frame)
@@ -964,6 +981,9 @@ void Compositor::fetchType( SceneWindow* w )
    CSD windows here, since KWin does not announce _GTK_FRAME_EXTENTS)
    fill their rectangle and get no shadow of their own: they keep ours.
  Shaped windows get a shadow of their shape (shadow.cpp).
+ ARGB windows with _KDE_NET_WM_SHADOW_FROM_ALPHA get a shadow made from
+ their alpha channel (override-redirect ones too), as if they were not
+ ARGB: they tell where their edges are.
 */
 void Compositor::updateShadow( SceneWindow* w )
     {
@@ -976,11 +996,12 @@ void Compositor::updateShadow( SceneWindow* w )
         if( c != NULL )
             {
             if( !( c->isDesktop() || c->isDock() || c->isSplash() || c->isTopMenu() || c->isFullScreen()
-                || c->maximizeMode() == Client::MaximizeFull || ( w->argb && c->noBorder() && c->hasOwnShadow())))
+                || c->maximizeMode() == Client::MaximizeFull
+                || ( w->argb && c->noBorder() && c->hasOwnShadow() && !w->alpha_shadow )))
                 w->shadow = c->isNotification() ? ShadowMenu // (a popup: never active)
                     : c->isActive() ? ShadowActive : ShadowInactive;
             }
-        else if( w->override_redirect && !w->locker && !w->argb )
+        else if( w->override_redirect && !w->locker && ( !w->argb || w->alpha_shadow ))
             {
             // (nothing covering a whole monitor: lock screens, splash screens)
             bool covers = false;
@@ -1050,8 +1071,180 @@ void Compositor::updateShadow( SceneWindow* w )
         }
     }
 
+// (QValueVector's operator== is ambiguous in C++20)
+template< class T >
+static bool sameValues( const QValueVector< T >& a, const QValueVector< T >& b )
+    {
+    if( a.size() != b.size())
+        return false;
+    for( unsigned int i = 0;
+         i < a.size();
+         ++i )
+        if( a[ i ] != b[ i ] )
+            return false;
+    return true;
+    }
+
+// whether w's shadow is made from its alpha channel (see updateShadow())
+void Compositor::fetchShadowHint( SceneWindow* w )
+    {
+    bool hint = false;
+    if( w->argb )
+        {
+        Client* c = ws->findClient( FrameIdMatchPredicate( w->id ));
+        if( c != NULL )
+            hint = c->shadowFromAlpha();
+        else if( w->override_redirect )
+            {
+            Atom type;
+            int format;
+            unsigned long n, left;
+            unsigned char* data = NULL;
+            trap();
+            if( XGetWindowProperty( dpy, w->id, atom_shadow_from_alpha, 0, 1, False, XA_CARDINAL, &type, &format,
+                    &n, &left, &data ) == Success && data != NULL && type == XA_CARDINAL && format == 32 && n == 1 )
+                hint = *(const long*) data == 1;
+            if( data != NULL )
+                XFree( data );
+            untrap();
+            }
+        }
+    if( hint != w->alpha_shadow )
+        {
+        w->alpha_mask = QValueVector< unsigned char >();
+        w->alpha_opaque = QRegion();
+        }
+    w->alpha_shadow = hint;
+    w->alpha_dirty = true;
+    }
+
+// the alpha channel read again when it may have changed, at most every
+// AlphaInterval: else later (a repaint of the shadow then)
+void Compositor::updateAlpha( SceneWindow* w )
+    {
+    const double t = now();
+    if( w->alpha_mask.isEmpty() || t - w->alpha_time >= AlphaInterval
+        || w->alpha_mask.size() != (unsigned int) ( w->geom.width() * w->geom.height())) // (resized)
+        {
+        const QValueVector< unsigned char > old = w->alpha_mask;
+        if( fetchAlpha( w ) && !old.isEmpty() && !sameValues( old, w->alpha_mask ))
+            addRepaint( QRegion( w->shadowRect())); // (outside the damage)
+        }
+    else if( !alpha_timer.isActive())
+        alpha_timer.start( (int) ( AlphaInterval - ( t - w->alpha_time )) + 1, true );
+    }
+
+void Compositor::alphaTimeout()
+    {
+    for( QPtrListIterator< SceneWindow > it( stacking );
+         it.current() != NULL;
+         ++it )
+        if( it.current()->alpha_shadow && it.current()->alpha_dirty && it.current()->mapped
+            && it.current()->shadow != NoShadow )
+            addRepaint( QRegion( it.current()->shadowRect()));
+    }
+
+/*
+ The alpha channel of w's contents (its named pixmap), converted to A8 by
+ the X server (a quarter of the data to read).  False when it can't be
+ read (no contents yet, too large, a border): no shadow then.
+*/
+bool Compositor::fetchAlpha( SceneWindow* w )
+    {
+#ifdef COMPOSITOR_BUILD
+    w->alpha_dirty = false;
+    w->alpha_time = now();
+    const int width = w->geom.width();
+    const int height = w->geom.height();
+    if( w->border != 0 || width <= 0 || height <= 0 || (long long) width * height > MaxAlphaPixels
+        || !bindContents( w ) || w->pixmap == None )
+        {
+        w->alpha_mask = QValueVector< unsigned char >();
+        return false;
+        }
+    XRenderPictFormat* format = XRenderFindVisualFormat( dpy, w->visual );
+    XRenderPictFormat* a8 = XRenderFindStandardFormat( dpy, PictStandardA8 );
+    if( format == NULL || a8 == NULL )
+        {
+        w->alpha_mask = QValueVector< unsigned char >();
+        return false;
+        }
+    trap();
+    Picture src = XRenderCreatePicture( dpy, w->pixmap, format, 0, NULL );
+    Pixmap pixmap = XCreatePixmap( dpy, root, width, height, 8 );
+    Picture dst = XRenderCreatePicture( dpy, pixmap, a8, 0, NULL );
+    XRenderComposite( dpy, PictOpSrc, src, None, dst, 0, 0, 0, 0, 0, 0, width, height );
+    XImage* image = XGetImage( dpy, pixmap, 0, 0, width, height, AllPlanes, ZPixmap );
+    XRenderFreePicture( dpy, src );
+    XRenderFreePicture( dpy, dst );
+    XFreePixmap( dpy, pixmap );
+    XSync( dpy, False );
+    const int errors = untrap();
+    if( errors != 0 || image == NULL || image->bits_per_pixel != 8 )
+        {
+        if( image != NULL )
+            XDestroyImage( image );
+        w->alpha_mask = QValueVector< unsigned char >();
+        w->alpha_opaque = QRegion();
+        return false;
+        }
+    QValueVector< unsigned char > mask( width * height );
+    for( int y = 0;
+         y < height;
+         ++y )
+        memcpy( &mask[ y * width ], image->data + y * image->bytes_per_line, width );
+    XDestroyImage( image );
+    if( sameValues( mask, w->alpha_mask ))
+        return true; // (unchanged: the shared copy kept)
+    w->alpha_mask = mask;
+    // the opaque part: the runs of 255 in each row, rows alike joined
+    QRegion opaque;
+    QValueVector< int > runs, previous;
+    int previous_start = 0;
+    for( int y = 0;
+         y <= height;
+         ++y )
+        {
+        runs.clear();
+        if( y < height )
+            {
+            const unsigned char* row = &mask[ y * width ];
+            for( int x = 0;
+                 x < width;
+                 )
+                {
+                if( row[ x ] != 255 )
+                    {
+                    ++x;
+                    continue;
+                    }
+                const int start = x;
+                while( x < width && row[ x ] == 255 )
+                    ++x;
+                runs.append( start );
+                runs.append( x - start );
+                }
+            }
+        if( y < height && sameValues( runs, previous ))
+            continue;
+        for( unsigned int i = 0;
+             i + 1 < previous.size();
+             i += 2 )
+            opaque |= QRect( previous[ i ], previous_start, previous[ i + 1 ], y - previous_start );
+        previous = runs;
+        previous_start = y;
+        }
+    w->alpha_opaque = opaque;
+    return true;
+#else
+    Q_UNUSED( w );
+    return false;
+#endif
+    }
+
 void Compositor::releaseContents( SceneWindow* w )
     {
+    w->alpha_dirty = true;
     delete w->texture;
     w->texture = NULL;
     if( w->pixmap != None )
@@ -1154,6 +1347,7 @@ void Compositor::clientChanged( Client* c )
     SceneWindow* w = findWindow( c->frameId());
     if( w == NULL )
         return;
+    fetchShadowHint( w );
     updateShadow( w );
     unredirect_timer.start( 0, true );
     }
@@ -1278,6 +1472,16 @@ bool Compositor::x11Event( XEvent* e )
                 if( e->xproperty.atom == atom_rootpmap || e->xproperty.atom == atom_esetroot )
                     updateRootPixmap();
                 }
+            else if( e->xproperty.atom == atom_shadow_from_alpha )
+                { // (an override-redirect window's: KWin's Client reads a managed one's)
+                SceneWindow* w = findWindow( e->xproperty.window );
+                if( w != NULL && w->override_redirect && w->mapped && w->queried )
+                    {
+                    fetchShadowHint( w );
+                    updateShadow( w );
+                    damageWindow( w );
+                    }
+                }
             else if( e->xproperty.atom == atom_opacity )
                 if( SceneWindow* w = findWindow( e->xproperty.window ))
                     {
@@ -1320,6 +1524,8 @@ bool Compositor::handleDamage( XEvent* e )
     if( w == NULL || w->damage != de->damage )
         return false; // (the overview's and the animations' damage is theirs)
     w->damaged = true;
+    if( w->alpha_shadow )
+        w->alpha_dirty = true;
     if( !w->unredirected )
         {
         // relative to the window's origin, inside the border
@@ -2076,7 +2282,22 @@ void Compositor::paint( Render::Texture* target, const QRegion& region )
         SceneWindow* w = bit.current();
         if( w->drawn && !w->clip.isEmpty())
             {
-            if( w->shadow != NoShadow )
+            if( w->shadow != NoShadow && w->alpha_shadow )
+                { // (also below its transparent parts)
+                QRect outer = w->shadowRect();
+                if( w->alpha_dirty )
+                    updateAlpha( w );
+                QRegion opaque = w->alpha_opaque;
+                opaque.translate( w->geom.x(), w->geom.y());
+                QRegion clip = ( w->clip & QRegion( outer )) - opaque;
+                if( !clip.isEmpty() && !w->alpha_mask.isEmpty())
+                    {
+                    rend->setClip( clip );
+                    shadows->drawAlpha( rend, w->shadow_radius, w->alpha_mask, w->geom.size(), RectF( outer ), 1.0,
+                        1.0, Qt::black, w->shadow_alpha );
+                    }
+                }
+            else if( w->shadow != NoShadow )
                 {
                 QRect outer = w->shadowRect();
                 QRegion clip = ( w->clip & QRegion( outer )) - w->shapeOnScreen();
@@ -2197,6 +2418,16 @@ bool Compositor::windowShadow( Window id, CompositorShadow* s ) const
     s->alpha = w->shadow_alpha;
     s->shape = w->shape;
     s->size = w->geom.size();
+    if( w->alpha_shadow )
+        {
+        if( w->alpha_mask.isEmpty())
+            {
+            *s = CompositorShadow();
+            return false;
+            }
+        s->alpha_mask = w->alpha_mask;
+        s->opaque = w->alpha_opaque;
+        }
     return true;
     }
 
@@ -2211,7 +2442,10 @@ void Compositor::drawShadow( Render::Renderer* r, const CompositorShadow& s, con
     const RectF outer( rect.x + ( s.dx - s.radius ) * sx, rect.y + ( s.dy - s.radius ) * sy,
         rect.w + 2 * s.radius * sx, rect.h + 2 * s.radius * sy );
     r->setClip( clip );
-    shadows->draw( r, s.radius, s.shape, s.size, outer, sx, sy, Qt::black, s.alpha * alpha );
+    if( !s.alpha_mask.isEmpty())
+        shadows->drawAlpha( r, s.radius, s.alpha_mask, s.size, outer, sx, sy, Qt::black, s.alpha * alpha );
+    else
+        shadows->draw( r, s.radius, s.shape, s.size, outer, sx, sy, Qt::black, s.alpha * alpha );
     }
 
 Window Compositor::windowBelow( Window id, const QRect& area, bool* covered ) const
