@@ -151,6 +151,7 @@ bool Client::manage( Window w, bool isMapped )
     // initial desktop placement
     bool desk_of_screen = false; // desktops per monitor: the one shown where it's placed
     bool desk_of_launch = false; // the one shown there at the launch (launchDesktop())
+    int launch_desk = 0; // the launch's desktop as announced (not range checked)
     if ( session ) 
         {
         desk = session->desktop;
@@ -190,7 +191,7 @@ bool Client::manage( Window w, bool isMapped )
             desk = info->desktop(); // window had the initial desktop property, force it
         if( desktop() == 0 && asn_valid && asn_data.desktop() != 0 )
             {
-            desk = asn_data.desktop();
+            desk = launch_desk = asn_data.desktop();
             desk_of_launch = true;
             }
         }
@@ -350,10 +351,11 @@ bool Client::manage( Window w, bool isMapped )
         }
     // a launch on the current desktop of the time (launchers on any monitor
     // put the active monitor's there): the one its monitor showed then
+    // (the desktop as announced: the number of desktops may have dropped since)
     else if( desk_of_launch && desk != NET::OnAllDesktops && workspace()->desktopsPerScreen())
         {
         const int d = KMAX( 1, KMIN( workspace()->numberOfDesktops(),
-            workspace()->launchDesktop( asn_id, desk, workspace()->clientScreen( this ))));
+            workspace()->launchDesktop( asn_id, launch_desk, workspace()->clientScreen( this ))));
         if( d != desk )
             {
             desk = d;
