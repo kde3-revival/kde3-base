@@ -606,8 +606,11 @@ void Workspace::launchAnnounced( const KStartupInfoId& id, const KStartupInfoDat
     {
     if( data.desktop() == 0 || id.none())
         return;
+    // announced again after it had ended (its record not forgotten yet):
+    // a new launch, noted afresh
+    if( launches_gone.remove( id.id()) > 0 )
+        launch_desktops.remove( id.id());
     launch_desktops.announce( id.id(), screen_desktops );
-    launches_gone.remove( id.id()); // (announced again)
     }
 
 /*
