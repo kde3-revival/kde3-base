@@ -101,6 +101,10 @@ static const double UnredirectAgainDelay = 1000;
 // at most this often (ms), and only up to this size (pixels)
 static const double AlphaInterval = 100;
 static const long long MaxAlphaPixels = 4LL * 1024 * 1024;
+// (and less often for large windows: AlphaInterval more per this many pixels)
+static const double AlphaIntervalPixels = 256.0 * 1024;
+// the most rectangles of an opaque region made from an alpha channel
+static const int MaxOpaqueRects = 1024;
 
 /*
  A child of the root window.
@@ -1123,15 +1127,17 @@ void Compositor::fetchShadowHint( SceneWindow* w )
 void Compositor::updateAlpha( SceneWindow* w )
     {
     const double t = now();
-    if( w->alpha_mask.isEmpty() || t - w->alpha_time >= AlphaInterval
-        || w->alpha_mask.size() != (unsigned int) ( w->geom.width() * w->geom.height())) // (resized)
+    const double pixels = (double) w->geom.width() * w->geom.height();
+    const double interval = AlphaInterval * ( 1 + pixels / AlphaIntervalPixels );
+    if( w->alpha_mask.isEmpty() || t - w->alpha_time >= interval
+        || w->alpha_mask.size() != (unsigned int) pixels ) // (resized)
         {
         const QValueVector< unsigned char > old = w->alpha_mask;
         if( fetchAlpha( w ) && !old.isEmpty() && !sameValues( old, w->alpha_mask ))
             addRepaint( QRegion( w->shadowRect())); // (outside the damage)
         }
     else if( !alpha_timer.isActive())
-        alpha_timer.start( (int) ( AlphaInterval - ( t - w->alpha_time )) + 1, true );
+        alpha_timer.start( (int) ( interval - ( t - w->alpha_time )) + 1, true );
     }
 
 void Compositor::alphaTimeout()
@@ -1197,8 +1203,29 @@ bool Compositor::fetchAlpha( SceneWindow* w )
     if( sameValues( mask, w->alpha_mask ))
         return true; // (unchanged: the shared copy kept)
     w->alpha_mask = mask;
-    // the opaque part: the runs of 255 in each row, rows alike joined
-    QRegion opaque;
+    w->alpha_opaque = opaqueRegion( mask, width, height );
+    if( debug )
+        kdWarning( 1212 ) << "compositor: alpha of window 0x" << QString::number( w->id, 16 ) << " read in "
+            << QString::number( now() - w->alpha_time, 'f', 1 ) << " ms, " << w->alpha_opaque.rects().size()
+            << " opaque rectangles" << endl;
+    return true;
+#else
+    Q_UNUSED( w );
+    return false;
+#endif
+    }
+
+/*
+ The opaque part of an alpha channel (alpha 255): the runs in each row,
+ rows alike joined into bands, made into a region at once (in the banded
+ order of a region: linear).  More than MaxOpaqueRects rectangles (an
+ alpha channel in pieces): none, which is on the safe side (the shadow
+ is drawn below the whole window: hidden where it is opaque, unless the
+ window fades).
+*/
+QRegion Compositor::opaqueRegion( const QValueVector< unsigned char >& mask, int width, int height )
+    {
+    QValueVector< QRect > rects;
     QValueVector< int > runs, previous;
     int previous_start = 0;
     for( int y = 0;
@@ -1221,25 +1248,27 @@ bool Compositor::fetchAlpha( SceneWindow* w )
                 const int start = x;
                 while( x < width && row[ x ] == 255 )
                     ++x;
+                if( runs.size() >= 2 * MaxOpaqueRects )
+                    return QRegion();
                 runs.append( start );
                 runs.append( x - start );
                 }
             }
         if( y < height && sameValues( runs, previous ))
             continue;
+        if( rects.size() + previous.size() / 2 > (unsigned int) MaxOpaqueRects )
+            return QRegion();
         for( unsigned int i = 0;
              i + 1 < previous.size();
              i += 2 )
-            opaque |= QRect( previous[ i ], previous_start, previous[ i + 1 ], y - previous_start );
+            rects.append( QRect( previous[ i ], previous_start, previous[ i + 1 ], y - previous_start ));
         previous = runs;
         previous_start = y;
         }
-    w->alpha_opaque = opaque;
-    return true;
-#else
-    Q_UNUSED( w );
-    return false;
-#endif
+    QRegion opaque;
+    if( !rects.isEmpty())
+        opaque.setRects( &rects[ 0 ], rects.size());
+    return opaque;
     }
 
 void Compositor::releaseContents( SceneWindow* w )
@@ -2217,6 +2246,17 @@ void Compositor::paint( Render::Texture* target, const QRegion& region )
     if( !rend->setTarget( target ))
         return;
     shadows->newFrame();
+    // the alpha channels for the shadows, whoever draws the windows (the
+    // scene, an animation, the overview)
+    for( QPtrListIterator< SceneWindow > ait( stacking );
+         ait.current() != NULL;
+         ++ait )
+        {
+        SceneWindow* w = ait.current();
+        if( w->alpha_shadow && w->alpha_dirty && w->shadow != NoShadow && w->mapped && w->queried
+            && !w->unredirected )
+            updateAlpha( w );
+        }
     Overview* ov = ws->windowOverview();
     if( ov != NULL && ov->replacesScene())
         { // its frames instead of the scene
@@ -2285,8 +2325,6 @@ void Compositor::paint( Render::Texture* target, const QRegion& region )
             if( w->shadow != NoShadow && w->alpha_shadow )
                 { // (also below its transparent parts)
                 QRect outer = w->shadowRect();
-                if( w->alpha_dirty )
-                    updateAlpha( w );
                 QRegion opaque = w->alpha_opaque;
                 opaque.translate( w->geom.x(), w->geom.y());
                 QRegion clip = ( w->clip & QRegion( outer )) - opaque;

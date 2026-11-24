@@ -172,6 +172,7 @@ class Compositor : public QObject
         void fetchShadowHint( SceneWindow* w );
         bool fetchAlpha( SceneWindow* w );
         void updateAlpha( SceneWindow* w );
+        static QRegion opaqueRegion( const QValueVector< unsigned char >& mask, int width, int height );
         void updateShadow( SceneWindow* w );
         void releaseContents( SceneWindow* w );
         bool bindContents( SceneWindow* w );
