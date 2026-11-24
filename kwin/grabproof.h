@@ -79,14 +79,17 @@ namespace KWinInternal
  remote desktop viewers grab on their own managed window or the root
  window, so otherwise they don't.
  Nothing else is looked at or kept: of the other keys only whether they are
- down (the autorepeat), no logging of keys.
+ down and the keycodes and times of the last few presses, in memory (the
+ autorepeat, no double trigger), no logging of keys.
 
  Holding a shortcut key also fired the shortcut again for every autorepeat
  (KGlobalAccel's passive grab activates again): repeatedPress() tells
  whether KWin's current key press is an autorepeat, for the shortcuts that
  want to fire once.  KWin always watches the raw key events for this (with
  XInput 2.1; else only a release and a press with the same time are seen
- as one).
+ as one): a press of a key that a keyboard holds is a repeat unless it is
+ one of the last raw presses (several, of every keyboard, may be read
+ before KWin gets the first core press).
 */
 class GrabProofShortcuts : public QObject
     {
@@ -104,8 +107,9 @@ class GrabProofShortcuts : public QObject
         void setRawConnection( Display* raw );
         // an event of that connection that is not XInput's
         void rawConnectionEvent( const XEvent* e );
-        // a raw key event (the server sends none for autorepeats)
-        void rawKeyEvent( int keycode, Time time, bool press, bool repeat );
+        // a raw key event of a master keyboard (the server sends none for
+        // autorepeats)
+        void rawKeyEvent( int device, int keycode, Time time, bool press, bool repeat );
         // a raw key press, not an autorepeat, while the shortcuts are enabled
         void keyPressed( int keycode, Time time );
         // every X event of KWin's, before anybody else gets it
@@ -127,7 +131,7 @@ class GrabProofShortcuts : public QObject
         bool menuOpen();
         void watch( Window w );
         void watchExisting();
-        void setDown( unsigned int keycode, bool down );
+        void setDown( int device, unsigned int keycode, bool down );
         bool isDown( unsigned int keycode ) const;
         struct Slot
             {
@@ -147,15 +151,26 @@ class GrabProofShortcuts : public QObject
         // the XKB grab modifiers and the core-compatible ones, in event order
         uint xkb_grab_mods;
         uint xkb_compat_grab_mods;
-        // the keys down, from the raw events (and KWin's own key events)
-        unsigned char down[ 32 ];
+        // the keys down, from the raw events of each master keyboard (and,
+        // as of no known keyboard, KWin's own key events and the keys down
+        // at the start)
+        struct Keys
+            {
+            Keys();
+            unsigned char bits[ 32 ];
+            };
+        enum { UnknownDevice = -1 };
+        QMap< int, Keys > down;
         // the last key presses that KWin got
         enum { CorePresses = 8 };
         unsigned int core_code[ CorePresses ];
         Time core_time[ CorePresses ];
         int core_next;
-        unsigned int raw_press_code; // the last raw press
-        Time raw_press_time;
+        // the last raw presses (not autorepeats), of any keyboard
+        enum { RawPresses = 16 };
+        unsigned int raw_press_code[ RawPresses ];
+        Time raw_press_time[ RawPresses ];
+        int raw_press_next;
         unsigned int release_code; // KWin's last key release
         Time release_time;
         bool repeated;

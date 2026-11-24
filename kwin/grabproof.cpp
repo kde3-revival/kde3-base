@@ -49,8 +49,7 @@ GrabProofShortcuts::GrabProofShortcuts()
       xkb_grab_mods( 0 ),
       xkb_compat_grab_mods( 0 ),
       core_next( 0 ),
-      raw_press_code( 0 ),
-      raw_press_time( CurrentTime ),
+      raw_press_next( 0 ),
       release_code( 0 ),
       release_time( CurrentTime ),
       repeated( false ),
@@ -63,8 +62,9 @@ GrabProofShortcuts::GrabProofShortcuts()
     {
     connect( qApp->eventLoop(), SIGNAL( aboutToBlock()), SLOT( aboutToBlock()));
     connect( qApp->eventLoop(), SIGNAL( awake()), SLOT( awake()));
-    memset( down, 0, sizeof( down ));
     memset( core_code, 0, sizeof( core_code ));
+    memset( raw_press_code, 0, sizeof( raw_press_code ));
+    memset( raw_press_time, 0, sizeof( raw_press_time ));
     memset( core_time, 0, sizeof( core_time ));
     }
 
@@ -115,17 +115,41 @@ bool GrabProofShortcuts::isEmpty() const
     return grab_keys.isEmpty();
     }
 
-void GrabProofShortcuts::setDown( unsigned int keycode, bool d )
+GrabProofShortcuts::Keys::Keys()
     {
+    memset( bits, 0, sizeof( bits ));
+    }
+
+/*
+ A key is down while one keyboard holds it: a release of the same key on
+ another master keyboard doesn't end it.  A release of a known keyboard
+ ends it for the unknown one too (it may have been that one).
+*/
+void GrabProofShortcuts::setDown( int device, unsigned int keycode, bool d )
+    {
+    const int i = ( keycode / 8 ) & 31;
+    const unsigned char bit = 1 << ( keycode % 8 );
     if( d )
-        down[ ( keycode / 8 ) & 31 ] |= 1 << ( keycode % 8 );
-    else
-        down[ ( keycode / 8 ) & 31 ] &= ~( 1 << ( keycode % 8 ));
+        {
+        down[ device ].bits[ i ] |= bit;
+        return;
+        }
+    if( down.contains( device ))
+        down[ device ].bits[ i ] &= ~bit;
+    if( device != UnknownDevice && down.contains( UnknownDevice ))
+        down[ UnknownDevice ].bits[ i ] &= ~bit;
     }
 
 bool GrabProofShortcuts::isDown( unsigned int keycode ) const
     {
-    return down[ ( keycode / 8 ) & 31 ] & ( 1 << ( keycode % 8 ));
+    const int i = ( keycode / 8 ) & 31;
+    const unsigned char bit = 1 << ( keycode % 8 );
+    for( QMap< int, Keys >::ConstIterator it = down.begin();
+         it != down.end();
+         ++it )
+        if( (*it).bits[ i ] & bit )
+            return true;
+    return false;
     }
 
 void GrabProofShortcuts::setRawConnection( Display* raw )
@@ -139,7 +163,8 @@ void GrabProofShortcuts::setRawConnection( Display* raw )
     selectXkb();
     // the keys down already (after the selection: raw events queued before
     // the reply are older, presses and releases that end where the reply is)
-    XQueryKeymap( raw_dpy, reinterpret_cast< char* >( down ));
+    down.clear();
+    XQueryKeymap( raw_dpy, reinterpret_cast< char* >( down[ UnknownDevice ].bits ));
     }
 
 void GrabProofShortcuts::rawConnectionEvent( const XEvent* e )
@@ -153,13 +178,14 @@ void GrabProofShortcuts::rawConnectionEvent( const XEvent* e )
         }
     }
 
-void GrabProofShortcuts::rawKeyEvent( int keycode, Time time, bool press, bool repeat )
+void GrabProofShortcuts::rawKeyEvent( int device, int keycode, Time time, bool press, bool repeat )
     {
-    setDown( keycode, press );
+    setDown( device, keycode, press );
     if( press && !repeat )
-        {
-        raw_press_code = keycode;
-        raw_press_time = time;
+        { // (several may be read before KWin gets the core press of the first)
+        raw_press_code[ raw_press_next ] = keycode;
+        raw_press_time[ raw_press_next ] = time;
+        raw_press_next = ( raw_press_next + 1 ) % RawPresses;
         }
     }
 
@@ -272,12 +298,19 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
              gets a release and a press with the same time again and again, but it
              may not get the releases (they go to the focus while its passive grab
              is not active); the server makes no raw events for repeats, so a press
-             of a key down for an earlier raw press is one too.
+             of a key down for an earlier raw press is one too: a press that is
+             none of the last raw presses (each keyboard's, read up to this
+             press).
             */
+            bool raw_press = false;
+            for( int i = 0;
+                 i < RawPresses;
+                 ++i )
+                if( raw_press_code[ i ] == code && raw_press_time[ i ] == e->xkey.time )
+                    raw_press = true;
             repeated = ( code == release_code && e->xkey.time == release_time )
-                || ( raw_dpy != NULL && isDown( code )
-                    && !( code == raw_press_code && e->xkey.time == raw_press_time ));
-            setDown( code, true );
+                || ( raw_dpy != NULL && isDown( code ) && !raw_press );
+            setDown( UnknownDevice, code, true );
             break;
             }
         case KeyRelease:
@@ -285,7 +318,7 @@ void GrabProofShortcuts::x11Event( const XEvent* e )
             release_code = e->xkey.keycode;
             release_time = e->xkey.time;
             repeated = false;
-            setDown( e->xkey.keycode, false );
+            setDown( UnknownDevice, e->xkey.keycode, false );
             break;
         case CreateNotify:
             // (also when created without override-redirect: Qt sets it on a

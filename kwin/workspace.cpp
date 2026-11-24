@@ -2815,11 +2815,11 @@ void Workspace::grabProofRawConnectionEvent( const XEvent* e )
     }
 
 // a raw key event (XInput 2) seen by the overview
-void Workspace::grabProofRawKey( int keycode, Time time, bool press, bool repeat )
+void Workspace::grabProofRawKey( int device, int keycode, Time time, bool press, bool repeat )
     {
     if( grab_proof == NULL )
         return;
-    grab_proof->rawKeyEvent( keycode, time, press, repeat );
+    grab_proof->rawKeyEvent( device, keycode, time, press, repeat );
     if( !press || repeat || globalShortcutsDisabled() || client_keys_dialog != NULL || !keys->isEnabled())
         return;
     grab_proof->keyPressed( keycode, time );

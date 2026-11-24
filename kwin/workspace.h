@@ -312,7 +312,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         bool shortcutKeyRepeated() const;
         void grabProofRawConnection( Display* raw );
         void grabProofRawConnectionEvent( const XEvent* e );
-        void grabProofRawKey( int keycode, Time time, bool press, bool repeat );
+        void grabProofRawKey( int device, int keycode, Time time, bool press, bool repeat );
 
         void sessionSaveStarted();
         void sessionSaveDone();

@@ -4131,6 +4131,7 @@ void Overview::handleXI2( XEvent* e )
     if( !XGetEventData( xi_dpy, cookie ))
         return;
     bool tap = false;
+    int grab_proof_device = 0;
     int grab_proof_key = 0;
     Time grab_proof_time = CurrentTime;
     bool grab_proof_press = false;
@@ -4140,6 +4141,7 @@ void Overview::handleXI2( XEvent* e )
         case XI_RawKeyPress:
             {
             XIRawEvent* ev = (XIRawEvent*) cookie->data;
+            grab_proof_device = ev->deviceid;
             grab_proof_key = ev->detail;
             grab_proof_time = ev->time;
             grab_proof_press = true;
@@ -4164,6 +4166,7 @@ void Overview::handleXI2( XEvent* e )
         case XI_RawKeyRelease:
             {
             XIRawEvent* ev = (XIRawEvent*) cookie->data;
+            grab_proof_device = ev->deviceid;
             grab_proof_key = ev->detail;
             grab_proof_time = ev->time;
             if( !super_down ) // (only when SuperKey is set, see above)
@@ -4206,7 +4209,7 @@ void Overview::handleXI2( XEvent* e )
         }
     XFreeEventData( xi_dpy, cookie );
     if( grab_proof_key != 0 )
-        ws->grabProofRawKey( grab_proof_key, grab_proof_time, grab_proof_press, grab_proof_repeat );
+        ws->grabProofRawKey( grab_proof_device, grab_proof_key, grab_proof_time, grab_proof_press, grab_proof_repeat );
     if( tap && options->overviewSuperKey )
         toggle();
 #else
