@@ -453,6 +453,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         // screens.cpp: what the monitors showed when a launch was announced
         void launchAnnounced( const KStartupInfoId& id, const KStartupInfoData& data );
         void launchGone( const KStartupInfoId& id, const KStartupInfoData& data );
+        void forgetLaunches();
         void slotUpdateToolWindows();
         void lostTopMenuSelection();
         void lostTopMenuOwner();
@@ -581,6 +582,7 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         bool screenDesktopMessage( XEvent* e );
         // by startup notification id, from the first announcement with a desktop to its end
         LaunchDesktops launch_desktops;
+        QStringList launches_gone; // ended: forgotten once the event is handled
         int number_of_desktops;
         QMemArray<int> desktop_focus_chain;
 

@@ -607,11 +607,30 @@ void Workspace::launchAnnounced( const KStartupInfoId& id, const KStartupInfoDat
     if( data.desktop() == 0 || id.none())
         return;
     launch_desktops.announce( id.id(), screen_desktops );
+    launches_gone.remove( id.id()); // (announced again)
     }
 
+/*
+ KStartupInfo also ends a launch when it matches a window by its PID or
+ WM_CLASS, inside checkStartup() of Client::manage(), before manage() asks
+ launchDesktop(): forget it only after this event.
+*/
 void Workspace::launchGone( const KStartupInfoId& id, const KStartupInfoData& )
     {
-    launch_desktops.remove( id.id());
+    if( !launch_desktops.contains( id.id()) || launches_gone.contains( id.id()))
+        return;
+    launches_gone.append( id.id());
+    if( launches_gone.count() == 1 )
+        QTimer::singleShot( 0, this, SLOT( forgetLaunches()));
+    }
+
+void Workspace::forgetLaunches()
+    {
+    for( QStringList::ConstIterator it = launches_gone.begin();
+         it != launches_gone.end();
+         ++it )
+        launch_desktops.remove( *it );
+    launches_gone.clear();
     }
 
 int Workspace::launchDesktop( const KStartupInfoId& id, int desktop, int screen ) const
