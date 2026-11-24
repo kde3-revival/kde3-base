@@ -218,6 +218,10 @@ void GrabProofShortcuts::rawKeyEvent( int device, int keycode, Time time, bool p
         // the key of a shortcut that fires once: kept until its core press
         // comes, whatever other keys are pressed meanwhile (one per key and
         // keyboard, the next press of it replaces it)
+        // Known limitation: the key pressed, released and pressed again on
+        // one keyboard and more than RawPresses other presses, all read
+        // before KWin gets the first core press: that one is taken for an
+        // autorepeat (the shortcut is missed once, nothing fires twice).
         for( QValueList< KKey >::ConstIterator it = once_keys.begin();
              it != once_keys.end();
              ++it )

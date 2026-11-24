@@ -1280,6 +1280,10 @@ bool Overview::grabInput()
     // which master pointer that is (KWin's client pointer, asked on the
     // XInput 2 connection by a window of KWin's): only its barrier hits
     // are the overview's own (see handleXI2())
+    // Known limitation: another client that sets KWin's client pointer
+    // between the grab and this query makes it name the wrong master
+    // pointer: the grabbed one's hits are then released (the corner
+    // doesn't hold it) and another one's grab may be held at the strip.
     if( xi_dpy != NULL )
         {
         int id;
