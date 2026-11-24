@@ -30,6 +30,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "rules.h"
 #include "overview.h"
 #include "effects.h"
+#include "compositor.h"
 
 #include <X11/extensions/shape.h>
 
@@ -119,6 +120,7 @@ Client::Client( Workspace *ws )
     keep_below = FALSE;
     is_shape = FALSE;
     motif_noborder = false;
+    own_shadow = false;
     motif_may_move = TRUE;
     motif_may_resize = TRUE;
     motif_may_close = TRUE;
@@ -1379,6 +1381,46 @@ void Client::getMotifHints()
     motif_may_close = mclose; // motif apps like to crash when they set this hint and WM closes them anyway
     if( isManaged())
         updateDecoration( true ); // check if noborder state has changed
+    }
+
+/*
+ GTK 3/4 client-side decorations (and others following them) reserve
+ transparent margins around the window for a shadow they draw themselves
+ and tell their size in _GTK_FRAME_EXTENTS (left, right, top, bottom);
+ the compositor draws no shadow of its own around such windows (it would
+ be a rectangle around the margins).  GTK only does this when the window
+ manager lists the hint in _NET_SUPPORTED (KWin does not yet: GTK windows
+ then fill their rectangle and get the compositor's shadow).
+*/
+void Client::getGtkFrameExtents()
+    {
+    bool own = false;
+    Atom type;
+    int format;
+    unsigned long n, left;
+    unsigned char* data = NULL;
+    if( XGetWindowProperty( qt_xdisplay(), window(), atoms->gtk_frame_extents, 0, 4, False, XA_CARDINAL, &type,
+            &format, &n, &left, &data ) == Success && data != NULL && format == 32 && n == 4 )
+        {
+        const long* extents = (const long*) data;
+        for( int i = 0;
+             i < 4;
+             ++i )
+            if( extents[ i ] != 0 )
+                own = true;
+        }
+    if( data != NULL )
+        XFree( data );
+    if( own == bool( own_shadow ))
+        return;
+    own_shadow = own;
+    if( isManaged() && workspace()->compositor() != NULL )
+        workspace()->compositor()->clientChanged( this );
+    }
+
+bool Client::hasOwnShadow() const
+    {
+    return own_shadow;
     }
 
 void Client::readIcons( Window win, QPixmap* icon, QPixmap* miniicon )

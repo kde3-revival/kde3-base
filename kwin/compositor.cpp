@@ -938,7 +938,23 @@ void Compositor::fetchType( SceneWindow* w )
     untrap();
     }
 
-// the shadow class of w and its size
+/*
+ The shadow class of w and its size.
+
+ Who draws a shadow of its own gets none: an ARGB window can make its
+ edges anything, so the compositor can't know where they are.
+ - Override-redirect ARGB windows: none.  They are popups of toolkits
+   that draw them translucent (Chrome/Electron and Firefox menus and
+   tooltips: rounded, within transparent margins, often with their own
+   shadow; GTK menus); a rectangle around the margins is wrong for all of
+   them (mutter: no shadow either).  Qt 3 / KDE 3 popups are never ARGB.
+ - Managed windows: none for an undecorated ARGB window that tells it has
+   margins for its own shadow (_GTK_FRAME_EXTENTS, GTK client-side
+   decorations).  Undecorated ARGB windows without it (Firefox and GTK 4
+   CSD windows here, since KWin does not announce _GTK_FRAME_EXTENTS)
+   fill their rectangle and get no shadow of their own: they keep ours.
+ Shaped windows get a shadow of their shape (shadow.cpp).
+*/
 void Compositor::updateShadow( SceneWindow* w )
     {
     const int old = w->shadow;
@@ -950,10 +966,10 @@ void Compositor::updateShadow( SceneWindow* w )
         if( c != NULL )
             {
             if( !( c->isDesktop() || c->isDock() || c->isSplash() || c->isTopMenu() || c->isFullScreen()
-                || c->maximizeMode() == Client::MaximizeFull))
+                || c->maximizeMode() == Client::MaximizeFull || ( w->argb && c->noBorder() && c->hasOwnShadow())))
                 w->shadow = c->isActive() ? ShadowActive : ShadowInactive;
             }
-        else if( w->override_redirect && !w->locker )
+        else if( w->override_redirect && !w->locker && !w->argb )
             {
             // (nothing covering a whole monitor: lock screens, splash screens)
             bool covers = false;
