@@ -870,9 +870,12 @@ void Client::startupIdChanged()
     // If the ASN contains desktop, move it to the desktop, otherwise move it to the current
     // desktop (since the new ASN should make the window act like if it's a new application
     // launched). However don't affect the window's desktop if it's set to be on all desktops.
-    int desktop = workspace()->currentDesktop( workspace()->clientScreen( this ));
+    // (desktops per monitor: a launch on the current desktop of the time means
+    // the one its monitor showed then, see Workspace::launchDesktop())
+    const int screen = workspace()->clientScreen( this );
+    int desktop = workspace()->currentDesktop( screen );
     if( asn_data.desktop() != 0 )
-        desktop = asn_data.desktop();
+        desktop = workspace()->launchDesktop( asn_id, asn_data.desktop(), screen );
     if( !isOnAllDesktops())
         workspace()->sendClientToDesktop( this, desktop, true );
     Time timestamp = asn_id.timestamp();
