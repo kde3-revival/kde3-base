@@ -173,6 +173,17 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void setActiveScreen( int screen );
         // the monitor under the pointer
         int pointerScreen() const;
+        /*
+         Desktops per monitor: the desktop for a new window of the launch \a id
+         whose startup notification asks for \a desktop, placed on the monitor
+         \a screen.  Launchers (KRun, kinit) put the current desktop of the time
+         (_NET_CURRENT_DESKTOP, the active monitor's) in every launch, whichever
+         monitor they were used on; such a launch means "the current desktop",
+         i.e. the one \a screen showed when the launch was announced.  A launch
+         that asked for another desktop, or one KWin didn't see announced,
+         keeps \a desktop.
+        */
+        int launchDesktop( const KStartupInfoId& id, int desktop, int screen ) const;
         // the monitor the keys switch: the pointer's (-1 in classic mode)
         int switchScreen() const { return desktopsPerScreen() ? pointerScreen() : -1; }
         // c's desktop is shown on its monitor (or c is on all desktops)
@@ -439,6 +450,9 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void configureWM();
         void desktopResized();
         void checkScreenIds(); // screens.cpp: monitors replaced at the same place
+        // screens.cpp: what the monitors showed when a launch was announced
+        void launchAnnounced( const KStartupInfoId& id, const KStartupInfoData& data );
+        void launchGone( const KStartupInfoId& id, const KStartupInfoData& data );
         void slotUpdateToolWindows();
         void lostTopMenuSelection();
         void lostTopMenuOwner();
@@ -565,6 +579,13 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
         void publishScreenDesktops();
         void readScreenDesktops();
         bool screenDesktopMessage( XEvent* e );
+        struct LaunchDesktops
+            {
+            int current; // _NET_CURRENT_DESKTOP
+            QMap< QString, int > shown; // monitor identity -> its desktop
+            };
+        // by startup notification id, from the first announcement with a desktop to its end
+        QMap< QString, LaunchDesktops > launch_desktops;
         int number_of_desktops;
         QMemArray<int> desktop_focus_chain;
 

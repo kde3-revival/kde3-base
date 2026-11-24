@@ -171,6 +171,12 @@ Workspace::Workspace( bool restore )
     // call this before XSelectInput() on the root window
     startup = new KStartupInfo(
         KStartupInfo::DisableKWinModule | KStartupInfo::AnnounceSilenceChanges, this );
+    connect( startup, SIGNAL( gotNewStartup( const KStartupInfoId&, const KStartupInfoData& )),
+        SLOT( launchAnnounced( const KStartupInfoId&, const KStartupInfoData& )));
+    connect( startup, SIGNAL( gotStartupChange( const KStartupInfoId&, const KStartupInfoData& )),
+        SLOT( launchAnnounced( const KStartupInfoId&, const KStartupInfoData& )));
+    connect( startup, SIGNAL( gotRemoveStartup( const KStartupInfoId&, const KStartupInfoData& )),
+        SLOT( launchGone( const KStartupInfoId&, const KStartupInfoData& )));
 
     // select windowmanager privileges
     XSelectInput(qt_xdisplay(), root,

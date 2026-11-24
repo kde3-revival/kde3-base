@@ -150,6 +150,7 @@ bool Client::manage( Window w, bool isMapped )
 
     // initial desktop placement
     bool desk_of_screen = false; // desktops per monitor: the one shown where it's placed
+    bool desk_of_launch = false; // the one shown there at the launch (launchDesktop())
     if ( session ) 
         {
         desk = session->desktop;
@@ -188,7 +189,10 @@ bool Client::manage( Window w, bool isMapped )
         if ( info->desktop() )
             desk = info->desktop(); // window had the initial desktop property, force it
         if( desktop() == 0 && asn_valid && asn_data.desktop() != 0 )
+            {
             desk = asn_data.desktop();
+            desk_of_launch = true;
+            }
         }
     if ( desk == 0 ) // assume window wants to be visible on the current desktop
         {
@@ -197,7 +201,7 @@ bool Client::manage( Window w, bool isMapped )
         }
     // (a rule may also force the desktop asked for: 0 is no desktop a rule gives)
     if( rules()->checkDesktop( desk, !isMapped ) != desk || rules()->checkDesktop( 0, !isMapped ) != 0 )
-        desk_of_screen = false;
+        desk_of_screen = desk_of_launch = false;
     desk = rules()->checkDesktop( desk, !isMapped );
     if( desk != NET::OnAllDesktops ) // do range check
         desk = KMAX( 1, KMIN( workspace()->numberOfDesktops(), desk ));
@@ -338,6 +342,18 @@ bool Client::manage( Window w, bool isMapped )
     if( desk_of_screen && desk != NET::OnAllDesktops && workspace()->desktopsPerScreen())
         {
         const int d = workspace()->currentDesktop( workspace()->clientScreen( this ));
+        if( d != desk )
+            {
+            desk = d;
+            info->setDesktop( desk );
+            }
+        }
+    // a launch on the current desktop of the time (launchers on any monitor
+    // put the active monitor's there): the one its monitor showed then
+    else if( desk_of_launch && desk != NET::OnAllDesktops && workspace()->desktopsPerScreen())
+        {
+        const int d = KMAX( 1, KMIN( workspace()->numberOfDesktops(),
+            workspace()->launchDesktop( asn_id, desk, workspace()->clientScreen( this ))));
         if( d != desk )
             {
             desk = d;

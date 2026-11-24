@@ -41,6 +41,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include <kapplication.h>
 #include <kconfig.h>
 #include <kglobal.h>
+#include <kstartupinfo.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -588,6 +589,44 @@ void Workspace::checkScreenIds()
     if( dw->numScreens() != int( screen_geometries.count()))
         return; // (Qt tells about this one)
     desktopResized(); // the same handling as for a geometry change
+    }
+
+/*
+ A launch from a panel, the desktop, minicli or an application carries the
+ desktop it was started on in its startup notification: KRun and kinit put
+ _NET_CURRENT_DESKTOP there, which is the desktop of the ACTIVE monitor, not
+ of the monitor the launcher was used on.  So KWin notes, when a launch is
+ first announced with a desktop, what every monitor showed then; a window of
+ that launch which asks for that very desktop gets the desktop its monitor
+ showed (Client::manage()).  Without per monitor desktops this changes
+ nothing: all monitors showed the asked one.
+*/
+void Workspace::launchAnnounced( const KStartupInfoId& id, const KStartupInfoData& data )
+    {
+    if( data.desktop() == 0 || id.none() || launch_desktops.contains( id.id()))
+        return;
+    LaunchDesktops& l = launch_desktops[ id.id() ];
+    l.current = published_desktop != 0 ? published_desktop : currentDesktop();
+    for( int i = 0; i < screen_desktops.outputCount(); ++i )
+        l.shown[ screen_desktops.id( i ) ] = currentDesktop( i );
+    }
+
+void Workspace::launchGone( const KStartupInfoId& id, const KStartupInfoData& )
+    {
+    launch_desktops.remove( id.id());
+    }
+
+int Workspace::launchDesktop( const KStartupInfoId& id, int desktop, int screen ) const
+    {
+    if( !desktopsPerScreen() || desktop == NET::OnAllDesktops )
+        return desktop;
+    QMap< QString, LaunchDesktops >::ConstIterator it = launch_desktops.find( id.id());
+    if( it == launch_desktops.end() || (*it).current != desktop )
+        return desktop; // not seen announced, or another desktop asked for
+    QMap< QString, int >::ConstIterator shown = (*it).shown.find( screen_desktops.id( screen ));
+    if( shown == (*it).shown.end())
+        return currentDesktop( screen ); // a monitor that came since
+    return *shown;
     }
 
 bool Workspace::screenDesktopMessage( XEvent* e )
