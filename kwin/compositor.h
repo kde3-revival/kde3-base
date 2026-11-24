@@ -45,6 +45,10 @@ struct CompositorShadow
     double alpha;
     QRegion shape; // window relative (null: the rectangle)
     QSize size;
+    // the window's alpha channel when the shadow is made from it (size
+    // values row by row; see shadow.h), else empty
+    QValueVector< unsigned char > alpha_mask;
+    QRegion opaque; // where it is opaque (alpha 255; window relative): no shadow there
     };
 
 namespace Render
@@ -134,6 +138,7 @@ class Compositor : public QObject
         void activeChanged( bool active );
     private slots:
         void performRepaint();
+        void alphaTimeout();
         void outputCompleted( bool skipped, int missed );
         void outputStalled();
         void resetOutputs();
@@ -164,6 +169,10 @@ class Compositor : public QObject
         void fetchShape( SceneWindow* w );
         void fetchOpacity( SceneWindow* w );
         void fetchType( SceneWindow* w );
+        void fetchShadowHint( SceneWindow* w );
+        bool fetchAlpha( SceneWindow* w );
+        void updateAlpha( SceneWindow* w );
+        static QRegion opaqueRegion( const QValueVector< unsigned char >& mask, int width, int height );
         void updateShadow( SceneWindow* w );
         void releaseContents( SceneWindow* w );
         bool bindContents( SceneWindow* w );
@@ -224,6 +233,7 @@ class Compositor : public QObject
         QTimer repaint_timer;
         QTimer unredirect_timer;
         QTimer retry_timer;
+        QTimer alpha_timer; // the alpha channels to read again (see updateAlpha())
         bool frame_wanted;
         Pixmap root_pixmap;
         Render::Texture* root_texture;
@@ -240,7 +250,7 @@ class Compositor : public QObject
         double shown_delay[ 16 ]; // how long after that frames were shown
         int shown_index;
         bool immediate_server; // shows them at once (no refreshes to wait for)
-        Atom atom_opacity, atom_type, atom_rootpmap, atom_esetroot;
+        Atom atom_opacity, atom_type, atom_rootpmap, atom_esetroot, atom_shadow_from_alpha;
         Atom atom_types[ 12 ];
         // statistics (KWIN_COMPOSITOR_DEBUG), frames (KWIN_COMPOSITOR_DUMP)
         bool debug;

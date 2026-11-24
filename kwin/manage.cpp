@@ -119,6 +119,7 @@ bool Client::manage( Window w, bool isMapped )
     getWmNormalHints(); // get xSizeHint
     getMotifHints();
     getGtkFrameExtents();
+    getShadowFromAlpha();
 
     // TODO try to obey all state information from info->state()
 
@@ -196,6 +197,8 @@ bool Client::manage( Window w, bool isMapped )
             desk_of_launch = true;
             }
         }
+    if( isNotification())
+        desk = NET::OnAllDesktops;
     if ( desk == 0 ) // assume window wants to be visible on the current desktop
         {
         desk = workspace()->currentDesktop();
@@ -246,6 +249,9 @@ bool Client::manage( Window w, bool isMapped )
         geom = workspace()->clientArea( FullArea, geom.center(), desktop());
         placementDone = true;
         }
+
+    if( isNotification())
+        placementDone = true; // (it knows where it points)
 
     bool usePosition = false;
     if ( isMapped || session || placementDone )
@@ -477,6 +483,12 @@ bool Client::manage( Window w, bool isMapped )
         setKeepBelow( rules()->checkKeepBelow( info->state() & NET::KeepBelow, !isMapped ));
         setSkipTaskbar( rules()->checkSkipTaskbar( info->state() & NET::SkipTaskbar, !isMapped ), true );
         setSkipPager( rules()->checkSkipPager( info->state() & NET::SkipPager, !isMapped ));
+        if( isNotification())
+            {
+            setSkipTaskbar( true, true );
+            setSkipPager( true );
+            updateMouseGrab(); // (none: grabbed when embedded, before its type was known)
+            }
         if( info->state() & NET::DemandsAttention )
             demandAttention();
         if( info->state() & NET::Modal )
@@ -537,7 +549,7 @@ bool Client::manage( Window w, bool isMapped )
                 belongs_to_desktop = true;
                 break;
                 }
-        if( !belongs_to_desktop && workspace()->showingDesktop())
+        if( !belongs_to_desktop && !isNotification() && workspace()->showingDesktop())
             workspace()->resetShowingDesktop( options->showDesktopIsMinimizeAll );
 
         if( isOnCurrentDesktop() && !isMapped && !allow )

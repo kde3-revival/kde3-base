@@ -75,6 +75,8 @@ void Workspace::storeSession( KConfig* config, SMSavePhase phase )
     for (ClientList::Iterator it = clients.begin(); it != clients.end(); ++it) 
         {
         Client* c = (*it);
+        if( c->isNotification())
+            continue; // (gone with the session)
         QCString sessionId = c->sessionId();
         QCString wmCommand = c->wmCommand();
         if ( sessionId.isEmpty() )

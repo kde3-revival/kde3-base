@@ -882,6 +882,8 @@ void Client::propertyNotifyEvent( XPropertyEvent* e )
                 getMotifHints();
             else if( e->atom == atoms->gtk_frame_extents )
                 getGtkFrameExtents();
+            else if( e->atom == atoms->kde_net_wm_shadow_from_alpha )
+                getShadowFromAlpha();
             break;
         }
     }
@@ -1035,6 +1037,11 @@ void Client::ungrabButton( int modifier )
  */
 void Client::updateMouseGrab()
     {
+    if( info != NULL && isNotification())
+        { // its clicks are its own: never activated, raised or moved by them
+        XUngrabButton( qt_xdisplay(), AnyButton, AnyModifier, wrapperId());
+        return;
+        }
     if( workspace()->globalShortcutsDisabled())
         {
         XUngrabButton( qt_xdisplay(), AnyButton, AnyModifier, wrapperId());
@@ -1418,14 +1425,20 @@ void Client::focusInEvent( XFocusInEvent* e )
     if( !isShown( false ) || !isOnCurrentDesktop()) // we unmapped it, but it got focus meanwhile ->
         return;            // activateNextClient() already transferred focus elsewhere
     // check if this client is in should_get_focus list or if activation is allowed
-    bool activate =  workspace()->allowClientActivation( this, -1U, true );
+    // (a notification never: it took the focus itself, it goes back)
+    bool activate = !isNotification() && workspace()->allowClientActivation( this, -1U, true );
     workspace()->gotFocusIn( this ); // remove from should_get_focus list
     if( activate )
         setActive( TRUE );
     else
         {
-        workspace()->restoreFocus();
-        demandAttention();
+        if( !workspace()->restoreFocus() && isNotification())
+            { // (no window had it: none has it, the notification keeps it not)
+            updateXTime(); // (focusToNull() uses qt_x_time, old now: FocusIn has no timestamp)
+            workspace()->focusToNull();
+            }
+        if( !isNotification())
+            demandAttention();
         }
     }
 

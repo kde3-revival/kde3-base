@@ -95,6 +95,8 @@ Atoms::Atoms()
     names[n++] = (char*) "_NET_FRAME_EXTENTS";
     atoms[n] = &gtk_frame_extents;
     names[n++] = (char*) "_GTK_FRAME_EXTENTS";
+    atoms[n] = &kde_net_wm_shadow_from_alpha;
+    names[n++] = (char*) "_KDE_NET_WM_SHADOW_FROM_ALPHA";
     atoms[n] = &kde_net_wm_frame_strut;
     names[n++] = (char*) "_KDE_NET_WM_FRAME_STRUT";
 

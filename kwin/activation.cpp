@@ -354,6 +354,8 @@ void Workspace::takeActivity( Client* c, int flags, bool handled )
         }
     if ( !( flags & ActivityFocusForce ) && ( c->isTopMenu() || c->isDock() || c->isSplash()) )
         flags &= ~ActivityFocus; // toplevel menus and dock windows don't take focus if not forced
+    if( c->isNotification())
+        flags &= ~( ActivityFocus | ActivityFocusForce ); // never, not even forced
     if( c->isShade())
         {
         if( c->wantsInput() && ( flags & ActivityFocus ))
@@ -577,7 +579,7 @@ bool Workspace::allowFullClientRaising( const Client* c, Time time )
 
 // called from Client after FocusIn that wasn't initiated by KWin and the client
 // wasn't allowed to activate
-void Workspace::restoreFocus()
+bool Workspace::restoreFocus()
     {
     // this updateXTime() is necessary - as FocusIn events don't have
     // a timestamp *sigh*, kwin's timestamp would be older than the timestamp
@@ -588,6 +590,9 @@ void Workspace::restoreFocus()
         requestFocus( should_get_focus.last());
     else if( last_active_client )
         requestFocus( last_active_client );
+    else
+        return false;
+    return true;
     }
 
 void Workspace::clientAttentionChanged( Client* c, bool set )
@@ -717,6 +722,7 @@ KWIN_COMPARE_PREDICATE( SameApplicationActiveHackPredicate, const Client*,
     // ignore already existing splashes, toolbars, utilities, menus and topmenus,
     // as the app may show those before the main window
     !cl->isSplash() && !cl->isToolbar() && !cl->isTopMenu() && !cl->isUtility() && !cl->isMenu()
+    && !cl->isNotification()
     && Client::belongToSameApplication( cl, value, true ) && cl != value);
 
 Time Client::readUserTimeMapTimestamp( const KStartupInfoId* asn_id, const KStartupInfoData* asn_data,

@@ -121,6 +121,7 @@ Client::Client( Workspace *ws )
     is_shape = FALSE;
     motif_noborder = false;
     own_shadow = false;
+    shadow_from_alpha = false;
     motif_may_move = TRUE;
     motif_may_resize = TRUE;
     motif_may_close = TRUE;
@@ -372,6 +373,7 @@ void Client::detectNoBorder()
         case NET::Dock :
         case NET::TopMenu :
         case NET::Splash :
+        case NET::Notification :
             noborder = true;
           break;
         case NET::Unknown :
@@ -402,6 +404,7 @@ void Client::detectShapable()
         case NET::Dock :
         case NET::TopMenu :
         case NET::Splash :
+        case NET::Notification :
           break;
         case NET::Unknown :
         case NET::Normal :
@@ -1424,6 +1427,37 @@ bool Client::hasOwnShadow() const
     return own_shadow;
     }
 
+/*
+ _KDE_NET_WM_SHADOW_FROM_ALPHA (CARDINAL, 1): an ARGB window (a rounded
+ balloon with a tail, a KBalloon) asks for a shadow computed from its
+ alpha channel, which follows its anti-aliased outline; without it an
+ ARGB window gets the shadow it gets anyway (see Compositor::updateShadow()).
+*/
+void Client::getShadowFromAlpha()
+    {
+    bool from_alpha = false;
+    Atom type;
+    int format;
+    unsigned long n, left;
+    unsigned char* data = NULL;
+    if( XGetWindowProperty( qt_xdisplay(), window(), atoms->kde_net_wm_shadow_from_alpha, 0, 1, False, XA_CARDINAL,
+            &type, &format, &n, &left, &data ) == Success && data != NULL && type == XA_CARDINAL && format == 32
+        && n == 1 )
+        from_alpha = *(const long*) data == 1;
+    if( data != NULL )
+        XFree( data );
+    if( from_alpha == bool( shadow_from_alpha ))
+        return;
+    shadow_from_alpha = from_alpha;
+    if( isManaged() && workspace()->compositor() != NULL )
+        workspace()->compositor()->clientChanged( this );
+    }
+
+bool Client::shadowFromAlpha() const
+    {
+    return shadow_from_alpha;
+    }
+
 void Client::readIcons( Window win, QPixmap* icon, QPixmap* miniicon )
     {    
     // get the icons, allow scaling
@@ -1660,6 +1694,14 @@ bool Client::isUtility() const
     return windowType() == NET::Utility;
     }
 
+// _NET_WM_WINDOW_TYPE_NOTIFICATION: a notification balloon or popup; above
+// the panels, never focused, on all desktops, where it asks to be, left
+// alone by "show desktop", the overview, the taskbar, the pager and Alt+Tab
+bool Client::isNotification() const
+    {
+    return windowType() == NET::Notification;
+    }
+
 bool Client::isDialog() const
     {
     return windowType() == NET::Dialog;
@@ -1672,7 +1714,7 @@ bool Client::isNormalWindow() const
 
 bool Client::isSpecialWindow() const
     {
-    return isDesktop() || isDock() || isSplash() || isTopMenu()
+    return isDesktop() || isDock() || isSplash() || isTopMenu() || isNotification()
         || isToolbar(); // TODO
     }
 

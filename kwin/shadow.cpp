@@ -13,6 +13,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "render.h"
 
 #include <math.h>
+#include <string.h>
 
 namespace KWinInternal
 {
@@ -340,14 +341,17 @@ const ShadowTiles* ShadowCache::tiles( int radius, int c, const QValueVector< un
  The blurred shape: the window's coverage on a canvas grown by R on each
  side (at 1 / scale of the size: the average of scale x scale pixels),
  blurred like the tiles (the same Gaussian, so that straight edges get
- the same profile as those of the nine slices).
+ the same profile as those of the nine slices).  The coverage is the
+ shape's (255 inside), or the alpha channel's when coverage is not empty.
 */
-ShapeShadow* ShadowCache::makeShape( int radius, const QRegion& shape, const QSize& size )
+ShapeShadow* ShadowCache::makeShape( int radius, const QRegion& shape, const QSize& size,
+    const QValueVector< unsigned char >& coverage )
     {
     ShapeShadow* s = new ShapeShadow;
     s->radius = radius;
     s->size = size;
     s->shape = shape;
+    s->alpha = coverage;
     // (64 bits: a window up to 32767 x 32767, any radius)
     const long long cw = (long long) size.width() + 2LL * radius;
     const long long ch = (long long) size.height() + 2LL * radius;
@@ -367,37 +371,56 @@ ShapeShadow* ShadowCache::makeShape( int radius, const QRegion& shape, const QSi
     s->scale = (int) f;
     const int tw = (int) tw_l;
     const int th = (int) th_l;
+    // (the coverage of each texel, 255 per pixel fully covered)
     QValueVector< int > sum( tw * th, 0 );
-    QMemArray< QRect > rects = ( shape & QRegion( 0, 0, size.width(), size.height())).rects();
-    for( unsigned int i = 0;
-         i < rects.size();
-         ++i )
+    if( !coverage.isEmpty())
         {
-        const QRect& r = rects[ i ];
-        for( int y = r.top() + radius;
-             y <= r.bottom() + radius;
+        const int w = size.width();
+        for( int y = 0;
+             y < size.height();
              ++y )
             {
-            int* row = &sum[ ( y / s->scale ) * tw ];
-            if( s->scale == 1 )
+            int* row = &sum[ (( y + radius ) / s->scale ) * tw ];
+            const unsigned char* src = &coverage[ y * w ];
+            for( int x = 0;
+                 x < w;
+                 ++x )
+                row[ ( x + radius ) / s->scale ] += src[ x ];
+            }
+        }
+    else
+        {
+        QMemArray< QRect > rects = ( shape & QRegion( 0, 0, size.width(), size.height())).rects();
+        for( unsigned int i = 0;
+             i < rects.size();
+             ++i )
+            {
+            const QRect& r = rects[ i ];
+            for( int y = r.top() + radius;
+                 y <= r.bottom() + radius;
+                 ++y )
                 {
-                for( int x = r.left() + radius;
-                     x <= r.right() + radius;
-                     ++x )
-                    row[ x ] = 1;
+                int* row = &sum[ ( y / s->scale ) * tw ];
+                if( s->scale == 1 )
+                    {
+                    for( int x = r.left() + radius;
+                         x <= r.right() + radius;
+                         ++x )
+                        row[ x ] = 255;
+                    }
+                else
+                    for( int x = r.left() + radius;
+                         x <= r.right() + radius;
+                         ++x )
+                        row[ x / s->scale ] += 255;
                 }
-            else
-                for( int x = r.left() + radius;
-                     x <= r.right() + radius;
-                     ++x )
-                    ++row[ x / s->scale ];
             }
         }
     QValueVector< unsigned char > canvas( tw * th );
     for( int i = 0;
          i < tw * th;
          ++i )
-        canvas[ i ] = (unsigned char) (( sum[ i ] * 255LL + f * f / 2 ) / ( f * f ));
+        canvas[ i ] = (unsigned char) (( sum[ i ] + f * f / 2 ) / ( f * f ));
     // (the canvas has the room for the blur: its middle part is the result)
     const int rr = radius / s->scale;
     QValueVector< unsigned char > blurred = blur( canvas, tw, th, rr, radius / 2.5 / s->scale );
@@ -407,13 +430,26 @@ ShapeShadow* ShadowCache::makeShape( int radius, const QRegion& shape, const QSi
     return s;
     }
 
-const ShapeShadow* ShadowCache::shapeShadow( int radius, const QRegion& shape, const QSize& size )
+static bool sameCoverage( const QValueVector< unsigned char >& a, const QValueVector< unsigned char >& b )
+    {
+    if( a.size() != b.size())
+        return false;
+    if( a.isEmpty())
+        return true;
+    const unsigned char* pa = &a[ 0 ]; // (const: no copies)
+    const unsigned char* pb = &b[ 0 ];
+    return pa == pb || memcmp( pa, pb, a.size()) == 0;
+    }
+
+const ShapeShadow* ShadowCache::shapeShadow( int radius, const QRegion& shape, const QSize& size,
+    const QValueVector< unsigned char >& coverage )
     {
     ++stamp;
     for( QPtrListIterator< ShapeShadow > it( shape_cache );
          it.current() != NULL;
          ++it )
-        if( it.current()->radius == radius && it.current()->size == size && it.current()->shape == shape )
+        if( it.current()->radius == radius && it.current()->size == size && it.current()->shape == shape
+            && sameCoverage( it.current()->alpha, coverage ))
             {
             it.current()->used = stamp;
             it.current()->frame = frame;
@@ -424,14 +460,16 @@ const ShapeShadow* ShadowCache::shapeShadow( int radius, const QRegion& shape, c
     evictShapes();
     if( shape_bytes >= ShapeCacheLimit )
         return NULL; // (everything kept is in use)
-    ShapeShadow* s = makeShape( radius, shape, size );
+    ShapeShadow* s = makeShape( radius, shape, size, coverage );
     if( s == NULL )
         return NULL;
     ++builds;
     s->used = stamp;
     s->frame = frame;
-    // (one without a texture counts a little: failed ones don't pile up)
-    s->bytes = s->texture != NULL ? (long long) s->texture->width() * s->texture->height() : 4096;
+    // (one without a texture counts a little: failed ones don't pile up;
+    // the alpha values kept as its key count too)
+    s->bytes = ( s->texture != NULL ? (long long) s->texture->width() * s->texture->height() : 4096 )
+        + (long long) coverage.size();
     shape_bytes += s->bytes;
     shape_cache.append( s );
     evictShapes();
@@ -472,7 +510,22 @@ bool ShadowCache::draw( Render::Renderer* r, int radius, const QRegion& shape, c
         }
     if( shape.isEmpty())
         return false; // (an empty bounding shape: nothing shows)
-    const ShapeShadow* s = shapeShadow( radius, shape, size );
+    return drawShape( r, shapeShadow( radius, shape, size, QValueVector< unsigned char >()), radius, size, outer,
+        sx, sy, c, alpha );
+    }
+
+bool ShadowCache::drawAlpha( Render::Renderer* r, int radius, const QValueVector< unsigned char >& coverage,
+    const QSize& size, const Compositing::RectF& outer, double sx, double sy, const QColor& c, double alpha )
+    {
+    if( radius <= 0 || size.isEmpty() || coverage.size() != (unsigned int) ( size.width() * size.height()))
+        return false;
+    return drawShape( r, shapeShadow( radius, QRegion(), size, coverage ), radius, size, outer, sx, sy, c,
+        alpha );
+    }
+
+bool ShadowCache::drawShape( Render::Renderer* r, const ShapeShadow* s, int radius, const QSize& size,
+    const Compositing::RectF& outer, double sx, double sy, const QColor& c, double alpha )
+    {
     if( s == NULL || s->texture == NULL )
         return false;
     const double f = s->scale;
