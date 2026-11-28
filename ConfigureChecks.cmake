@@ -765,11 +765,26 @@ check_struct_has_member("struct passwd" pw_expire pwd.h HAVE_STRUCT_PASSWD_PW_EX
 check_struct_has_member("struct sockaddr_in" sin_len "sys/socket.h;netinet/in.h"
   HAVE_STRUCT_SOCKADDR_IN_SIN_LEN)
 
+# As AC_CHECK_FUNCS: a function that glibc has only as a stub, which
+# fails with ENOSYS (glibc's setlogin), does not count.  kdm leaves a
+# session when setlogin() fails, so a stub would end every login.
 cmake_push_check_state(RESET)
 set(CMAKE_REQUIRED_LIBRARIES ${KDE3_LIBUTIL})
 foreach(_f setlogin setusercontext getusershell login_getclass auth_timeok)
   string(TOUPPER "HAVE_${_f}" _var)
-  check_function_exists(${_f} ${_var})
+  # a new cache key: build directories keep the old check's result
+  check_c_source_compiles("
+#include <limits.h>
+#if defined __stub_${_f} || defined __stub___${_f}
+# error stub
+#endif
+#ifdef __cplusplus
+extern \"C\"
+#endif
+char ${_f}(void);
+int main(void) { return ${_f}(); }
+" ${_var}_NOSTUB)
+  set(${_var} "${${_var}_NOSTUB}")
 endforeach()
 cmake_pop_check_state()
 foreach(_f setproctitle sysinfo strnlen arc4random)
