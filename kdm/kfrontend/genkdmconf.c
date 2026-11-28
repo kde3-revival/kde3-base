@@ -1727,6 +1727,36 @@ upd_showusers( Entry *ce, Section *cs )
 
 static const char *defminuid, *defmaxuid;
 
+/* The UIDs of the users who log in: UID_MIN and UID_MAX of the system's
+ * /etc/login.defs (shadow-utils), else the common defaults. */
+static void
+getuidrange( void )
+{
+	static char minbuf[16], maxbuf[16];
+	char line[256], key[64], num[64], *end;
+	unsigned long val;
+	FILE *f;
+
+	defminuid = "1000";
+	defmaxuid = "60000";
+	if (!(f = fopen( "/etc/login.defs", "r" )))
+		return;
+	while (fgets( line, sizeof(line), f ))
+		/* login.defs numbers may be decimal, octal or hex */
+		if (sscanf( line, " %63s %63s", key, num ) == 2 && isdigit( (unsigned char)num[0] ) &&
+		    (errno = 0, val = strtoul( num, &end, 0 ), !errno && !*end) &&
+		    val <= 2147483647UL) {
+			if (!strcmp( key, "UID_MIN" )) {
+				sprintf( minbuf, "%lu", val );
+				defminuid = minbuf;
+			} else if (!strcmp( key, "UID_MAX" )) {
+				sprintf( maxbuf, "%lu", val );
+				defmaxuid = maxbuf;
+			}
+		}
+	fclose( f );
+}
+
 static void
 upd_minshowuid( Entry *ce, Section *cs ATTR_UNUSED )
 {
@@ -2815,27 +2845,7 @@ int main( int argc, char **argv )
 			}
 		}
 	}
-#ifdef __linux__
-	if (!stat( "/etc/debian_version", &st )) { /* debian */
-		defminuid = "1000";
-		defmaxuid = "29999";
-	} else if (!stat( "/usr/portage", &st )) { /* gentoo */
-		defminuid = "1000";
-		defmaxuid = "65000";
-	} else if (!stat( "/etc/mandrake-release", &st )) { /* mandrake - check before redhat! */
-		defminuid = "500";
-		defmaxuid = "65000";
-	} else if (!stat( "/etc/redhat-release", &st )) { /* redhat */
-		defminuid = "100";
-		defmaxuid = "65000";
-	} else /* if (!stat( "/etc/SuSE-release", &st )) */ { /* suse */
-		defminuid = "500";
-		defmaxuid = "65000";
-	}
-#else
-	defminuid = "1000";
-	defmaxuid = "65000";
-#endif
+	getuidrange();
 	for (i = 0; i < CONF_MAX_PRIO; i++)
 		for (cs = config; cs; cs = cs->next)
 			for (ce = cs->ents; ce; ce = ce->next)
