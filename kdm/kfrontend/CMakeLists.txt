@@ -64,6 +64,14 @@ kde3_add_executable(kdmctl
 )
 
 # *_COMPILE_FIRST = ../config.ci
+# the touchpad settings of the session (tap-to-click) also in the greeter:
+# kcontrol/input makes the library only with XInput 2 (kcontrol comes
+# before kdm in the top CMakeLists.txt)
+if(TARGET touchpadsettings)
+  target_link_libraries(kdm_greet PRIVATE touchpadsettings)
+  target_compile_definitions(kdm_greet PRIVATE KDM_HAVE_TOUCHPAD)
+endif()
+
 foreach(_t kdm_config kdm_greet genkdmconf)
   add_dependencies(${_t} kdm_config_ci)
 endforeach()

@@ -31,6 +31,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 # include "kchooser.h"
 #endif
 
+#ifdef KDM_HAVE_TOUCHPAD
+# include "../../kcontrol/input/touchpad/touchpadsettings.h"
+#endif
+
 #include <kprocess.h>
 #include <kcmdlineargs.h>
 #include <kcrash.h>
@@ -151,6 +155,11 @@ kg_main( const char *argv0 )
 	app.setFont( _normalFont );
 
 	setup_modifiers( dpy, _numLockStatus );
+	// tap-to-click and the other touchpad defaults of the KDE session
+	// (libinput leaves tapping off)
+#ifdef KDM_HAVE_TOUCHPAD
+	KTouchpad::applyAll( dpy );
+#endif
 	SecureDisplay( dpy );
 	KProcess *proc = 0;
 	if (!_grabServer) {
