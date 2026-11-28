@@ -122,6 +122,17 @@ class Shape
         static int kwin_shape_event;
     };
 
+// the X Synchronization extension (_NET_WM_SYNC_REQUEST, see Client::sendSyncRequest())
+class Sync
+    {
+    public:
+        static bool available() { return kwin_sync_event != 0; }
+        static int alarmNotifyEvent(); // the XSyncAlarmNotify event's type
+        static void init();
+    private:
+        static int kwin_sync_event;
+    };
+
 // compile with XShape older than 1.0
 #ifndef ShapeInput
 const int ShapeInput = 2;

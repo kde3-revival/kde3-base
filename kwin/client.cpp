@@ -86,6 +86,10 @@ Client::Client( Workspace *ws )
         window_group( None ),
         in_layer( UnknownLayer ),
         ping_timer( NULL ),
+        sync_counter( None ),
+        sync_alarm( None ),
+        sync_value( 0 ),
+        sync_timer( NULL ),
         process_killer( NULL ),
         user_time( CurrentTime ), // not known yet
         allowed_actions( 0 ),
@@ -143,6 +147,12 @@ Client::Client( Workspace *ws )
     Ptakeactivity = 0;
     Pcontexthelp = 0;
     Pping = 0;
+    Psyncrequest = 0;
+    sync_pending = 0;
+    sync_resize_waiting = 0;
+    sync_answered = 0;
+    sync_off = 0;
+    sync_broken = 0;
     input = FALSE;
     skip_pager = FALSE;
 
@@ -171,6 +181,7 @@ Client::~Client()
     assert( decoration == NULL );
     assert( postpone_geometry_updates == 0 );
     assert( !check_active_modal );
+    releaseSyncCounter();
     delete info;
     delete bridge;
     }
@@ -1509,6 +1520,7 @@ void Client::getWindowProtocols()
     Ptakeactivity = 0;
     Pcontexthelp = 0;
     Pping = 0;
+    Psyncrequest = 0;
 
     if (XGetWMProtocols(qt_xdisplay(), window(), &p, &n))
         {
@@ -1523,9 +1535,12 @@ void Client::getWindowProtocols()
                 Pcontexthelp = 1;
             else if (p[i] == atoms->net_wm_ping)
                 Pping = 1;
+            else if (p[i] == atoms->net_wm_sync_request)
+                Psyncrequest = 1;
         if (n>0)
             XFree(p);
         }
+    getSyncCounter();
     }
 
 static int nullErrorHandler(Display *, XErrorEvent *)

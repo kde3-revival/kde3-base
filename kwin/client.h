@@ -326,6 +326,9 @@ class Client : public QObject, public KDecorationDefines
         bool touches(const Client* c);
         void setShapable(bool b);
         bool hasStrut() const;
+        // the answer to _NET_WM_SYNC_REQUEST (an XSyncAlarmNotify event): false
+        // when it is not this window's
+        bool syncAlarmEvent( XEvent* e );
 
     private slots:
         void autoRaise();
@@ -369,6 +372,7 @@ class Client : public QObject, public KDecorationDefines
         void processDecorationButtonPress( int button, int state, int x, int y, int x_root, int y_root );
 
     private slots:
+        void syncTimeout();
         void pingTimeout();
         void processKillerExited();
         void demandAttentionKNotify();
@@ -414,6 +418,10 @@ class Client : public QObject, public KDecorationDefines
         void leaveMoveResize();
         void checkUnrestrictedMoveResize();
         void handleMoveResize( int x, int y, int x_root, int y_root );
+        void performMoveResize();
+        void getSyncCounter();
+        void releaseSyncCounter();
+        void sendSyncRequest();
         void positionGeometryTip();
         void grabButton( int mod, bool wheel = true );
         void ungrabButton( int mod );
@@ -496,6 +504,12 @@ class Client : public QObject, public KDecorationDefines
         uint Ptakeactivity : 1; // does it support _NET_WM_TAKE_ACTIVITY
         uint Pcontexthelp : 1; // does the window understand the ContextHelp protocol?
         uint Pping : 1; // does it support _NET_WM_PING?
+        uint Psyncrequest : 1; // does it support _NET_WM_SYNC_REQUEST?
+        uint sync_pending : 1; // a sync request not answered yet
+        uint sync_resize_waiting : 1; // a resize waits for the answer
+        uint sync_answered : 1; // it answered at least once
+        uint sync_off : 1; // not answered in time: the rest of this resize without
+        uint sync_broken : 1; // never answered: never again
         uint input :1; // does the window want input in its wm_hints
         uint skip_pager : 1;
         uint motif_noborder : 1;
@@ -545,6 +559,12 @@ class Client : public QObject, public KDecorationDefines
         Window window_group;
         Layer in_layer;
         QTimer* ping_timer;
+        // _NET_WM_SYNC_REQUEST_COUNTER (None: no sync during resizes), the
+        // alarm that tells when it reaches sync_value (the last one sent)
+        XID sync_counter;
+        XID sync_alarm;
+        long long sync_value;
+        QTimer* sync_timer;
         KProcess* process_killer;
         Time ping_timestamp;
         Time user_time;

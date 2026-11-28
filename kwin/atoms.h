@@ -52,6 +52,9 @@ class Atoms
         Atom kde_net_screen_desktop;
         Atom kde_net_wm_screen_home;
         Atom kde_net_screen_desktops_state;
+        Atom net_supported;
+        Atom net_wm_sync_request;
+        Atom net_wm_sync_request_counter;
     };
 
 

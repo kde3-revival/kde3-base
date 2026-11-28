@@ -436,7 +436,8 @@ class Workspace : public QObject, public KWinInterface, public KDecorationDefine
 
         void updateClientArea();
         
-        // the old kompmgr's dcop calls: compositing on (unless disabled in the settings)
+        // the old kompmgr's dcop calls: compositing on (also when disabled in
+        // the settings, for this session)
         void startKompmgr();
         // off (suspended)
         void stopKompmgr();

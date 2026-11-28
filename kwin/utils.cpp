@@ -27,6 +27,7 @@ License. See the file "COPYING" for the exact licensing terms.
 
 #include <X11/Xlib.h>
 #include <X11/extensions/shape.h>
+#include <X11/extensions/sync.h>
 #include <X11/Xatom.h>
 
 #include "atoms.h"
@@ -59,6 +60,23 @@ bool Shape::hasShape( WId w)
                        &boundingShaped, &xws, &yws, &wws, &hws,
                        &clipShaped, &xbs, &ybs, &wbs, &hbs);
     return boundingShaped != 0;
+    }
+
+int Sync::kwin_sync_event = 0;
+
+int Sync::alarmNotifyEvent()
+    {
+    return kwin_sync_event + XSyncAlarmNotify;
+    }
+
+void Sync::init()
+    {
+    kwin_sync_event = 0;
+    int event_base, error_base, major, minor;
+    if( !XSyncQueryExtension( qt_xdisplay(), &event_base, &error_base )
+        || !XSyncInitialize( qt_xdisplay(), &major, &minor ))
+        return;
+    kwin_sync_event = event_base;
     }
 
 int Shape::shapeEvent()

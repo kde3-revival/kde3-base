@@ -253,7 +253,7 @@ static int untrap()
 
 Compositor::Compositor( Workspace* w )
     : ws( w ), dpy( qt_xdisplay()), root( qt_xrootwin()), screen_w( 0 ), screen_h( 0 ), active( false ),
-      suspended( false ), failed_once( false ), foreign_retries( 0 ), selection( NULL ), rend( NULL ),
+      suspended( false ), requested( false ), failed_once( false ), foreign_retries( 0 ), selection( NULL ), rend( NULL ),
       shadows( NULL ), presenter( NULL ), per_monitor( false ), flips_failed( false ), outputs_failed( false ), copies_in_row( 0 ), latest_buffer( -1 ),
       force_mode( 0 ), unredirect_blocked( false ), frame_requested( false ), last_render( 0 ), repaint_due( 0 ), overlay( None ), frame_number( 0 ), frame_wanted( false ), root_pixmap( None ),
       root_texture( NULL ), shape_event( 0 ), asap( false ), render_budget( 3.0 ), min_budget( 3.0 ), on_time( 0 ),
@@ -343,7 +343,7 @@ QString Compositor::status() const
 
 void Compositor::reconfigure()
     {
-    const bool want = options->compositingEnabled && !suspended;
+    const bool want = ( options->compositingEnabled || requested ) && !suspended;
     if( active && ( !want || ( rend->backend() != (Render::Renderer::Backend) options->compositingBackend
             && options->compositingBackend != Render::Renderer::Auto )))
         stop( false );
@@ -378,6 +378,7 @@ void Compositor::toggle()
     if( active )
         {
         suspended = true;
+        requested = false;
         stop( false );
         }
     else
@@ -388,6 +389,24 @@ void Compositor::toggle()
             reason = i18n( "disabled in the settings" );
             return;
             }
+        failed_once = false;
+        start();
+        }
+    }
+
+void Compositor::setRequested( bool on )
+    {
+    if( !on )
+        {
+        requested = false;
+        if( active )
+            toggle();
+        return;
+        }
+    requested = true;
+    suspended = false;
+    if( !active )
+        {
         failed_once = false;
         start();
         }
@@ -426,7 +445,7 @@ void Compositor::screenChanged()
 
 void Compositor::retry()
     {
-    if( !active && !suspended && options->compositingEnabled )
+    if( !active && !suspended && ( options->compositingEnabled || requested ))
         start();
     }
 
