@@ -33,6 +33,7 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "effects.h"
 #include "compositor.h"
 #include "atoms.h"
+#include "compositing.h"
 
 #include <qtimer.h>
 
@@ -2966,7 +2967,9 @@ void Client::handleMoveResize( int x, int y, int x_root, int y_root )
  behind its frame and is not asked to repaint more often than it can.
  Without an answer in SyncTimeout ms the rest of that resize is done
  without waiting; a window that has never answered gets no requests any
- more.
+ more.  The counter is the client's: it may be invalid or go any time, so
+ the requests that name it (or the alarm on it) trap their X errors (an X
+ error while KWin starts would end it); an invalid counter means no sync.
 */
 
 static const int SyncTimeout = 1000; // ms
@@ -3021,32 +3024,61 @@ void Client::getSyncCounter()
     if( counter == sync_counter )
         return;
     releaseSyncCounter();
-    if( counter == None )
-        return;
-    XSyncValue value;
-    if( !XSyncQueryCounter( qt_xdisplay(), counter, &value ))
-        return;
-    sync_counter = counter;
-    sync_value = syncValueToInt( value );
-    XSyncAlarmAttributes attrs;
-    attrs.trigger.counter = sync_counter;
-    attrs.trigger.value_type = XSyncAbsolute;
-    attrs.trigger.wait_value = intToSyncValue( sync_value + 1 );
-    attrs.trigger.test_type = XSyncPositiveComparison;
-    XSyncIntToValue( &attrs.delta, 0 ); // (inactive once it fired, until the next request)
-    attrs.events = True;
-    sync_alarm = XSyncCreateAlarm( qt_xdisplay(),
-        XSyncCACounter | XSyncCAValueType | XSyncCAValue | XSyncCATestType | XSyncCADelta | XSyncCAEvents, &attrs );
+    if( counter != None )
+        {
+        Compositing::trapErrors( qt_xdisplay());
+        XSyncValue value;
+        XSyncAlarm alarm = None;
+        long long initial = 0;
+        if( XSyncQueryCounter( qt_xdisplay(), counter, &value ))
+            {
+            initial = syncValueToInt( value );
+            XSyncAlarmAttributes attrs;
+            attrs.trigger.counter = counter;
+            attrs.trigger.value_type = XSyncAbsolute;
+            attrs.trigger.wait_value = intToSyncValue( initial + 1 );
+            attrs.trigger.test_type = XSyncPositiveComparison;
+            XSyncIntToValue( &attrs.delta, 0 ); // (inactive once it fired, until the next request)
+            attrs.events = True;
+            alarm = XSyncCreateAlarm( qt_xdisplay(), XSyncCACounter | XSyncCAValueType | XSyncCAValue
+                | XSyncCATestType | XSyncCADelta | XSyncCAEvents, &attrs );
+            }
+        // (synced: the errors of both requests are in)
+        if( Compositing::untrapErrors( qt_xdisplay()) == 0 && alarm != None )
+            {
+            sync_counter = counter;
+            sync_alarm = alarm;
+            sync_value = initial;
+            }
+        else
+            {
+            kdDebug( 1212 ) << "invalid _NET_WM_SYNC_REQUEST_COUNTER: " << this << endl;
+            if( alarm != None )
+                {
+                Compositing::trapErrors( qt_xdisplay());
+                XSyncDestroyAlarm( qt_xdisplay(), alarm );
+                Compositing::untrapErrors( qt_xdisplay());
+                }
+            }
+        }
+    // a resize waiting for the old counter's answer goes on (with the new
+    // one, or without)
+    if( sync_resize_waiting && isResize())
+        performMoveResize();
     }
 
+// (the size a resize waits with stays: see the callers)
 void Client::releaseSyncCounter()
     {
     if( sync_alarm != None )
+        {
+        Compositing::trapErrors( qt_xdisplay());
         XSyncDestroyAlarm( qt_xdisplay(), sync_alarm );
+        Compositing::untrapErrors( qt_xdisplay());
+        }
     sync_alarm = None;
     sync_counter = None;
     sync_pending = false;
-    sync_resize_waiting = false;
     if( sync_timer != NULL )
         sync_timer->stop();
     }
@@ -3059,6 +3091,7 @@ void Client::sendSyncRequest()
     attrs.trigger.value_type = XSyncAbsolute;
     attrs.trigger.wait_value = intToSyncValue( sync_value );
     attrs.trigger.test_type = XSyncPositiveComparison;
+    Compositing::trapErrors( qt_xdisplay()); // (the counter may be gone)
     XSyncChangeAlarm( qt_xdisplay(), sync_alarm, XSyncCAValueType | XSyncCAValue | XSyncCATestType, &attrs );
     XEvent ev;
     memset( &ev, 0, sizeof( ev ));
@@ -3072,6 +3105,7 @@ void Client::sendSyncRequest()
     ev.xclient.data.l[ 3 ] = (long)( sync_value >> 32 );
     ev.xclient.data.l[ 4 ] = 0;
     XSendEvent( qt_xdisplay(), window(), False, NoEventMask, &ev );
+    Compositing::untrapErrors( qt_xdisplay());
     sync_pending = true;
     if( sync_timer == NULL )
         {
@@ -3086,6 +3120,14 @@ bool Client::syncAlarmEvent( XEvent* e )
     const XSyncAlarmNotifyEvent* ev = reinterpret_cast< XSyncAlarmNotifyEvent* >( e );
     if( sync_alarm == None || ev->alarm != sync_alarm )
         return false;
+    if( ev->state == XSyncAlarmDestroyed )
+        { // the counter is gone (and the alarm with it)
+        sync_alarm = None;
+        releaseSyncCounter();
+        if( sync_resize_waiting && isResize())
+            performMoveResize();
+        return true;
+        }
     if( sync_pending && syncValueToInt( ev->counter_value ) >= sync_value )
         {
         sync_pending = false;
@@ -3103,7 +3145,12 @@ void Client::syncTimeout()
         return;
     sync_pending = false;
     sync_off = true;
-    if( !sync_answered )
+    XSyncValue value;
+    Compositing::trapErrors( qt_xdisplay());
+    const bool counter_valid = XSyncQueryCounter( qt_xdisplay(), sync_counter, &value );
+    if( Compositing::untrapErrors( qt_xdisplay()) != 0 || !counter_valid )
+        releaseSyncCounter(); // the counter went (another one may come)
+    else if( !sync_answered )
         {
         kdDebug( 1212 ) << "no answer to _NET_WM_SYNC_REQUEST: " << this << endl;
         sync_broken = true;
