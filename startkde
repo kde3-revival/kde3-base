@@ -72,11 +72,16 @@ unset DYLD_FORCE_FLAT_NAMESPACE
 #
 # * Then ksmserver is started which takes control of the rest of the startup sequence
 
-# The user's personal KDE directory is usually ~/.kde, but this setting
-# may be overridden by setting KDEHOME.
+# The user's personal KDE directory is ~/.kde3, or the ~/.kde of an older
+# installation as long as there is no ~/.kde3 (as KStandardDirs decides);
+# setting KDEHOME overrides it.
 
-kdehome=$HOME/.kde
+kdehome=$HOME/.kde3
+if test ! -e "$kdehome" -a -d "$HOME/.kde"; then kdehome=$HOME/.kde; fi
 test -n "$KDEHOME" && kdehome=`echo "$KDEHOME"|sed "s,^~/,$HOME/,"`
+# one decision for the whole session, also if a ~/.kde3 appears later on
+KDEHOME=$kdehome
+export KDEHOME
 
 # see kstartupconfig source for usage
 mkdir -m 700 -p $kdehome
@@ -140,7 +145,7 @@ EOF
 fi
 
 # Source scripts found in <localprefix>/env/*.sh and <prefixes>/env/*.sh
-# (where <localprefix> is $KDEHOME or ~/.kde, and <prefixes> is where KDE is installed)
+# (where <localprefix> is $KDEHOME or ~/.kde3, and <prefixes> is where KDE is installed)
 #
 # This is where you can define environment variables that will be available to
 # all KDE programs, so this is where you can run agents using e.g. eval `ssh-agent`

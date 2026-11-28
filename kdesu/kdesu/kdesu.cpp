@@ -293,6 +293,10 @@ static int startApp()
           kdeHome.prepend("~/"); 
        else
           kdeHome=QString::null; // Use default
+       // ~/.kde3 and ~/.kde are the defaults, which the new user decides
+       // by its own home (~/.kde3, or an older ~/.kde)
+       if (kdeHome == "~/.kde3/" || kdeHome == "~/.kde/")
+          kdeHome=QString::null;
 
        env << ("KDEHOME="+ QFile::encodeName(kdeHome));
     }
