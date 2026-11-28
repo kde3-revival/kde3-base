@@ -32,6 +32,12 @@ License. See the file "COPYING" for the exact licensing terms.
 #include "overview.h"
 #include "effects.h"
 #include "compositor.h"
+#include "atoms.h"
+
+#include <qtimer.h>
+
+#include <X11/Xatom.h>
+#include <X11/extensions/sync.h>
 
 extern Time qt_x_time;
 
@@ -2643,6 +2649,7 @@ bool Client::startMoveResize()
     moveResizeMode = true;
     workspace()->setClientIsMoving(this);
     initialMoveResizeGeom = moveResizeGeom = geometry();
+    sync_off = false; // (a slow answer during the last resize)
     checkUnrestrictedMoveResize();
     // rule out non opaque windows from useless translucency settings, maybe resizes?
     if ((isResize() && options->removeShadowsOnResize) || (isMove() && options->removeShadowsOnMove))
@@ -2709,6 +2716,7 @@ void Client::leaveMoveResize()
         workspace()->unfakeActivity( this );
     move_faked_activity = false;
     moveResizeMode = false;
+    sync_resize_waiting = false; // (finishMoveResize() sets the last geometry)
     delete eater;
     eater = 0;
     }
@@ -2935,10 +2943,7 @@ void Client::handleMoveResize( int x, int y, int x_root, int y_root )
         {
         if( effectiveMoveResizeMode( rules(),
             isResize() ? options->resizeMode : options->moveMode ) == Options::Opaque )
-            {
-            setGeometry( moveResizeGeom );
-            positionGeometryTip();
-            }
+            performMoveResize();
         else if( effectiveMoveResizeMode( rules(),
             isResize() ? options->resizeMode : options->moveMode ) == Options::Transparent )
             {
@@ -2951,5 +2956,161 @@ void Client::handleMoveResize( int x, int y, int x_root, int y_root )
       workspace()->clientMoved(globalPos, qt_x_time);
     }
 
+/*
+ _NET_WM_SYNC_REQUEST: while a window that supports it is resized, KWin
+ sends it the request with a new counter value before each new size and
+ then waits until the window has drawn itself in that size and set its
+ _NET_WM_SYNC_REQUEST_COUNTER to the value (an XSync alarm on the counter
+ tells) before it sends the next size; the sizes the pointer reaches
+ meanwhile are skipped but the last one.  So a resized window doesn't lag
+ behind its frame and is not asked to repaint more often than it can.
+ Without an answer in SyncTimeout ms the rest of that resize is done
+ without waiting; a window that has never answered gets no requests any
+ more.
+*/
+
+static const int SyncTimeout = 1000; // ms
+
+static long long syncValueToInt( const XSyncValue& value )
+    {
+    return ( (long long) XSyncValueHigh32( value ) << 32 ) | XSyncValueLow32( value );
+    }
+
+static XSyncValue intToSyncValue( long long value )
+    {
+    XSyncValue ret;
+    XSyncIntsToValue( &ret, (unsigned int)( value & 0xffffffffLL ), (int)( value >> 32 ));
+    return ret;
+    }
+
+// the new geometry of a move or resize (opaque)
+void Client::performMoveResize()
+    {
+    if( isResize() && sync_counter != None && !sync_off && moveResizeGeom.size() != geometry().size())
+        {
+        if( sync_pending )
+            { // the last size not drawn yet: this one when it is
+            sync_resize_waiting = true;
+            return;
+            }
+        sendSyncRequest();
+        }
+    sync_resize_waiting = false;
+    setGeometry( moveResizeGeom );
+    positionGeometryTip();
+    }
+
+void Client::getSyncCounter()
+    {
+    XID counter = None;
+    if( Psyncrequest && !sync_broken && Sync::available())
+        {
+        Atom type;
+        int format;
+        unsigned long nitems, after;
+        unsigned char* data = NULL;
+        // (with two counters the second is the extended one of the frame
+        // synchronization, unused: _NET_WM_FRAME_DRAWN isn't supported)
+        if( XGetWindowProperty( qt_xdisplay(), window(), atoms->net_wm_sync_request_counter, 0, 2, False,
+                XA_CARDINAL, &type, &format, &nitems, &after, &data ) == Success
+            && type == XA_CARDINAL && format == 32 && nitems >= 1 )
+            counter = reinterpret_cast< long* >( data )[ 0 ];
+        if( data != NULL )
+            XFree( data );
+        }
+    if( counter == sync_counter )
+        return;
+    releaseSyncCounter();
+    if( counter == None )
+        return;
+    XSyncValue value;
+    if( !XSyncQueryCounter( qt_xdisplay(), counter, &value ))
+        return;
+    sync_counter = counter;
+    sync_value = syncValueToInt( value );
+    XSyncAlarmAttributes attrs;
+    attrs.trigger.counter = sync_counter;
+    attrs.trigger.value_type = XSyncAbsolute;
+    attrs.trigger.wait_value = intToSyncValue( sync_value + 1 );
+    attrs.trigger.test_type = XSyncPositiveComparison;
+    XSyncIntToValue( &attrs.delta, 0 ); // (inactive once it fired, until the next request)
+    attrs.events = True;
+    sync_alarm = XSyncCreateAlarm( qt_xdisplay(),
+        XSyncCACounter | XSyncCAValueType | XSyncCAValue | XSyncCATestType | XSyncCADelta | XSyncCAEvents, &attrs );
+    }
+
+void Client::releaseSyncCounter()
+    {
+    if( sync_alarm != None )
+        XSyncDestroyAlarm( qt_xdisplay(), sync_alarm );
+    sync_alarm = None;
+    sync_counter = None;
+    sync_pending = false;
+    sync_resize_waiting = false;
+    if( sync_timer != NULL )
+        sync_timer->stop();
+    }
+
+void Client::sendSyncRequest()
+    {
+    ++sync_value;
+    // the alarm waits for the new value
+    XSyncAlarmAttributes attrs;
+    attrs.trigger.value_type = XSyncAbsolute;
+    attrs.trigger.wait_value = intToSyncValue( sync_value );
+    attrs.trigger.test_type = XSyncPositiveComparison;
+    XSyncChangeAlarm( qt_xdisplay(), sync_alarm, XSyncCAValueType | XSyncCAValue | XSyncCATestType, &attrs );
+    XEvent ev;
+    memset( &ev, 0, sizeof( ev ));
+    ev.xclient.type = ClientMessage;
+    ev.xclient.window = window();
+    ev.xclient.message_type = atoms->wm_protocols;
+    ev.xclient.format = 32;
+    ev.xclient.data.l[ 0 ] = atoms->net_wm_sync_request;
+    ev.xclient.data.l[ 1 ] = qt_x_time;
+    ev.xclient.data.l[ 2 ] = (long)( sync_value & 0xffffffffLL );
+    ev.xclient.data.l[ 3 ] = (long)( sync_value >> 32 );
+    ev.xclient.data.l[ 4 ] = 0;
+    XSendEvent( qt_xdisplay(), window(), False, NoEventMask, &ev );
+    sync_pending = true;
+    if( sync_timer == NULL )
+        {
+        sync_timer = new QTimer( this );
+        connect( sync_timer, SIGNAL( timeout()), SLOT( syncTimeout()));
+        }
+    sync_timer->start( SyncTimeout, true );
+    }
+
+bool Client::syncAlarmEvent( XEvent* e )
+    {
+    const XSyncAlarmNotifyEvent* ev = reinterpret_cast< XSyncAlarmNotifyEvent* >( e );
+    if( sync_alarm == None || ev->alarm != sync_alarm )
+        return false;
+    if( sync_pending && syncValueToInt( ev->counter_value ) >= sync_value )
+        {
+        sync_pending = false;
+        sync_answered = true;
+        sync_timer->stop();
+        if( sync_resize_waiting && isResize())
+            performMoveResize();
+        }
+    return true;
+    }
+
+void Client::syncTimeout()
+    {
+    if( !sync_pending )
+        return;
+    sync_pending = false;
+    sync_off = true;
+    if( !sync_answered )
+        {
+        kdDebug( 1212 ) << "no answer to _NET_WM_SYNC_REQUEST: " << this << endl;
+        sync_broken = true;
+        releaseSyncCounter();
+        }
+    if( sync_resize_waiting && isResize())
+        performMoveResize();
+    }
 
 } // namespace

@@ -189,6 +189,7 @@ Workspace::Workspace( bool restore )
                  );
 
     Shape::init();
+    Sync::init();
 
     // compatibility
     long data = 1;
@@ -339,6 +340,13 @@ void Workspace::init()
 
     rootInfo = new RootInfo( this, qt_xdisplay(), supportWindow->winId(), "KWin",
         protocols, 5, qt_xscreen() );
+    // what NETRootInfo doesn't know (it sets _NET_SUPPORTED only when made)
+    if( Sync::available())
+        {
+        Atom supported[] = { atoms->net_wm_sync_request, atoms->net_wm_sync_request_counter };
+        XChangeProperty( qt_xdisplay(), root, atoms->net_supported, XA_ATOM, 32, PropModeAppend,
+            (unsigned char*) supported, sizeof( supported ) / sizeof( supported[ 0 ] ));
+        }
 
     loadDesktopSettings();
     initScreens();

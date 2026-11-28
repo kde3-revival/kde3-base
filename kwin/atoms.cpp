@@ -108,6 +108,13 @@ Atoms::Atoms()
     names[n++] = (char*) "_KDE_NET_WM_SCREEN_HOME";
     atoms[n] = &kde_net_screen_desktops_state;
     names[n++] = (char*) "_KDE_NET_SCREEN_DESKTOPS_STATE";
+
+    atoms[n] = &net_supported;
+    names[n++] = (char*) "_NET_SUPPORTED";
+    atoms[n] = &net_wm_sync_request;
+    names[n++] = (char*) "_NET_WM_SYNC_REQUEST";
+    atoms[n] = &net_wm_sync_request_counter;
+    names[n++] = (char*) "_NET_WM_SYNC_REQUEST_COUNTER";
     
     assert( n <= max );
 

@@ -211,6 +211,15 @@ bool Workspace::workspaceEvent( XEvent * e )
         return true;
     if( overview != NULL && overview->x11Event( e ))
         return true;
+    if( Sync::available() && e->type == Sync::alarmNotifyEvent())
+        { // _NET_WM_SYNC_REQUEST answered (not a window's event)
+        for( ClientList::ConstIterator it = clients.begin();
+             it != clients.end();
+             ++it )
+            if( (*it)->syncAlarmEvent( e ))
+                return true;
+        return false;
+        }
     if ( mouse_emulation && (e->type == ButtonPress || e->type == ButtonRelease ) ) 
         {
         mouse_emulation = FALSE;
@@ -874,6 +883,8 @@ void Client::propertyNotifyEvent( XPropertyEvent* e )
         default:
             if ( e->atom == atoms->wm_protocols )
                 getWindowProtocols();
+            else if( e->atom == atoms->net_wm_sync_request_counter )
+                getSyncCounter();
             else if (e->atom == atoms->wm_client_leader )
                 getWmClientLeader();
             else if( e->atom == qt_window_role )
