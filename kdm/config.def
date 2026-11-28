@@ -2096,7 +2096,7 @@ Description:
 # This needs to come _in front_ of the font settings to be effective!
 Key: AntiAliasing
 Type: bool
-Default: false
+Default: true
 User: greeter
 Instance: #*/!
 Comment: &

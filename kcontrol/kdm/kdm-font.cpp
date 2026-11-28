@@ -121,14 +121,14 @@ void KDMFontWidget::load()
   font = greetingFontChooser->font();
   greetingFontChooser->setFont(config->readFontEntry("GreetFont",  &font));
 
-  aacb->setChecked(config->readBoolEntry("AntiAliasing"));
+  aacb->setChecked(config->readBoolEntry("AntiAliasing", true));
 }
 
 
 void KDMFontWidget::defaults()
 {
   set_def();
-  aacb->setChecked(false);
+  aacb->setChecked(true);
 }
 
 #include "kdm-font.moc"
