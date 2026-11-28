@@ -159,6 +159,28 @@ for prefix in `echo "$exepath" | sed -n -e 's,/bin[^/]*/,/env/,p'`; do
   done
 done
 
+# Without a theme or size of the mouse module, the ones libXcursor takes
+# (its resources, else the theme "default" and a size from Xft.dpi or the
+# screen), so that toolkits that read the environment (Qt 5/6, SDL, Java,
+# ...) show the same cursors as the X clients and as kded_xsettings tells
+# GTK.  (Resources krdb merges later, ~/.Xresources when the display
+# manager has not loaded it, are not seen here.)
+if test -z "$XCURSOR_THEME" -o -z "$XCURSOR_SIZE"; then
+    xcursor_defaults=`kapplymousetheme --defaults 2>/dev/null`
+    # (the size on the last line: a theme name may hold anything)
+    xcursor_nl='
+'
+    xcursor_theme=${xcursor_defaults%"$xcursor_nl"*}
+    xcursor_size=${xcursor_defaults##*"$xcursor_nl"}
+    if test -z "$XCURSOR_THEME" -a -n "$xcursor_theme"; then
+        export XCURSOR_THEME="$xcursor_theme"
+    fi
+    if test -z "$XCURSOR_SIZE" && test "${xcursor_size:-0}" -gt 0 2>/dev/null; then
+        export XCURSOR_SIZE="$xcursor_size"
+    fi
+    unset xcursor_defaults xcursor_theme xcursor_size xcursor_nl
+fi
+
 # Fonts: Qt3 uses Xft, so fonts are found through fontconfig (~/.fonts is
 # in fontconfig's default configuration).  The X server's core font path
 # is not changed: nothing in KDE uses core (XLFD) fonts from the KDE font

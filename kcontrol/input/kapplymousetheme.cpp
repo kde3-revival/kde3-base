@@ -26,7 +26,9 @@
 #  include <config.h>
 #endif
 
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
 #include <X11/Xlib.h>
 
@@ -49,12 +51,27 @@ bool isEmpty( const char* str )
 
 int main( int argc, char* argv[] )
     {
-    if( argc != 3 )
+    // --defaults: the cursor theme and size libXcursor takes when none is
+    // configured in KDE (XCURSOR_THEME/SIZE, the Xcursor and Xft.dpi
+    // resources, the size of the screen), one per line, for startkde to
+    // export (nothing without Xcursor)
+    const bool defaults = argc == 2 && strcmp( argv[ 1 ], "--defaults" ) == 0;
+    if( argc != 3 && !defaults )
         return 1;
     dpy = XOpenDisplay( NULL );
     if( dpy == NULL )
         return 2;
     int ret = 0;
+    if( defaults )
+        {
+#ifdef HAVE_XCURSOR
+        const char* theme = XcursorGetTheme( qt_xdisplay());
+        printf( "%s\n%d\n", isEmpty( theme ) ? "default" : theme,
+            XcursorGetDefaultSize( qt_xdisplay()));
+#endif
+        XCloseDisplay( dpy );
+        return 0;
+        }
 #ifdef HAVE_XCURSOR
     const char* theme = argv[ 1 ];
     const char* size = argv[ 2 ];
