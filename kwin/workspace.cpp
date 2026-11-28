@@ -2600,14 +2600,12 @@ void Workspace::helperDialog( const QString& message, const Client* c )
 
 void Workspace::startKompmgr()
     {
-    if( !compositor_->isActive())
-        compositor_->toggle();
+    compositor_->setRequested( true );
     }
 
 void Workspace::stopKompmgr()
     {
-    if( compositor_->isActive())
-        compositor_->toggle();
+    compositor_->setRequested( false );
     }
 
 bool Workspace::kompmgrIsRunning()

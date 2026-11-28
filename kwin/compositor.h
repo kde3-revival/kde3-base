@@ -86,6 +86,10 @@ class Compositor : public QObject
         void reconfigure();
         // the shortcut (Ctrl+Alt+Shift+F12): off while on, else on
         void toggle();
+        // the old kompmgr's dcop calls (startKompmgr, stopKompmgr): on even
+        // when the settings disable it, until stopped (for this session:
+        // the settings are not changed), or off like the shortcut
+        void setRequested( bool on );
         // all X events go here first; true means eaten (own damage, shape
         // events); the structure events of the root's children are only
         // watched
@@ -199,6 +203,7 @@ class Compositor : public QObject
         int screen_w, screen_h;
         bool active;
         bool suspended; // by the shortcut
+        bool requested; // on whatever the settings say (setRequested())
         bool failed_once;
         int foreign_retries; // another compositing manager when KWin starts
         QString reason; // why it is off

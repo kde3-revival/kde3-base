@@ -1538,8 +1538,12 @@ void KCompositingConfig::updateStatus()
 
 void KCompositingConfig::load( void )
 {
+  // (like KWin: KDE 3.5's UseTranslucency=true when there is no setting)
+  config->setGroup("Notification Messages");
+  const bool oldTranslucency = config->readBoolEntry("UseTranslucency", false);
   config->setGroup("Compositing");
-  enabled->setChecked(config->hasKey("Enabled") ? config->readBoolEntry("Enabled", true) : enabledByDefault());
+  enabled->setChecked(config->hasKey("Enabled") ? config->readBoolEntry("Enabled", true)
+      : oldTranslucency || enabledByDefault());
   QString b = config->readEntry("Backend", "auto").lower();
   backend->setCurrentItem(b == "gles" ? 1 : b == "xrender" ? 2 : 0);
   unredirectFullscreen->setChecked(config->readBoolEntry("UnredirectFullscreen", true));
@@ -1567,6 +1571,9 @@ void KCompositingConfig::load( void )
 
 void KCompositingConfig::save( void )
 {
+  // (the old key is replaced by Enabled)
+  config->setGroup("Notification Messages");
+  config->deleteEntry("UseTranslucency");
   config->setGroup("Compositing");
   // (no setting: the default follows the X server)
   if (enabled->isChecked() == enabledByDefault())

@@ -219,12 +219,16 @@ unsigned long Options::updateSettings()
     effectsAnimationSpeed = QMAX( 0, QMIN( 10, config->readNumEntry( "AnimationSpeed",
         animateMinimizeSpeed )));
 
-    // compositing: by default on when the X server renders on a GPU
+    // compositing: by default on when the X server renders on a GPU, or when
+    // the old kompmgr was enabled (KDE 3.5's UseTranslucency; only true says
+    // something: the old module wrote false whenever it saved)
+    config->setGroup( "Notification Messages" );
+    const bool old_translucency = config->readBoolEntry( "UseTranslucency", false );
     config->setGroup( "Compositing" );
     if( config->hasKey( "Enabled" ))
         compositingEnabled = config->readBoolEntry( "Enabled", true );
     else
-        compositingEnabled = Compositor::gpuAvailable( qt_xdisplay());
+        compositingEnabled = old_translucency || Compositor::gpuAvailable( qt_xdisplay());
     QString backend = config->readEntry( "Backend", "auto" ).lower();
     compositingBackend = backend == "gles" ? 1 : backend == "xrender" ? 2 : 0;
     compositingUnredirectFullscreen = config->readBoolEntry( "UnredirectFullscreen", true );
